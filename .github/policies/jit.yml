@@ -1,0 +1,19 @@
+name: JIT_Access
+description: Policy for admin JIT for repos in this org
+
+resource: repository
+
+configuration:
+    jitAccess:
+        enabled: true
+        maxHours: 2
+        approvers:
+            role: maintain
+            users:
+                - ganesan23
+                - croomes
+                - jmclong
+                - landreasyan
+        requestors:
+            role: write
+            users:
