@@ -13,6 +13,7 @@ permissions:
 env:
   REGISTRY: "localcsidriver.azurecr.io"
   REPO_BASE: "local-csi-driver"
+  IMAGE_NAME: "driver"
 
 jobs:
   build-vars:
@@ -39,8 +40,17 @@ jobs:
 
   build-docker:
     needs: build-vars
-    runs-on: ubuntu-latest
     environment: pull-request
+    strategy:
+      matrix:
+        include:
+          - platform: linux/amd64
+            runner: ubuntu-latest
+            arch: amd64
+          - platform: linux/arm64
+            runner: ubuntu-24.04-arm
+            arch: arm64
+    runs-on: ${{ matrix.runner }}
     steps:
       - name: Harden the runner (Audit all outbound calls)
         uses: step-security/harden-runner@002fdce3c6a235733a90a27c80493a3241e56863 # v2.12.1
@@ -51,6 +61,7 @@ jobs:
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           fetch-depth: 0
+
       - name: Set up Go
         uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
         with:
@@ -67,34 +78,88 @@ jobs:
       - name: ACR login
         run: az acr login -n ${{ env.REGISTRY }}
 
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@29109295f81e9208d7d86ff1c6c12d2833863392 # v3.6.0
-
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@e468171a9de216ec08956ac3ada2f0791b6bd435 # v3.11.1
-        id: setup-buildx
+        with:
+          platforms: ${{ matrix.platform }}
 
       - name: Set build date
         id: build-date
         run: echo "date=$(date -u +"%Y-%m-%dT%H:%M:%SZ")" >> "$GITHUB_OUTPUT"
 
-      - name: Docker build
+      - name: Set Docker tags
+        id: docker-tags
+        run: |
+          # Create platform-specific tag
+          PLATFORM_TAG="${{ env.REGISTRY }}/${{ env.REPO_BASE }}/${{ env.IMAGE_NAME }}:${{ needs.build-vars.outputs.TAG }}-${{ matrix.arch }}"
+          echo "tags=${PLATFORM_TAG}" >> "$GITHUB_OUTPUT"
+          echo "Building for platform: ${{ matrix.platform }}"
+          echo "Platform tag: ${PLATFORM_TAG}"
+
+      - name: Docker build and push
         uses: docker/build-push-action@v6
         with:
           context: .
           push: true
-          tags: ${{ env.REGISTRY }}/${{ env.REPO_BASE }}/driver:${{ needs.build-vars.outputs.TAG }}
-          platforms: linux/amd64,linux/arm64
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          tags: ${{ steps.docker-tags.outputs.tags }}
+          platforms: ${{ matrix.platform }}
+          cache-from: type=gha,scope=${{ matrix.arch }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.arch }}
           build-args: |
             BUILD_ID=${{ github.run_id }}
             VERSION=${{ needs.build-vars.outputs.TAG }}
             GIT_COMMIT=${{ github.sha }}
             BUILD_DATE=${{ steps.build-date.outputs.date }}
 
+  create-manifest:
+    needs: [build-vars, build-docker]
+    runs-on: ubuntu-latest
+    environment: pull-request
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@002fdce3c6a235733a90a27c80493a3241e56863 # v2.12.1
+        with:
+          egress-policy: audit
+
+      - name: Azure CLI Login
+        uses: azure/login@a457da9ea143d694b1b9c7c869ebb04ebe844ef5 # v2.3.0
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: ACR login
+        run: az acr login -n ${{ env.REGISTRY }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@e468171a9de216ec08956ac3ada2f0791b6bd435 # v3.11.1
+      - name: Create multi-arch manifest
+        run: |
+          # Build list of tags to create manifests for
+          TAGS=()
+          TAGS+=("${{ env.REGISTRY }}/${{ env.REPO_BASE }}/${{ env.IMAGE_NAME }}:${{ needs.build-vars.outputs.TAG }}")
+
+          # For tagged releases, also create a latest tag
+          TAGS+=("${{ env.REGISTRY }}/${{ env.REPO_BASE }}/${{ env.IMAGE_NAME }}:latest")
+
+          # Source images for multi-arch manifest
+          AMD64_IMAGE="${{ env.REGISTRY }}/${{ env.REPO_BASE }}/${{ env.IMAGE_NAME }}:${{ needs.build-vars.outputs.TAG }}-amd64"
+          ARM64_IMAGE="${{ env.REGISTRY }}/${{ env.REPO_BASE }}/${{ env.IMAGE_NAME }}:${{ needs.build-vars.outputs.TAG }}-arm64"
+
+          # Create and push manifests for each tag
+          for tag in "${TAGS[@]}"; do
+            echo "Creating multi-arch manifest for: ${tag}"
+            docker buildx imagetools create \
+              --tag "${tag}" \
+              "${AMD64_IMAGE}" \
+              "${ARM64_IMAGE}"
+            echo "✓ Created manifest: ${tag}"
+          done
+
+          echo "Multi-arch manifests created successfully for ${#TAGS[@]} tag(s)"
+
   build-helm:
-    needs: build-vars
+    needs: [build-vars, create-manifest]
     runs-on: ubuntu-latest
     environment: pull-request
     steps:
