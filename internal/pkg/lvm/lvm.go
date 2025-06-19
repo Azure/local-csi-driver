@@ -788,18 +788,23 @@ func (c *Client) run(ctx context.Context, cmdArgs ...string) ([]byte, error) {
 // Missing VG: Volume group 'NoVolumeGroup'  not found.
 func getErrorType(err error) error {
 	switch {
-	case strings.Contains(err.Error(), "Failed to find"),
-		strings.Contains(err.Error(), "not found"):
+	case containsIgnoreCase(err.Error(), "failed to find"),
+		containsIgnoreCase(err.Error(), "not found"):
 		return fmt.Errorf("%w: %s", ErrNotFound, err.Error())
-	case strings.Contains(err.Error(), "contains a filesystem in use"):
+	case containsIgnoreCase(err.Error(), "contains a filesystem in use"):
 		return fmt.Errorf("%w: %s", ErrInUse, err.Error())
-	case strings.Contains(err.Error(), "already exists"):
+	case containsIgnoreCase(err.Error(), "already exists"):
 		return fmt.Errorf("%w: %s", ErrAlreadyExists, err.Error())
-	case strings.Contains(err.Error(), "insufficient free space"):
+	case containsIgnoreCase(err.Error(), "insufficient free space"):
 		return fmt.Errorf("%w: %s", ErrResourceExhausted, err.Error())
-	case strings.Contains(err.Error(), "is already in volume group"):
+	case containsIgnoreCase(err.Error(), "is already in volume group"):
 		return fmt.Errorf("%w: %s", ErrPVAlreadyInVolumeGroup, err.Error())
 	default:
 		return err
 	}
+}
+
+// containsIgnoreCase checks if a string contains a substring ignoring case.
+func containsIgnoreCase(s, substr string) bool {
+	return strings.Contains(strings.ToLower(s), strings.ToLower(substr))
 }
