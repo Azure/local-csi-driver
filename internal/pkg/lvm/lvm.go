@@ -201,7 +201,10 @@ func (c *Client) CreatePhysicalVolume(ctx context.Context, opts CreatePVOptions)
 	cmdArgs = append(cmdArgs, args.Marshal(opts)...)
 
 	_, err = c.run(ctx, cmdArgs...)
-	return err
+	if err != nil {
+		return getErrorType(err)
+	}
+	return nil
 }
 
 // Change physical volume attributes.
@@ -215,7 +218,10 @@ func (c *Client) UpdatePhysicalVolume(ctx context.Context, opts UpdatePVOptions)
 	cmdArgs = append(cmdArgs, args.Marshal(opts)...)
 
 	_, err := c.run(ctx, cmdArgs...)
-	return err
+	if err != nil {
+		return getErrorType(err)
+	}
+	return nil
 }
 
 // Remove a physical volume from a device.
@@ -229,7 +235,10 @@ func (c *Client) RemovePhysicalVolume(ctx context.Context, opts RemovePVOptions)
 	cmdArgs = append(cmdArgs, args.Marshal(opts)...)
 
 	_, err := c.run(ctx, cmdArgs...)
-	return err
+	if err != nil {
+		return getErrorType(err)
+	}
+	return nil
 }
 
 // Check / repair physical volume metadata.
@@ -353,7 +362,7 @@ func (c *Client) CreateVolumeGroup(ctx context.Context, opts CreateVGOptions) er
 	if err != nil {
 		return getErrorType(err)
 	}
-	return err
+	return nil
 }
 
 // Change volume group attributes.
@@ -384,8 +393,7 @@ func (c *Client) RemoveVolumeGroup(ctx context.Context, opts RemoveVGOptions) er
 	if err != nil {
 		return getErrorType(err)
 	}
-
-	return err
+	return nil
 }
 
 // Check / repair volume group metadata.
@@ -612,7 +620,10 @@ func (c *Client) CreateLogicalVolume(ctx context.Context, opts CreateLVOptions) 
 	cmdArgs = append(cmdArgs, args.Marshal(opts)...)
 
 	_, err := c.run(ctx, cmdArgs...)
-	return err
+	if err != nil {
+		return getErrorType(err)
+	}
+	return nil
 }
 
 // Change logical volume attributes.
@@ -693,7 +704,10 @@ func (c *Client) ExtendLogicalVolume(ctx context.Context, opts ExtendLVOptions) 
 	cmdArgs = append(cmdArgs, args.Marshal(opts)...)
 
 	_, err = c.run(ctx, cmdArgs...)
-	return err
+	if err != nil {
+		return getErrorType(err)
+	}
+	return nil
 }
 
 // Reduce the size of a logical volume.
@@ -781,7 +795,7 @@ func getErrorType(err error) error {
 		return fmt.Errorf("%w: %s", ErrInUse, err.Error())
 	case strings.Contains(err.Error(), "already exists"):
 		return fmt.Errorf("%w: %s", ErrAlreadyExists, err.Error())
-	case strings.Contains(err.Error(), "Insufficient free space"):
+	case strings.Contains(err.Error(), "insufficient free space"):
 		return fmt.Errorf("%w: %s", ErrResourceExhausted, err.Error())
 	case strings.Contains(err.Error(), "is already in volume group"):
 		return fmt.Errorf("%w: %s", ErrPVAlreadyInVolumeGroup, err.Error())
