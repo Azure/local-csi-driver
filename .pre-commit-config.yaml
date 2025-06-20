@@ -8,7 +8,7 @@ repos:
   - id: check-yaml
     args:
     - --allow-multiple-documents
-    exclude: ^dist/charts|charts/latest # chart templates are not valid yaml
+    exclude: charts/latest/templates # chart templates are not valid yaml
   - id: check-xml
   - id: check-json
 - repo: https://github.com/golangci/golangci-lint
@@ -50,4 +50,10 @@ repos:
     entry: make add-copyright
     language: system
     files: ^.*\.(go|sh|mk|py)$
+    pass_filenames: false
+  - id: kubeconform-lint
+    name: Lint Helm Chart
+    entry: make kubeconform-lint
+    language: system
+    files: ^charts/latest
     pass_filenames: false

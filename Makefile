@@ -354,6 +354,10 @@ run-markdownlint: $(NODE)
 add-copyright:
 	./hack/add_copyright.sh
 
+.PHONY: kubeconform-lint
+kubeconform-lint: kubeconform-helm ## Lint all Kubernetes manifests using kubeconform.
+	$(HELM) kubeconform --verbose --summary --strict charts/latest
+
 .PHONY: single
 single: kind ## Create a single node kind cluster.
 	if $(KIND) get clusters | grep -q kind; then \
@@ -511,6 +515,17 @@ jaeger-port-forward: ## Port forward the jaeger pod to localhost as a background
 ginkgo: $(GINKGO)
 $(GINKGO): $(LOCALBIN)
 	$(call go-install-tool,$(GINKGO),github.com/onsi/ginkgo/v2/ginkgo,$(GINKGO_VERSION))
+
+
+KUBECONFORM_HELM_REPO ?= https://github.com/jtyr/kubeconform-helm
+KUBECONFORM_HELM_VERSION ?= v0.1.17
+.PHONY: kubeconform-helm
+kubeconform-helm: helm
+	@if ! $(HELM) plugin list | grep -q kubeconform; then \
+		$(HELM) plugin install $(KUBECONFORM_HELM_REPO) --version $(KUBECONFORM_HELM_VERSION); \
+	else \
+		echo "kubeconform-helm plugin already installed."; \
+	fi
 
 hadolint: $(HADOLINT)
 HADOLINT ?= $(LOCALBIN)/hadolint
