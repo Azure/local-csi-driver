@@ -4,7 +4,7 @@ name: csi-local
 image:
   baseRepo: mcr.microsoft.com
   driver:
-    repository: /acstor/local-csi-driver
+    repository: localcsidriver.azurecr.io/acstor/local-csi-driver
     # When the tag is unset (recommended), the chart version is used as the tag.
     tag:
     pullPolicy: IfNotPresent

@@ -81,9 +81,9 @@ spec:
         - name: KUBERNETES_CLUSTER_DOMAIN
           value: {{ quote .Values.kubernetesClusterDomain }}
         {{- if hasPrefix "/" .Values.image.driver.repository }}
-        image: "{{ .Values.image.baseRepo }}{{ .Values.image.driver.repository }}:{{ .Values.image.driver.tag | default .Chart.AppVersion}}"
+        image: "{{ .Values.image.baseRepo }}{{ .Values.image.driver.repository }}:{{ .Values.image.driver.tag | default .Chart.Version }}"
         {{- else }}
-        image: "{{ .Values.image.driver.repository }}:{{ .Values.image.driver.tag | default .Chart.AppVersion}}"
+        image: "{{ .Values.image.driver.repository }}:{{ .Values.image.driver.tag | default .Chart.Version }}"
         {{- end }}
         imagePullPolicy: {{ .Values.image.driver.pullPolicy }}
         livenessProbe:
