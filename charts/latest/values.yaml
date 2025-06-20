@@ -54,10 +54,13 @@ webhook:
     # recover (with empty volumes) after cluster restart if node names change.
     enabled: true
   service:
-    ports:
-    - port: 443
-      protocol: TCP
-      targetPort: 9443
+    # The webhook service's port.
+    port: 443
+    # The target port for the webhook service. The webhook endpoint listens on
+    # this port.
+    targetPort: 9443
+    # The type of the webhook service. Can be ClusterIP, NodePort, or
+    # LoadBalancer.
     type: ClusterIP
 
 # Resource configuration.

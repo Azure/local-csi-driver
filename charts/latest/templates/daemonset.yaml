@@ -41,6 +41,7 @@ spec:
         - --pod-name=$(POD_NAME)
         - --namespace=$(POD_NAMESPACE)
         - --csi-bind-address=unix:///csi/csi.sock
+        - --webhook-port={{ .Values.webhook.service.targetPort }}
         - --worker-threads={{ .Values.scalability.driver.workerThreads }}
         - --kube-api-qps={{ .Values.scalability.driver.kubeApi.qps }}
         - --kube-api-burst={{ .Values.scalability.driver.kubeApi.burst }}
@@ -91,7 +92,7 @@ spec:
           initialDelaySeconds: 15
           periodSeconds: 20
         ports:
-        - containerPort: 9443
+        - containerPort: {{ .Values.webhook.service.targetPort}}
           name: webhook-server
           protocol: TCP
         - containerPort: {{ .Values.observability.driver.metrics.port }}
