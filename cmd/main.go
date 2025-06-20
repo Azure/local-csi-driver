@@ -69,6 +69,7 @@ func main() {
 	var podName string
 	var namespace string
 	var webhookSvcName string
+	var webhookPort int
 	var ephemeralCreateWebhookConfig string
 	var hyperconvergedWebhookConfig string
 	var certSecretName string
@@ -95,6 +96,7 @@ func main() {
 		"The namespace to use for creating objects.")
 	flag.StringVar(&webhookSvcName, "webhook-service-name", "",
 		"The name of the service used by the webhook server. Must be set to enable webhooks.")
+	flag.IntVar(&webhookPort, "webhook-port", 9443, "The port the webhook server listens on.")
 	flag.StringVar(&ephemeralCreateWebhookConfig, "ephemeral-webhook-config", "",
 		"The name of the ephemeral webhook config. Must be set to enable the webhook.")
 	flag.StringVar(&hyperconvergedWebhookConfig, "hyperconverged-webhook-config", "",
@@ -184,6 +186,7 @@ func main() {
 
 	webhookServer := webhook.NewServer(webhook.Options{
 		TLSOpts: tlsOpts,
+		Port:    webhookPort,
 	})
 
 	// Metrics endpoint is enabled in 'config/default/kustomization.yaml'. The Metrics options configure the server.

@@ -12,5 +12,7 @@ spec:
     app: {{ .Values.name }}-node
     {{- include "chart.selectorLabels" . | nindent 4 }}
   ports:
-  {{- .Values.webhook.service.ports | toYaml | nindent 2 }}
+  - port: {{ .Values.webhook.service.port }}
+    protocol: TCP
+    targetPort: {{ .Values.webhook.service.targetPort }}
 {{- end }}
