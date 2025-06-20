@@ -126,18 +126,16 @@ spec:
 
 When the webhook is enabled, instead of setting node affinity on the
 PersistentVolume (PV), the driver adds a
-`local.csi.azure.com/selected-initial-node` parameter to the volume
-context of the PV.
-This parameter is later used by the mutation webhook to modify the workload
-Pods
-to include preferred node affinity rules to the specified node ensuring that the
-workload and the PV are scheduled on the same node.
+`local.csi.azure.com/selected-initial-node` parameter to the volume context of
+the PV. This parameter is later used by the mutation webhook to modify the
+workload Pods to include preferred node affinity rules to the specified node
+ensuring that the workload and the PV are scheduled on the same node.
 
 In the event of a node deletion, the workload Pods can be seamlessly rescheduled
 to a different node. During this process, the PersistentVolume (PV) will be
 reprovisioned on the new node as a blank volume, enabling the workload to
-continue functioning and writing new data. When such failovers occur, the
-PV resources will be annotated with `"local.csi.azure.com/selected-node"`
+continue functioning and writing new data. When such failovers occur, the PV
+resources will be annotated with `"local.csi.azure.com/selected-node"`
 information, which will later be used by the hyperconverged webhook to update
 the node affinity of the workload on future failovers.
 

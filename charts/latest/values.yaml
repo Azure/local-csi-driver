@@ -1,7 +1,10 @@
 # Name used for creating resources.
 name: csi-local
 
+# Container image configuration.
 image:
+  # The base repository for the container images. Will be used when `repository`
+  # begins with a '/' for a specific image.
   baseRepo: mcr.microsoft.com
   driver:
     repository: /acstor/local-csi-driver
@@ -21,12 +24,22 @@ image:
     tag: v2.13.0
     pullPolicy: IfNotPresent
 
-kubernetesClusterDomain: cluster.local
-
 # DaemonSet configuration.
 daemonset:
+  # Node selector for the DaemonSet. If empty, all nodes are selected. This can
+  # be used to install the driver on a subset of nodes with local NVMe storage.
   nodeSelector: {}
+
+  # Tolerations for the DaemonSet. If empty, no tolerations are applied.
+  # This can be used to install the driver on nodes with specific taints.
+  tolerations:
+  - effect: NoSchedule
+    operator: Exists
+  - effect: NoExecute
+    operator: Exists
+
   serviceAccount:
+    # Annotations for the service account. If empty, no annotations are applied.
     annotations: {}
 
 # Webhook configuration.
@@ -84,7 +97,9 @@ observability:
     health:
       port: 8081
     trace:
+      # The address to send traces to. Disables tracing if not set.
       endpoint: ""
+      # Sample rate per million. 0 to disable tracing, 1000000 to trace everything.
       sampleRate: "1000000"
   csiProvisioner:
     log:

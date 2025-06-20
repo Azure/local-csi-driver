@@ -308,6 +308,7 @@ deploy: helm ## Deploy to the K8s cluster specified in ~/.kube/config.
 		--version $(TAG) \
 		--set image.driver.repository=$(REGISTRY)/$(REPO) \
 		--set image.driver.tag=$(TAG) \
+		--set image.driver.pullPolicy=Always \
 		--debug --wait --atomic $(HELM_ARGS)
 
 .PHONY: undeploy

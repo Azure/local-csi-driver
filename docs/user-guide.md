@@ -26,6 +26,8 @@ To install local-csi-driver using Helm:
 
 Only one instance of local-csi-driver can be installed per cluster.
 
+Helm chart values are documented in: [Helm chart README](./charts/latest/README.md).
+
 ## Creating a StorageClass
 
 To create a StorageClass for the local-csi-driver, apply the following YAML:

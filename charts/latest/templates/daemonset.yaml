@@ -78,8 +78,6 @@ spec:
           valueFrom:
             fieldRef:
               fieldPath: spec.nodeName
-        - name: KUBERNETES_CLUSTER_DOMAIN
-          value: {{ quote .Values.kubernetesClusterDomain }}
         {{- if hasPrefix "/" .Values.image.driver.repository }}
         image: "{{ .Values.image.baseRepo }}{{ .Values.image.driver.repository }}:{{ .Values.image.driver.tag | default .Chart.AppVersion}}"
         {{- else }}
@@ -164,8 +162,6 @@ spec:
           valueFrom:
             fieldRef:
               fieldPath: spec.nodeName
-        - name: KUBERNETES_CLUSTER_DOMAIN
-          value: {{ quote .Values.kubernetesClusterDomain }}
         {{- if hasPrefix "/" .Values.image.csiProvisioner.repository }}
         image: "{{ .Values.image.baseRepo }}{{ .Values.image.csiProvisioner.repository }}:{{ .Values.image.csiProvisioner.tag }}"
         {{- else }}
@@ -200,8 +196,6 @@ spec:
           valueFrom:
             fieldRef:
               fieldPath: metadata.namespace
-        - name: KUBERNETES_CLUSTER_DOMAIN
-          value: {{ quote .Values.kubernetesClusterDomain }}
         {{- if hasPrefix "/" .Values.image.csiResizer.repository }}
         image: "{{ .Values.image.baseRepo }}{{ .Values.image.csiResizer.repository }}:{{ .Values.image.csiResizer.tag }}"
         {{- else }}
@@ -224,8 +218,6 @@ spec:
         - --http-endpoint=:{{ .Values.observability.nodeDriverRegistrar.http.port }}
         - --v={{ .Values.observability.nodeDriverRegistrar.log.level }}
         env:
-        - name: KUBERNETES_CLUSTER_DOMAIN
-          value: {{ quote .Values.kubernetesClusterDomain }}
         {{- if hasPrefix "/" .Values.image.nodeDriverRegistrar.repository }}
         image: "{{ .Values.image.baseRepo }}{{ .Values.image.nodeDriverRegistrar.repository }}:{{ .Values.image.nodeDriverRegistrar.tag }}"
         {{- else }}
@@ -259,11 +251,7 @@ spec:
           type: Unconfined
       serviceAccountName: {{ .Values.name }}-node
       terminationGracePeriodSeconds: 60
-      tolerations:
-      - effect: NoSchedule
-        operator: Exists
-      - effect: NoExecute
-        operator: Exists
+      tolerations: {{- toYaml .Values.daemonset.tolerations | nindent 8 }}
       volumes:
       {{- if or .Values.webhook.ephemeral.enabled .Values.webhook.hyperconverged.enabled }}
       - name: cert
