@@ -1,8 +1,10 @@
-# Build the node binary
-FROM --platform=$BUILDPLATFORM mcr.microsoft.com/oss/go/microsoft/golang:1.24-azurelinux3.0@sha256:250d01e55a37bd79d7014ae83f9f50aa6fa5570ca910e7f19faeff4bb0132ae1 AS builder
+FROM mcr.microsoft.com/oss/go/microsoft/golang:1.24-fips-azurelinux3.0@sha256:5ee11bd5890259ba869ec8016ecac81d160b155b5337f928ec702d4c061b6da9 AS builder
 ARG TARGETOS
 ARG TARGETARCH
 
+RUN if [ "${TARGETARCH}" = "arm64" ]; then \
+    tdnf install -y build-essential && tdnf clean all; \
+    fi
 
 WORKDIR /workspace
 
@@ -39,15 +41,18 @@ ARG LDFLAGS="\
     -X local-csi-driver/internal/pkg/version.buildDate=${BUILD_DATE} \
     -X local-csi-driver/internal/pkg/version.buildId=${BUILD_ID}"
 
+# CGO_ENABLED=1 is required to build the driver with FIPS support.
 RUN --mount=type=cache,target=/go/pkg/mod \
     --mount=type=cache,target=/root/.cache/go-build \
-    CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} go build -v -ldflags "${LDFLAGS}" -o local-csi-driver cmd/main.go
+    CGO_ENABLED=1 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} go build -v -ldflags "${LDFLAGS}" -o local-csi-driver cmd/main.go
 
 
 FROM mcr.microsoft.com/azurelinux/base/core:3.0@sha256:9948138108a3d69f1dae62104599ac03132225c3b7a5ac57b85a214629c8567d AS dependency-install
 RUN tdnf install -y --releasever 3.0 --installroot /staging \
-    lvm2 \
     e2fsprogs \
+    lvm2 \
+    # ensure that libcrypto.so.X is available for dlopen for fips builds
+    openssl-libs \
     util-linux \
     xfsprogs \
     && tdnf clean all \
