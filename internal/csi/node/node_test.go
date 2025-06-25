@@ -26,6 +26,7 @@ import (
 
 	"local-csi-driver/internal/csi/capability"
 	"local-csi-driver/internal/csi/core"
+	"local-csi-driver/internal/csi/core/lvm"
 	"local-csi-driver/internal/csi/mounter"
 	"local-csi-driver/internal/csi/testutil"
 	"local-csi-driver/internal/pkg/convert"
@@ -38,6 +39,8 @@ const (
 	driverName               = "testlocal.csi.azure.com"
 	testInvalidId            = "invalidId"
 	testVolumeID             = "vg#pv"
+	recoveryOKVolumeID       = "vg#testrecoveryok"
+	recoveryBrokenVolumeID   = "vg#testrecoverybroken"
 	invalidStagingPath       = "invalidStagingPath"
 	validStagingPath         = "/vg/pv"
 	validTargetPath          = "validTargetPath"
@@ -124,6 +127,52 @@ func initTestNodeServer(_ *testing.T, ctrl *gomock.Controller) *Server {
 					},
 					PersistentVolumeReclaimPolicy: corev1.PersistentVolumeReclaimRetain,
 					StorageClassName:              "standard",
+				},
+			},
+			{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "testrecoveryok",
+				},
+				Spec: corev1.PersistentVolumeSpec{
+					Capacity: corev1.ResourceList{},
+					AccessModes: []corev1.PersistentVolumeAccessMode{
+						corev1.ReadWriteOnce,
+					},
+					PersistentVolumeReclaimPolicy: corev1.PersistentVolumeReclaimRetain,
+					StorageClassName:              "standard",
+					PersistentVolumeSource: corev1.PersistentVolumeSource{
+						CSI: &corev1.CSIPersistentVolumeSource{
+							Driver:       driverName,
+							VolumeHandle: recoveryOKVolumeID,
+							VolumeAttributes: map[string]string{
+								selectedInitialNodeParam:       "test-node",
+								"local.csi.azure.com/capacity": "1Gi",
+							},
+						},
+					},
+				},
+			},
+			{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "testrecoverybroken",
+				},
+				Spec: corev1.PersistentVolumeSpec{
+					Capacity: corev1.ResourceList{},
+					AccessModes: []corev1.PersistentVolumeAccessMode{
+						corev1.ReadWriteOnce,
+					},
+					PersistentVolumeReclaimPolicy: corev1.PersistentVolumeReclaimRetain,
+					StorageClassName:              "standard",
+					PersistentVolumeSource: corev1.PersistentVolumeSource{
+						CSI: &corev1.CSIPersistentVolumeSource{
+							Driver:       driverName,
+							VolumeHandle: recoveryOKVolumeID,
+							VolumeAttributes: map[string]string{
+								selectedInitialNodeParam: "test-node",
+								// capacity not set.
+							},
+						},
+					},
 				},
 			},
 		},
@@ -671,6 +720,38 @@ func TestNodeStageVolume(t *testing.T) {
 				m.EXPECT().IsLikelyNotMountPoint(gomock.Eq(filepath.Join(mntDir, validStagingPath))).Return(true, nil).Times(1)
 				m.EXPECT().FormatAndMountSensitiveWithFormatOptions(validStagingPath, filepath.Join(mntDir, validStagingPath), "ext4", gomock.Any(), gomock.Any(), gomock.Any()).Return(os.ErrInvalid).Times(1)
 			},
+		},
+		{
+			name: "PV Recovery Success",
+			req: &csi.NodeStageVolumeRequest{
+				VolumeCapability: &csi.VolumeCapability{
+					AccessType: stdVolCap,
+					AccessMode: &volumeCap,
+				},
+				VolumeId:          recoveryOKVolumeID,
+				StagingTargetPath: validStagingPath,
+				VolumeContext:     map[string]string{},
+			},
+			resp:      &csi.NodeStageVolumeResponse{},
+			expectErr: nil,
+			expectMount: func(mntDir string, m *mounter.MockMounter) {
+				m.EXPECT().IsLikelyNotMountPoint(gomock.Eq(filepath.Join(mntDir, validStagingPath))).Return(true, nil).Times(1)
+				m.EXPECT().FormatAndMountSensitiveWithFormatOptions("/vg/testrecoveryok", filepath.Join(mntDir, validStagingPath), "ext4", gomock.Any(), gomock.Any(), gomock.Any()).Return(nil).Times(1)
+			},
+		},
+		{
+			name: "PV Recovery no volume context set",
+			req: &csi.NodeStageVolumeRequest{
+				VolumeCapability: &csi.VolumeCapability{
+					AccessType: stdVolCap,
+					AccessMode: &volumeCap,
+				},
+				VolumeId:          recoveryBrokenVolumeID,
+				StagingTargetPath: validStagingPath,
+				VolumeContext:     map[string]string{},
+			},
+			resp:      nil,
+			expectErr: status.Error(codes.Internal, fmt.Errorf("volume request size is missing in pv attribute local.csi.azure.com/capacity - recovery impossible").Error()),
 		},
 	}
 	for _, test := range tests {
@@ -1266,6 +1347,88 @@ func TestNodeGetVolumeStats(t *testing.T) {
 			if !reflect.DeepEqual(resp, tt.expectResp) {
 				t.Errorf("NodeGetVolumeStats() resp:\n %+v\n expected:\n %+v", resp, tt.expectResp)
 				return
+			}
+		})
+	}
+}
+
+func Test_getCapacityAndLimit(t *testing.T) {
+	tests := []struct {
+		name         string
+		attrs        map[string]string
+		wantCapacity int64
+		wantLimit    int64
+		wantErr      bool
+	}{
+		{
+			name:         "valid capacity and limit",
+			attrs:        map[string]string{lvm.CapacityParam: "10Gi", lvm.LimitParam: "20Gi"},
+			wantCapacity: 10 * 1024 * 1024 * 1024,
+			wantLimit:    20 * 1024 * 1024 * 1024,
+			wantErr:      false,
+		},
+		{
+			name:         "valid capacity and limit using bytes",
+			attrs:        map[string]string{lvm.CapacityParam: "10737418240", lvm.LimitParam: "21474836480"},
+			wantCapacity: 10 * 1024 * 1024 * 1024,
+			wantLimit:    20 * 1024 * 1024 * 1024,
+			wantErr:      false,
+		},
+		{
+			name:         "valid capacity, unset limit",
+			attrs:        map[string]string{lvm.CapacityParam: "5Gi"},
+			wantCapacity: 5 * 1024 * 1024 * 1024,
+			wantLimit:    0,
+			wantErr:      false,
+		},
+		{
+			name:         "valid capacity, empty limit",
+			attrs:        map[string]string{lvm.CapacityParam: "5Gi", lvm.LimitParam: ""},
+			wantCapacity: 5 * 1024 * 1024 * 1024,
+			wantLimit:    0,
+			wantErr:      false,
+		},
+		{
+			name:         "empty capacity, valid limit",
+			attrs:        map[string]string{lvm.CapacityParam: "", lvm.LimitParam: "1Ti"},
+			wantCapacity: 0,
+			wantLimit:    1 * 1024 * 1024 * 1024 * 1024,
+			wantErr:      false,
+		},
+		{
+			name:         "invalid capacity",
+			attrs:        map[string]string{lvm.CapacityParam: "foo", lvm.LimitParam: "1Gi"},
+			wantCapacity: 0,
+			wantLimit:    0,
+			wantErr:      true,
+		},
+		{
+			name:         "invalid limit",
+			attrs:        map[string]string{lvm.CapacityParam: "1Gi", lvm.LimitParam: "bar"},
+			wantCapacity: 0,
+			wantLimit:    0,
+			wantErr:      true,
+		},
+		{
+			name:         "both empty",
+			attrs:        map[string]string{lvm.CapacityParam: "", lvm.LimitParam: ""},
+			wantCapacity: 0,
+			wantLimit:    0,
+			wantErr:      false,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			gotCapacityBytes, gotLimitBytes, err := getCapacityAndLimit(tt.attrs)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("getCapacityAndLimit() error = %v, wantErr %v", err, tt.wantErr)
+				return
+			}
+			if gotCapacityBytes != tt.wantCapacity {
+				t.Errorf("getCapacityAndLimit() gotCapacityBytes = %v, want %v", gotCapacityBytes, tt.wantCapacity)
+			}
+			if gotLimitBytes != tt.wantLimit {
+				t.Errorf("getCapacityAndLimit() gotLimitBytes = %v, want %v", gotLimitBytes, tt.wantLimit)
 			}
 		})
 	}

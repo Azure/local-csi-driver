@@ -15,12 +15,10 @@ import (
 	"go.opentelemetry.io/otel/trace"
 	"google.golang.org/protobuf/types/known/wrapperspb"
 	corev1 "k8s.io/api/core/v1"
-	"k8s.io/apimachinery/pkg/api/resource"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	"local-csi-driver/internal/csi/capability"
 	"local-csi-driver/internal/csi/core"
-	"local-csi-driver/internal/pkg/convert"
 	"local-csi-driver/internal/pkg/events"
 	"local-csi-driver/internal/pkg/lvm"
 	"local-csi-driver/internal/pkg/probe"
@@ -59,29 +57,28 @@ func (l *LVM) Create(ctx context.Context, req *csi.CreateVolumeRequest) (*csi.Vo
 		params = make(map[string]string)
 	}
 
-	if params[VolumeGroupNameParam] == "" {
-		params[VolumeGroupNameParam] = DefaultVolumeGroup
+	if params[VolumeGroupParam] == "" {
+		params[VolumeGroupParam] = DefaultVolumeGroup
 	}
-	span.SetAttributes(attribute.String("vol.group", params[VolumeGroupNameParam]))
+	span.SetAttributes(attribute.String("vol.group", params[VolumeGroupParam]))
 
-	// TODO(sc): do we care about aligning on MiB? LVM will automatically expand
-	// to align on 4MiB boundaries to match physical extents.
-	capacityBytes := req.GetCapacityRange().GetRequiredBytes()
-	if capacityBytes == 0 {
-		log.Info("invalid volume size, resize to 1G")
-		capacityBytes = 1024 * 1024 * 1024
+	// Validate capacity.
+	capacity := req.GetCapacityRange().GetRequiredBytes()
+	limit := req.GetCapacityRange().GetLimitBytes()
+	if capacity == 0 && limit > 0 {
+		capacity = limit
 	}
-	sizeMiB := convert.RoundUpMiB(capacityBytes)
-	span.SetAttributes(attribute.Int64("capacity.bytes", capacityBytes))
-	span.SetAttributes(attribute.Int64("capacity.mib", sizeMiB))
-
-	maxSizeMiB := convert.RoundUpMiB(req.GetCapacityRange().GetLimitBytes())
-	if maxSizeMiB > 0 && sizeMiB > maxSizeMiB {
-		return nil, fmt.Errorf("after round-up to MiB, requested size %dMiB exceeds limit %dMiB", sizeMiB, maxSizeMiB)
+	if capacity == 0 {
+		log.Info("invalid volume size, defaulting to 1G")
+		capacity = 1024 * 1024 * 1024 // 1 GiB
 	}
-	params[SizeMiBKey] = fmt.Sprintf("%dMi", sizeMiB)
+	span.SetAttributes(attribute.Int64("capacity.bytes", capacity))
 
-	id, err := newVolumeId(params[VolumeGroupNameParam], req.Name)
+	// Set the size in the VolumeContext so it can be used for PV recovery.
+	params[CapacityParam] = fmt.Sprint(capacity)
+	params[LimitParam] = fmt.Sprint(limit)
+
+	id, err := newVolumeId(params[VolumeGroupParam], req.Name)
 	if err != nil {
 		log.Error(err, "failed to create volume id", "name", req.Name)
 		span.SetStatus(codes.Error, "failed to create volume id")
@@ -90,17 +87,15 @@ func (l *LVM) Create(ctx context.Context, req *csi.CreateVolumeRequest) (*csi.Vo
 	}
 
 	// Check for existing volume on the node.
-	if err := l.EnsureVolume(ctx, id.String(), params); err != nil {
+	if err := l.EnsureVolume(ctx, id.String(), capacity, limit); err != nil {
 		log.Error(err, "failed to ensure volume", "name", id.String())
 		span.SetStatus(codes.Error, "failed to ensure volume")
 		span.RecordError(err)
 		return nil, fmt.Errorf("failed to ensure volume: %w", err)
 	}
 
-	capacityRequest := resource.MustParse(params[SizeMiBKey])
-
 	return &csi.Volume{
-		CapacityBytes: capacityRequest.Value(),
+		CapacityBytes: capacity,
 		VolumeId:      id.String(),
 		VolumeContext: params,
 		ContentSource: req.GetVolumeContentSource(),
@@ -232,10 +227,10 @@ func (l *LVM) GetCapacity(ctx context.Context, req *csi.GetCapacityRequest) (*cs
 	if params == nil {
 		params = make(map[string]string)
 	}
-	if params[VolumeGroupNameParam] == "" {
-		params[VolumeGroupNameParam] = DefaultVolumeGroup
+	if params[VolumeGroupParam] == "" {
+		params[VolumeGroupParam] = DefaultVolumeGroup
 	}
-	span.SetAttributes(attribute.String("vol.group", params[VolumeGroupNameParam]))
+	span.SetAttributes(attribute.String("vol.group", params[VolumeGroupParam]))
 
 	for k, v := range params {
 		span.SetAttributes(attribute.String(k, v))
@@ -261,7 +256,7 @@ func (l *LVM) GetCapacity(ctx context.Context, req *csi.GetCapacityRequest) (*cs
 
 	// Fetch the available capacity for the volume group, or the matching disks
 	// if not created yet.
-	availableCapacity, err := l.AvailableCapacity(ctx, params[VolumeGroupNameParam])
+	availableCapacity, err := l.AvailableCapacity(ctx, params[VolumeGroupParam])
 	if err != nil {
 		return nil, err
 	}
@@ -383,12 +378,12 @@ func (l *LVM) ValidateCapabilities(ctx context.Context, req *csi.ValidateVolumeC
 	// params is optional and can be empty. We don't want to default to some
 	// group because VG will be present in the volume id. If the volume group
 	// name is set, check if it matches the volume id.
-	if _, ok := params[VolumeGroupNameParam]; ok {
-		if id.VolumeGroup != params[VolumeGroupNameParam] {
+	if _, ok := params[VolumeGroupParam]; ok {
+		if id.VolumeGroup != params[VolumeGroupParam] {
 			log.Error(err, "volume group name does not match", "name", req.GetVolumeId())
 			span.SetStatus(codes.Error, "volume group name does not match")
 			span.RecordError(err)
-			return nil, fmt.Errorf("volume group name %s does not match volume id %s", params[VolumeGroupNameParam], req.GetVolumeId())
+			return nil, fmt.Errorf("volume group name %s does not match volume id %s", params[VolumeGroupParam], req.GetVolumeId())
 		}
 	}
 

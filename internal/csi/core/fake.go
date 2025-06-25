@@ -85,7 +85,7 @@ func (f *Fake) NodeExpandVolume(ctx context.Context, req *csi.NodeExpandVolumeRe
 	}, nil
 }
 
-func (f *Fake) NodeEnsureVolume(ctx context.Context, volumeId string, params map[string]string) error {
+func (f *Fake) NodeEnsureVolume(ctx context.Context, volumeId string, capacity int64, limit int64) error {
 	if f.Err != nil {
 		return f.Err
 	}

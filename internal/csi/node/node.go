@@ -17,6 +17,7 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/resource"
 	"k8s.io/client-go/tools/record"
 	"k8s.io/kubernetes/pkg/volume"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -24,6 +25,7 @@ import (
 
 	"local-csi-driver/internal/csi/capability"
 	"local-csi-driver/internal/csi/core"
+	"local-csi-driver/internal/csi/core/lvm"
 	"local-csi-driver/internal/csi/mounter"
 	"local-csi-driver/internal/pkg/events"
 )
@@ -418,7 +420,16 @@ func (ns *Server) NodeStageVolume(ctx context.Context, req *csi.NodeStageVolumeR
 	if pv.Spec.CSI != nil && pv.Spec.CSI.VolumeAttributes != nil {
 		// Call volume manager to ensure the volume exists. Re-creating empty
 		// volumes is acceptable for local volumes.
-		if err := ns.volume.NodeEnsureVolume(ctx, req.GetVolumeId(), pv.Spec.CSI.VolumeAttributes); err != nil {
+
+		// Get the capacity request from the PV attributes.
+		capacityBytes, limitBytes, err := getCapacityAndLimit(pv.Spec.CSI.VolumeAttributes)
+		if err != nil {
+			log.Error(err, "failed to get capacity and limit from pv attributes")
+			span.SetStatus(otcodes.Error, "failed to get capacity and limit from pv attributes")
+			return nil, status.Error(codes.Internal, err.Error())
+		}
+
+		if err := ns.volume.NodeEnsureVolume(ctx, req.GetVolumeId(), capacityBytes, limitBytes); err != nil {
 			log.Error(err, "failed to publish volume")
 			span.SetStatus(otcodes.Error, "failed to publish volume")
 			span.RecordError(err)
@@ -471,6 +482,31 @@ func (ns *Server) NodeStageVolume(ctx context.Context, req *csi.NodeStageVolumeR
 	log.V(2).Info("mounted")
 	span.SetStatus(otcodes.Ok, "mounted")
 	return &csi.NodeStageVolumeResponse{}, nil
+}
+
+// getCapacityAndLimit retrieves the capacity and limit from the PV attributes.
+func getCapacityAndLimit(attrs map[string]string) (capacityBytes, limitBytes int64, err error) {
+	c, ok := attrs[lvm.CapacityParam]
+	if !ok {
+		return 0, 0, fmt.Errorf("volume request size is missing in pv attributes - recovery impossible")
+	}
+	if len(c) > 0 {
+		capacity, err := resource.ParseQuantity(attrs[lvm.CapacityParam])
+		if err != nil {
+			return 0, 0, fmt.Errorf("failed to parse volume request size from pv attribute %s=%s: %w", lvm.CapacityParam, attrs[lvm.CapacityParam], err)
+		}
+		capacityBytes = capacity.Value()
+	}
+
+	if l, ok := attrs[lvm.LimitParam]; ok && len(l) > 0 {
+		limit, err := resource.ParseQuantity(l)
+		if err != nil {
+			return 0, 0, fmt.Errorf("failed to parse volume limit size from pv attribute %s=%s: %w", lvm.LimitParam, attrs[lvm.LimitParam], err)
+		}
+		limitBytes = limit.Value()
+	}
+
+	return capacityBytes, limitBytes, nil
 }
 
 func (ns *Server) NodeUnstageVolume(ctx context.Context, req *csi.NodeUnstageVolumeRequest) (*csi.NodeUnstageVolumeResponse, error) {

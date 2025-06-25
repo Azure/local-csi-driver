@@ -256,6 +256,76 @@ func TestServer_CreateVolume(t *testing.T) {
 						AccessMode: &csi.VolumeCapability_AccessMode{
 							Mode: csi.VolumeCapability_AccessMode_MULTI_NODE_READER_ONLY,
 						},
+						AccessType: &csi.VolumeCapability_Mount{
+							Mount: &csi.VolumeCapability_MountVolume{},
+						},
+					},
+				},
+			},
+			wantErr: true,
+			errCode: codes.InvalidArgument,
+		},
+		{
+			name: "invalid volume capacity request",
+			req: &csi.CreateVolumeRequest{
+				Name: "test-volume",
+				CapacityRange: &csi.CapacityRange{
+					RequiredBytes: -1, // Invalid capacity
+				},
+				VolumeCapabilities: []*csi.VolumeCapability{
+					{
+						AccessMode: &csi.VolumeCapability_AccessMode{
+							Mode: csi.VolumeCapability_AccessMode_SINGLE_NODE_WRITER,
+						},
+						AccessType: &csi.VolumeCapability_Mount{
+							Mount: &csi.VolumeCapability_MountVolume{},
+						},
+					},
+				},
+			},
+			wantErr: true,
+			errCode: codes.InvalidArgument,
+		},
+		{
+			name: "invalid volume capacity limit",
+			req: &csi.CreateVolumeRequest{
+				Name: "test-volume",
+				CapacityRange: &csi.CapacityRange{
+					RequiredBytes: 1024 * 1024 * 1024, // Valid capacity
+					LimitBytes:    -1,                 // Invalid limit
+				},
+
+				VolumeCapabilities: []*csi.VolumeCapability{
+					{
+						AccessMode: &csi.VolumeCapability_AccessMode{
+							Mode: csi.VolumeCapability_AccessMode_SINGLE_NODE_WRITER,
+						},
+						AccessType: &csi.VolumeCapability_Mount{
+							Mount: &csi.VolumeCapability_MountVolume{},
+						},
+					},
+				},
+			},
+			wantErr: true,
+			errCode: codes.InvalidArgument,
+		},
+		{
+			name: "invalid volume capacity limit lower than requested",
+			req: &csi.CreateVolumeRequest{
+				Name: "test-volume",
+				CapacityRange: &csi.CapacityRange{
+					RequiredBytes: 1024 * 1024 * 1024, // Valid capacity
+					LimitBytes:    1024,               // Lower than requested
+				},
+
+				VolumeCapabilities: []*csi.VolumeCapability{
+					{
+						AccessMode: &csi.VolumeCapability_AccessMode{
+							Mode: csi.VolumeCapability_AccessMode_SINGLE_NODE_WRITER,
+						},
+						AccessType: &csi.VolumeCapability_Mount{
+							Mount: &csi.VolumeCapability_MountVolume{},
+						},
 					},
 				},
 			},

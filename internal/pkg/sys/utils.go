@@ -7,8 +7,6 @@ package sys
 import (
 	"fmt"
 	"os"
-	"strconv"
-	"strings"
 	"syscall"
 
 	"k8s.io/utils/exec"
@@ -22,7 +20,6 @@ const (
 type Utils interface {
 	IsBlockDevice(path string) (bool, error)
 	IsBlkDevUnformatted(device string) (bool, error)
-	StringToUInt64(sizeStr string) (uint64, error)
 }
 
 // sys is a concrete implementation of the Utils interface.
@@ -92,56 +89,4 @@ func (s *sys) IsBlkDevUnformatted(blockDev string) (bool, error) {
 		}
 	}
 	return false, nil
-}
-
-// parseSize parses a size string (e.g., "16.00g") and returns the size in bytes
-// Not used at the moment, will be required during vgStatus implementation when
-// we change the size to uint64.
-func (s *sys) StringToUInt64(sizeStr string) (uint64, error) {
-	sizeStr = strings.ToLower(sizeStr)
-	var multiplier uint64 = 1
-	switch {
-	case strings.HasSuffix(sizeStr, "k"):
-		multiplier = 1024
-		sizeStr = strings.TrimSuffix(sizeStr, "k")
-	case strings.HasSuffix(sizeStr, "m"):
-		multiplier = 1024 * 1024
-		sizeStr = strings.TrimSuffix(sizeStr, "m")
-	case strings.HasSuffix(sizeStr, "g"):
-		multiplier = 1024 * 1024 * 1024
-		sizeStr = strings.TrimSuffix(sizeStr, "g")
-	case strings.HasSuffix(sizeStr, "t"):
-		multiplier = 1024 * 1024 * 1024 * 1024
-		sizeStr = strings.TrimSuffix(sizeStr, "t")
-	}
-	size, err := strconv.ParseFloat(sizeStr, 64)
-	if err != nil {
-		return 0, err
-	}
-	return uint64(size * float64(multiplier)), nil
-}
-
-// parseSize parses a size string (e.g., "16.00g") and returns the size in bytes.
-func (s *sys) StringToInt(sizeStr string) (uint64, error) {
-	sizeStr = strings.ToLower(sizeStr)
-	var multiplier uint64 = 1
-	switch {
-	case strings.HasSuffix(sizeStr, "k"):
-		multiplier = 1024
-		sizeStr = strings.TrimSuffix(sizeStr, "k")
-	case strings.HasSuffix(sizeStr, "m"):
-		multiplier = 1024 * 1024
-		sizeStr = strings.TrimSuffix(sizeStr, "m")
-	case strings.HasSuffix(sizeStr, "g"):
-		multiplier = 1024 * 1024 * 1024
-		sizeStr = strings.TrimSuffix(sizeStr, "g")
-	case strings.HasSuffix(sizeStr, "t"):
-		multiplier = 1024 * 1024 * 1024 * 1024
-		sizeStr = strings.TrimSuffix(sizeStr, "t")
-	}
-	size, err := strconv.ParseFloat(sizeStr, 64)
-	if err != nil {
-		return 0, err
-	}
-	return uint64(size * float64(multiplier)), nil
 }

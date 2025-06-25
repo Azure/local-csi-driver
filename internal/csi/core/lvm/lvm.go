@@ -18,7 +18,6 @@ import (
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	storagev1 "k8s.io/api/storage/v1"
-	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
@@ -30,10 +29,8 @@ import (
 )
 
 const (
-	// VolumeGroupNameParam is the expected key used in the volume create
-	// request to specify the LVM volume group name where the logical volume
-	// should be created.
-	VolumeGroupNameParam = "local.csi.azure.com/vg"
+	// DriverName as registered with Kubernetes.
+	DriverName = "local.csi.azure.com"
 
 	// DefaultVolumeGroup is the default volume group name used if no
 	// VolumeGroupNameParam is specified in the volume create request.
@@ -50,15 +47,8 @@ const (
 	// Raid0LvType is the logical volume type for raid0.
 	raid0LvType = "raid0"
 
-	// SizeMiBKey is the expected key used in the volume context to specify
-	// the size of the logical volume in MiB.
-	SizeMiBKey = "sizeMiB"
-
 	// ID is the unique identifier of the CSI driver, used internally.
 	ID = "lvm"
-
-	// DriverName as registered with Kubernetes.
-	DriverName = "local.csi.azure.com"
 
 	// Physical Volume (PV) related event reasons.
 	provisioningPhysicalVolume       = "ProvisioningPhysicalVolume"
@@ -75,6 +65,21 @@ const (
 	provisionedLogicalVolume             = "ProvisionedLogicalVolume"
 	provisioningLogicalVolumeFailed      = "ProvisioningLogicalVolumeFailed"
 	provisionedLogicalVolumeSizeMismatch = "ProvisionedLogicalVolumeSizeMismatch"
+)
+
+// Volume context parameters.
+var (
+	// VolumeGroupParam is the expected key used in the volume create request to
+	// specify the LVM volume group name where the logical volume should be
+	// created.
+	VolumeGroupParam = DriverName + "/vg"
+
+	// CapacityParam and LimitParam are used in the volume context to specify
+	// the requested and maximum size of the logical volume. It is used for PV
+	// recovery during NodeStageVolume to recreate the volume if it doesn't
+	// exist.
+	CapacityParam = DriverName + "/capacity"
+	LimitParam    = DriverName + "/limit"
 )
 
 var (
@@ -373,8 +378,12 @@ func (l *LVM) EnsurePhysicalVolumes(ctx context.Context) ([]string, error) {
 // EnsureVolume ensures that the volume exists with the given name and size.
 // If the volume already exists, it returns it. Otherwise it creates the
 // volume and returns it.
-func (l *LVM) EnsureVolume(ctx context.Context, volumeId string, params map[string]string) error {
-	ctx, span := l.tracer.Start(ctx, "volume.lvm.csi/EnsureVolume")
+func (l *LVM) EnsureVolume(ctx context.Context, volumeId string, capacity int64, limit int64) error {
+	ctx, span := l.tracer.Start(ctx, "volume.lvm.csi/EnsureVolume", trace.WithAttributes(
+		attribute.String("vol.id", volumeId),
+		attribute.Int64("vol.capacity", capacity),
+		attribute.Int64("vol.limit", limit),
+	))
 	defer span.End()
 
 	log := log.FromContext(ctx).WithValues("volumeId", volumeId)
@@ -390,30 +399,15 @@ func (l *LVM) EnsureVolume(ctx context.Context, volumeId string, params map[stri
 
 	log = log.WithValues("vg", id.VolumeGroup, "lv", id.LogicalVolume)
 
-	sizeMiB := params[SizeMiBKey]
-	if sizeMiB == "" {
-		log.Error(fmt.Errorf("volume size is required"), "sizeMiB", sizeMiB)
-		span.SetStatus(codes.Error, "volume size is required")
-		return fmt.Errorf("%w: sizeMiB is required", core.ErrInvalidArgument)
-	}
-	capacityRequest, err := resource.ParseQuantity(sizeMiB)
-	if err != nil {
-		log.Error(err, "failed to parse sizeMiB", "sizeMiB", sizeMiB)
-		span.SetStatus(codes.Error, "failed to parse sizeMiB")
-		return fmt.Errorf("%w: failed to parse sizeMiB %s: %w", core.ErrInvalidArgument, sizeMiB, err)
-	}
-
-	volumeGroupName := params[VolumeGroupNameParam]
-	if volumeGroupName == "" {
-		log.Error(fmt.Errorf("volume group name is required"), "paramsVg", volumeGroupName)
+	if id.VolumeGroup == "" {
+		log.Error(fmt.Errorf("volume group name is required"), "vg", id.VolumeGroup)
 		span.SetStatus(codes.Error, "volume group name is required")
 		return fmt.Errorf("%w: volume group name is required", core.ErrInvalidArgument)
 	}
-
-	if id.VolumeGroup != volumeGroupName {
-		log.Error(fmt.Errorf("volume group name does not match volume id"), "paramsVg", volumeGroupName)
-		span.SetStatus(codes.Error, "volume group name does not match volume id")
-		return fmt.Errorf("%w: volume group name %s does not match volume id vg %s", core.ErrInvalidArgument, volumeGroupName, id.VolumeGroup)
+	if capacity <= 0 || limit < 0 || (limit > 0 && limit < capacity) {
+		log.Error(fmt.Errorf("invalid capacity or limit"), "capacity", capacity, "limit", limit)
+		span.SetStatus(codes.Error, "invalid capacity or limit")
+		return fmt.Errorf("%w: invalid capacity %d or limit %d", core.ErrInvalidArgument, capacity, limit)
 	}
 
 	// Check for existing volume on the node.
@@ -423,16 +417,15 @@ func (l *LVM) EnsureVolume(ctx context.Context, volumeId string, params map[stri
 		return err
 	}
 	if err == nil && lv != nil {
-		log.V(2).Info("found existing volume", "sizeMiB", lv.Size)
-		span.AddEvent("found existing volume", trace.WithAttributes(attribute.Int64("sizeMiB", int64(lv.Size))))
+		log.V(2).Info("found existing volume", "bytes", lv.Size)
+		span.AddEvent("found existing volume", trace.WithAttributes(attribute.Int64("bytes", int64(lv.Size))))
 
 		// Check volume size.
-		// TODO(sc): proper validation, see: https://github.com/kubernetes-csi/csi-driver-host-path/blob/a7a88c4a960b242daa4e639559a8529ccf8f2acd/pkg/hostpath/controllerserver.go#L87-L110
-		if capacityRequest.CmpInt64(int64(lv.Size)) != 0 {
-			log.Error(err, "volume size mismatch", "expected", capacityRequest.String(), "actual", lv.Size)
+		if int64(lv.Size) < capacity || (limit > 0 && int64(lv.Size) > limit) {
+			log.Error(err, "volume size mismatch", "request", capacity, "limit", limit, "actual", lv.Size)
 			span.SetStatus(codes.Error, "volume size mismatch")
-			recorder.Eventf(corev1.EventTypeWarning, provisionedLogicalVolumeSizeMismatch, "Volume size mismatch %s/%s : expected %s, actual %d", id.VolumeGroup, id.LogicalVolume, capacityRequest.String(), lv.Size)
-			return fmt.Errorf("volume size mismatch: expected %s, actual %d: %w", capacityRequest.String(), lv.Size, core.ErrVolumeSizeMismatch)
+			recorder.Eventf(corev1.EventTypeWarning, provisionedLogicalVolumeSizeMismatch, "Volume size mismatch %s/%s: request %d, limit %d, actual %d", id.VolumeGroup, id.LogicalVolume, capacity, limit, lv.Size)
+			return fmt.Errorf("volume size mismatch: request %d, limit %d, actual %d: %w", capacity, limit, lv.Size, core.ErrVolumeSizeMismatch)
 		}
 		return nil
 	}
@@ -470,7 +463,7 @@ func (l *LVM) EnsureVolume(ctx context.Context, volumeId string, params map[stri
 	createOps := lvm.CreateLVOptions{
 		Name:   id.LogicalVolume,
 		VGName: vg.Name,
-		Size:   capacityRequest.String(),
+		Size:   fmt.Sprintf("%dB", capacity),
 	}
 
 	// if we have more than one PV, create a raid0 volume. Otherwise, create a
@@ -481,7 +474,7 @@ func (l *LVM) EnsureVolume(ctx context.Context, volumeId string, params map[stri
 	}
 
 	if err := l.lvm.CreateLogicalVolume(ctx, createOps); err != nil {
-		log.Error(err, "failed to create logical volume", "sizeMiB", sizeMiB)
+		log.Error(err, "failed to create logical volume", "capacity", capacity)
 		span.SetStatus(codes.Error, "failed to create logical volume")
 		span.RecordError(err)
 		recorder.Eventf(corev1.EventTypeWarning, provisioningLogicalVolumeFailed, "Provisioning logical volume %s/%s failed: %s", id.VolumeGroup, id.LogicalVolume, err)
@@ -490,8 +483,8 @@ func (l *LVM) EnsureVolume(ctx context.Context, volumeId string, params map[stri
 		}
 		return fmt.Errorf("failed to create logical volume: %w", err)
 	}
-	log.V(1).Info("created logical volume", "sizeMiB", sizeMiB)
-	span.AddEvent("created logical volume", trace.WithAttributes(attribute.String("sizeMiB", sizeMiB)))
+	log.V(1).Info("created logical volume", "capacity", capacity)
+	span.AddEvent("created logical volume", trace.WithAttributes(attribute.Int64("capacity", capacity)))
 	recorder.Eventf(corev1.EventTypeNormal, provisionedLogicalVolume, "Successfully provisioned logical volume %s/%s", id.VolumeGroup, id.LogicalVolume)
 	return nil
 }

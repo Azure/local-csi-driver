@@ -431,17 +431,14 @@ func TestEnsureVolume(t *testing.T) {
 	t.Parallel()
 	testVg := &lvmMgr.VolumeGroup{Name: "vg"}
 	// Use bytes for size: 1024MiB == 1073741824 bytes
-	testLv := &lvmMgr.LogicalVolume{Name: "lv", Size: lvmMgr.Int64String(convert.MiBToBytes(1024))}
-	testLvWrongSize := &lvmMgr.LogicalVolume{Name: "lv", Size: lvmMgr.Int64String(convert.MiBToBytes(2048))}
-	// params size in bytes
-	params := map[string]string{
-		lvm.VolumeGroupNameParam: "vg",
-		lvm.SizeMiBKey:           "1024Mi",
-	}
+	testLv1GiB := &lvmMgr.LogicalVolume{Name: "lv", Size: lvmMgr.Int64String(convert.MiBToBytes(1024))}
+	testLv2GiB := &lvmMgr.LogicalVolume{Name: "lv", Size: lvmMgr.Int64String(convert.MiBToBytes(2048))}
+
 	tests := []struct {
 		name        string
 		volumeId    string
-		params      map[string]string
+		request     int64
+		limit       int64
 		expectLvm   func(*lvmMgr.MockManager)
 		expectProbe func(*probe.Mock)
 		expectedErr error
@@ -449,42 +446,44 @@ func TestEnsureVolume(t *testing.T) {
 		{
 			name:        "empty vg name",
 			volumeId:    "lv",
-			params:      params,
+			request:     convert.MiBToBytes(1024),
 			expectLvm:   nil,
 			expectedErr: core.ErrInvalidArgument,
 		},
 		{
-			name:        "missing sizeMiB",
+			name:        "zero request size",
 			volumeId:    "vg#lv",
-			params:      map[string]string{},
+			request:     0,
 			expectLvm:   nil,
 			expectedErr: core.ErrInvalidArgument,
 		},
 		{
-			name:        "invalid sizeMiB",
+			name:        "invalid request size",
 			volumeId:    "vg#lv",
-			params:      map[string]string{lvm.SizeMiBKey: "invalid"},
+			request:     -1,
 			expectLvm:   nil,
 			expectedErr: core.ErrInvalidArgument,
 		},
 		{
-			name:        "missing VolumeGroupName",
+			name:        "invalid limit size",
 			volumeId:    "vg#lv",
-			params:      map[string]string{lvm.SizeMiBKey: "1024MiB"},
+			request:     convert.MiBToBytes(1024),
+			limit:       -1,
 			expectLvm:   nil,
 			expectedErr: core.ErrInvalidArgument,
 		},
 		{
-			name:        "vg param does not match volumeId",
+			name:        "limit less than request size",
 			volumeId:    "vg#lv",
-			params:      map[string]string{lvm.VolumeGroupNameParam: "vg2", lvm.SizeMiBKey: "1024MiB"},
+			request:     convert.MiBToBytes(2048),
+			limit:       convert.MiBToBytes(1024),
 			expectLvm:   nil,
 			expectedErr: core.ErrInvalidArgument,
 		},
 		{
 			name:     "get lv error",
 			volumeId: "vg#lv",
-			params:   params,
+			request:  convert.MiBToBytes(1024),
 			expectLvm: func(m *lvmMgr.MockManager) {
 				m.EXPECT().GetLogicalVolume(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, errTestInternal)
 			},
@@ -493,25 +492,34 @@ func TestEnsureVolume(t *testing.T) {
 		{
 			name:     "lv already exists",
 			volumeId: "vg#lv",
-			params:   params,
+			request:  convert.MiBToBytes(1024),
 			expectLvm: func(m *lvmMgr.MockManager) {
-				m.EXPECT().GetLogicalVolume(gomock.Any(), gomock.Any(), gomock.Any()).Return(testLv, nil)
+				m.EXPECT().GetLogicalVolume(gomock.Any(), gomock.Any(), gomock.Any()).Return(testLv1GiB, nil)
 			},
 			expectedErr: nil,
 		},
 		{
-			name:     "create lv error size mismatch",
+			name:     "create lv got larger volume",
 			volumeId: "vg#lv",
-			params:   params,
+			request:  convert.MiBToBytes(2024),
 			expectLvm: func(m *lvmMgr.MockManager) {
-				m.EXPECT().GetLogicalVolume(gomock.Any(), gomock.Any(), gomock.Any()).Return(testLvWrongSize, nil)
+				m.EXPECT().GetLogicalVolume(gomock.Any(), gomock.Any(), gomock.Any()).Return(testLv2GiB, nil)
+			},
+			expectedErr: nil,
+		},
+		{
+			name:     "create lv got smaller volume",
+			volumeId: "vg#lv",
+			request:  convert.MiBToBytes(2024),
+			expectLvm: func(m *lvmMgr.MockManager) {
+				m.EXPECT().GetLogicalVolume(gomock.Any(), gomock.Any(), gomock.Any()).Return(testLv1GiB, nil)
 			},
 			expectedErr: core.ErrVolumeSizeMismatch,
 		},
 		{
 			name:     "vg already exists, create lv",
 			volumeId: "vg#lv",
-			params:   params,
+			request:  convert.MiBToBytes(1024),
 			expectLvm: func(m *lvmMgr.MockManager) {
 				m.EXPECT().GetLogicalVolume(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, nil)
 				m.EXPECT().GetVolumeGroup(gomock.Any(), gomock.Any()).Return(testVg, nil)
@@ -522,7 +530,7 @@ func TestEnsureVolume(t *testing.T) {
 		{
 			name:     "vg already exists, create lv striped",
 			volumeId: "vg#lv",
-			params:   params,
+			request:  convert.MiBToBytes(1024),
 			expectLvm: func(m *lvmMgr.MockManager) {
 				stripedVg := &lvmMgr.VolumeGroup{
 					Name:    "vg",
@@ -531,7 +539,7 @@ func TestEnsureVolume(t *testing.T) {
 				createArgs := lvmMgr.CreateLVOptions{
 					Name:    "lv",
 					VGName:  "vg",
-					Size:    "1Gi",
+					Size:    "1073741824B",
 					Type:    "raid0",
 					Stripes: ptr.Of(4),
 				}
@@ -544,7 +552,7 @@ func TestEnsureVolume(t *testing.T) {
 		{
 			name:     "get vg error",
 			volumeId: "vg#lv",
-			params:   params,
+			request:  convert.MiBToBytes(1024),
 			expectLvm: func(m *lvmMgr.MockManager) {
 				m.EXPECT().GetLogicalVolume(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, nil)
 				m.EXPECT().GetVolumeGroup(gomock.Any(), gomock.Any()).Return(nil, errTestInternal)
@@ -554,7 +562,7 @@ func TestEnsureVolume(t *testing.T) {
 		{
 			name:     "ensure physical volumes error",
 			volumeId: "vg#lv",
-			params:   params,
+			request:  convert.MiBToBytes(1024),
 			expectLvm: func(m *lvmMgr.MockManager) {
 				m.EXPECT().GetLogicalVolume(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, nil)
 				m.EXPECT().GetVolumeGroup(gomock.Any(), gomock.Any()).Return(nil, lvmMgr.ErrNotFound)
@@ -567,7 +575,7 @@ func TestEnsureVolume(t *testing.T) {
 		{
 			name:     "ensure vg error",
 			volumeId: "vg#lv",
-			params:   params,
+			request:  convert.MiBToBytes(1024),
 			expectLvm: func(m *lvmMgr.MockManager) {
 				m.EXPECT().GetLogicalVolume(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, nil)
 				m.EXPECT().GetVolumeGroup(gomock.Any(), gomock.Any()).Return(nil, lvmMgr.ErrNotFound)
@@ -596,7 +604,7 @@ func TestEnsureVolume(t *testing.T) {
 			if tt.expectProbe != nil {
 				tt.expectProbe(p)
 			}
-			err = l.EnsureVolume(context.Background(), tt.volumeId, tt.params)
+			err = l.EnsureVolume(context.Background(), tt.volumeId, tt.request, tt.limit)
 			if !errors.Is(err, tt.expectedErr) {
 				t.Errorf("EnsureVolume() error = %v, expectErr %v", err, tt.expectedErr)
 			}

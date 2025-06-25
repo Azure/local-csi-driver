@@ -86,6 +86,16 @@ func (cs *Server) CreateVolume(ctx context.Context, req *csi.CreateVolumeRequest
 		return nil, status.Error(codes.InvalidArgument, err.Error())
 	}
 
+	// Validate capacity.
+	capacity := req.GetCapacityRange().GetRequiredBytes()
+	limit := req.GetCapacityRange().GetLimitBytes()
+	if capacity < 0 || limit < 0 {
+		return nil, status.Error(codes.InvalidArgument, "cannot have negative capacity")
+	}
+	if limit > 0 && capacity > limit {
+		return nil, status.Error(codes.InvalidArgument, "capacity cannot exceed limit")
+	}
+
 	// Fetch PVC to be used as reference object in events.
 	var pvc *corev1.PersistentVolumeClaim
 	if req.Parameters[core.PVCNameParam] != "" && req.Parameters[core.PVCNamespaceParam] != "" {
