@@ -31,15 +31,23 @@ permissions:
   contents: read
   id-token: write
 
+
 jobs:
   build-docker:
-    runs-on: ubuntu-latest
-    environment: pull-request
     strategy:
       matrix:
         image:
           - name: local-csi-driver
             dockerfile: Dockerfile
+        arch:
+          - runs-on: ubuntu-latest
+            platforms: linux/amd64
+            tag-suffix: amd64
+          - runs-on: ubuntu-24.04-arm
+            platforms: linux/arm64
+            tag-suffix: arm64
+    runs-on: ${{ matrix.arch.runs-on }}
+    environment: pull-request
     steps:
       - name: Harden the runner (Audit all outbound calls)
         uses: step-security/harden-runner@002fdce3c6a235733a90a27c80493a3241e56863 # v2.12.1
@@ -61,9 +69,6 @@ jobs:
       - name: ACR login
         run: az acr login -n ${{ inputs.registry }}
 
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@29109295f81e9208d7d86ff1c6c12d2833863392 # v3.6.0
-
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@e468171a9de216ec08956ac3ada2f0791b6bd435 # v3.11.1
 
@@ -80,7 +85,7 @@ jobs:
             if [[ -z "$tag" ]]; then
               continue
             fi
-            tags+=("${{ inputs.registry }}/${{ inputs.repo_base }}/${{ matrix.image.name }}:${tag}")
+            tags+=("${{ inputs.registry }}/${{ inputs.repo_base }}/${{ matrix.image.name }}:${tag}-${{ matrix.arch.tag-suffix }}")
           done <<< "${{ inputs.tags }}"
 
           echo "tags=$(IFS=,; echo "${tags[*]}")" >> "$GITHUB_OUTPUT"
@@ -92,7 +97,7 @@ jobs:
           file: ${{ matrix.image.dockerfile }}
           push: true
           tags: ${{ steps.set-tags.outputs.tags }}
-          platforms: linux/amd64,linux/arm64
+          platforms: ${{ matrix.arch.platforms }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
           build-args: |
@@ -100,3 +105,44 @@ jobs:
             VERSION=${{ inputs.version }}
             GIT_COMMIT=${{ github.sha }}
             BUILD_DATE=${{ steps.build-date.outputs.date }}
+
+  push-manifest:
+    needs: build-docker
+    runs-on: ubuntu-latest
+    environment: pull-request
+    strategy:
+      matrix:
+        image:
+          - name: local-csi-driver
+            dockerfile: Dockerfile
+    steps:
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@e468171a9de216ec08956ac3ada2f0791b6bd435 # v3.11.1
+
+      - name: Azure CLI Login
+        uses: azure/login@a457da9ea143d694b1b9c7c869ebb04ebe844ef5 # v2.3.0
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: ACR login
+        run: az acr login -n ${{ inputs.registry }}
+
+      - name: Create and push manifest
+        run: |
+          set -eou pipefail
+          tags=()
+          while IFS= read -r tag; do
+            if [[ -z "$tag" ]]; then
+              continue
+            fi
+            tags+=("${{ inputs.registry }}/${{ inputs.repo_base }}/${{ matrix.image.name }}:${tag}")
+          done <<< "${{ inputs.tags }}"
+
+          for tag in "${tags[@]}"; do
+            docker buildx imagetools create \
+              -t "$tag" \
+              "$tag-amd64" \
+              "$tag-arm64"
+          done
