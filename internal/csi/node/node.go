@@ -488,7 +488,7 @@ func (ns *Server) NodeStageVolume(ctx context.Context, req *csi.NodeStageVolumeR
 func getCapacityAndLimit(attrs map[string]string) (capacityBytes, limitBytes int64, err error) {
 	c, ok := attrs[lvm.CapacityParam]
 	if !ok {
-		return 0, 0, fmt.Errorf("volume request size is missing in pv attributes - recovery impossible")
+		return 0, 0, fmt.Errorf("volume request size is missing in pv attribute %s - recovery impossible", lvm.CapacityParam)
 	}
 	if len(c) > 0 {
 		capacity, err := resource.ParseQuantity(attrs[lvm.CapacityParam])
