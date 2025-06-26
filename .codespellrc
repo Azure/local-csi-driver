@@ -1,2 +1,4 @@
 [codespell]
+# https://github.com/codespell-project/codespell#using-a-config-file
+skip = go.sum
 ignore-words-list = aks,AKS,Aks,NotIn
