@@ -207,7 +207,7 @@ func TestLVM_Create(t *testing.T) {
 			wantErr: false,
 		},
 		{
-			name: "with limit lower than request", // Validation that prevents this is in the controller.
+			name: "with limit lower than request",
 			req: &csi.CreateVolumeRequest{
 				Name: "test-volume",
 				CapacityRange: &csi.CapacityRange{
@@ -223,23 +223,8 @@ func TestLVM_Create(t *testing.T) {
 				},
 				Parameters: map[string]string{},
 			},
-			want: &csi.Volume{
-				VolumeId:      "containerstorage#test-volume",
-				CapacityBytes: 2147483648, // 2 GiB
-				VolumeContext: map[string]string{
-					"local.csi.azure.com/vg":       "containerstorage",
-					"local.csi.azure.com/capacity": "2147483648",
-					"local.csi.azure.com/limit":    "1073741824",
-				},
-				AccessibleTopology: []*csi.Topology{
-					{
-						Segments: map[string]string{
-							"topology.local.csi.azure.com/node": "nodename",
-						},
-					},
-				},
-			},
-			wantErr: false,
+			want:    nil,
+			wantErr: true,
 		},
 	}
 	for _, tt := range tests {
