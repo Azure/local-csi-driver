@@ -1,6 +1,7 @@
 # Troubleshooting Guide
 
-This guide provides troubleshooting steps for common issues with the local-csi-driver.
+This guide provides troubleshooting steps for common issues with the
+local-csi-driver.
 
 ## Collecting Diagnostic Information
 
@@ -15,8 +16,8 @@ To generate a support bundle:
 make get-support-bundle
 ```
 
-This will create a support bundle in the `support-bundles` directory.
-You can specify a specific time range with:
+This will create a support bundle in the `support-bundles` directory. You can
+specify a specific time range with:
 
 ```sh
 SUPPORT_BUNDLE_SINCE_TIME="2023-06-01T00:00:00Z" make get-support-bundle
@@ -24,8 +25,8 @@ SUPPORT_BUNDLE_SINCE_TIME="2023-06-01T00:00:00Z" make get-support-bundle
 
 ### Checking Logs
 
-Logs are essential for troubleshooting. You can view logs for the local-csi-driver
-components using kubectl:
+Logs are essential for troubleshooting. You can view logs for the
+local-csi-driver components using kubectl:
 
 ```sh
 # View logs
@@ -34,7 +35,8 @@ kubectl logs -n kube-system daemonsets/csi-local-node --prefix --all-containers
 
 ### Checking Kubernetes Events
 
-Kubernetes events provide valuable information about what's happening in the cluster:
+Kubernetes events provide valuable information about what's happening in the
+cluster:
 
 ```sh
 # View all events in the namespace
@@ -130,8 +132,8 @@ If you're using a non-ephemeral volume and encounter issues:
 2. The annotation should include:
 
    ```yaml
-   local.csi.azure.com/accept-ephemeral-storage: "true"
+   localdisk.csi.acstor.io/accept-ephemeral-storage: "true"
    ```
 
-   Make sure that you understand the implications of using ephemeral storage,
-   as data may be lost if the node is deleted or the pod is moved to another node.
+   Make sure that you understand the implications of using ephemeral storage, as
+   data may be lost if the node is deleted or the pod is moved to another node.

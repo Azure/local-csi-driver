@@ -58,7 +58,7 @@ func New(volume core.ControllerInterface, caps []*csi.ControllerServiceCapabilit
 		selectedInitialNodeParam: selectedInitialNodeParam,
 		removePvNodeAffinity:     removePvNodeAffinity,
 		recorder:                 recorder,
-		tracer:                   tp.Tracer("local.csi.azure.com/internal/csi/controller"),
+		tracer:                   tp.Tracer("localdisk.csi.acstor.io/internal/csi/controller"),
 	}
 }
 

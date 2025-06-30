@@ -27,13 +27,13 @@ const (
 
 	// SelectedInitialNodeParam is used by the CSI driver to indicate the node
 	// that received the CreateVolume call and created the volume.
-	SelectedInitialNodeParam = "local.csi.azure.com/selected-initial-node"
+	SelectedInitialNodeParam = "localdisk.csi.acstor.io/selected-initial-node"
 
 	// SelctedNodeAnnotation is used by the CSI driver to indicate the node that
 	// received the NodeStage call in cases where the node is different from the
 	// SelectedInitialNodeParam. In such cases the volume is recreated on
 	// the node that received the NodeStage call to unblock workloads.
-	SelectedNodeAnnotation = "local.csi.azure.com/selected-node"
+	SelectedNodeAnnotation = "localdisk.csi.acstor.io/selected-node"
 )
 
 type Driver struct {

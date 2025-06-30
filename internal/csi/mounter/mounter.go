@@ -86,7 +86,7 @@ func New(tp trace.TracerProvider) *Mounter {
 			Exec:      utilexec.New(),
 		},
 		hostutil.NewHostUtil(),
-		tp.Tracer("local.csi.azure.com/internal/csi/mounter"),
+		tp.Tracer("localdisk.csi.acstor.io/internal/csi/mounter"),
 	}
 }
 

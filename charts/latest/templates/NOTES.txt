@@ -12,8 +12,8 @@ kind: StorageClass
 metadata:
   name: local
 parameters:
-  local.csi.azure.com/vg: containerstorage
-provisioner: local.csi.azure.com
+  localdisk.csi.acstor.io/vg: containerstorage
+provisioner: localdisk.csi.acstor.io
 reclaimPolicy: Delete
 volumeBindingMode: WaitForFirstConsumer
 allowVolumeExpansion: true

@@ -37,7 +37,7 @@ spec:
         labels:
           part-of: e2e-test
         annotations:
-          local.csi.azure.com/accept-ephemeral-storage: "true"
+          localdisk.csi.acstor.io/accept-ephemeral-storage: "true"
       spec:
         accessModes: ["ReadWriteOnce"]
         storageClassName: local

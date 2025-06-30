@@ -62,7 +62,7 @@ webhooks:
       namespace: kube-system
       path: /validate-pvc
   failurePolicy: Fail # Set to fail for tests.
-  name: ephemeral.local.csi.azure.com
+  name: ephemeral.localdisk.csi.acstor.io
   rules:
   - apiGroups:
     - ""

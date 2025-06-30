@@ -3,7 +3,8 @@
 The PVC controller ensures that volumes created in an ephemeral pool (local SSD
 or NVme) where replication has not been enabled, are only created using [generic
 ephemeral volumes]. Standard PVCs create requests will be denied, unless
-`local.csi.azure.com/accept-ephemeral-storage=true` annotation is added to the PVCs.
+`localdisk.csi.acstor.io/accept-ephemeral-storage=true` annotation is added to
+the PVCs.
 
 ## Controller Behaviour
 
@@ -13,12 +14,12 @@ allow them immediately. For PVCs from ephemeral pools, it allows those with
 multiple replicas.
 
 For unreplicated PVCs from ephemeral pools, it only allows them if they have an
-ownerReference set to a Pod or an annotation indicating ephemeral storage is acceptable.
-The former should only happen when a Pod is created with one or more
-[generic ephemeral volumes].
-The Pod is set as the PVC owner, so that when the Pod is deleted, its PVCs are too.
-Otherwise, the annotation `local.csi.azure.com/accept-ephemeral-storage=true`
-should be added to PVCs to be allowed.
+ownerReference set to a Pod or an annotation indicating ephemeral storage is
+acceptable. The former should only happen when a Pod is created with one or more
+[generic ephemeral volumes]. The Pod is set as the PVC owner, so that when the
+Pod is deleted, its PVCs are too. Otherwise, the annotation
+`localdisk.csi.acstor.io/accept-ephemeral-storage=true` should be added to PVCs
+to be allowed.
 
 Manual PVC creation without a required annotation for unreplicated volumes from
 ephemeral pools will be denied and and error sent back immediately.

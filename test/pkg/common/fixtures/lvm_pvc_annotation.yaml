@@ -4,7 +4,7 @@ metadata:
   labels:
     part-of: e2e-test
   annotations:
-    local.csi.azure.com/accept-ephemeral-storage: "true"
+    localdisk.csi.acstor.io/accept-ephemeral-storage: "true"
   name: lvm-pvc-annotation
 spec:
   accessModes:

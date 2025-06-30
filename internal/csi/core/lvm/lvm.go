@@ -30,7 +30,7 @@ import (
 
 const (
 	// DriverName as registered with Kubernetes.
-	DriverName = "local.csi.azure.com"
+	DriverName = "localdisk.csi.acstor.io"
 
 	// DefaultVolumeGroup is the default volume group name used if no
 	// VolumeGroupNameParam is specified in the volume create request.
@@ -42,7 +42,7 @@ const (
 
 	// TopologyKey is the expected key used in the volume request to specify the
 	// node where the volume should be placed.
-	TopologyKey = "topology.local.csi.azure.com/node"
+	TopologyKey = "topology.localdisk.csi.acstor.io/node"
 
 	// Raid0LvType is the logical volume type for raid0.
 	raid0LvType = "raid0"
@@ -183,7 +183,7 @@ func New(k8sclient client.Client, podName, nodeName, releaseNamespace string, pr
 		releaseNamespace: releaseNamespace,
 		probe:            probe,
 		lvm:              lvmMgr,
-		tracer:           tp.Tracer("local.csi.azure.com/internal/csi/api/volume/lvm"),
+		tracer:           tp.Tracer("localdisk.csi.acstor.io/internal/csi/api/volume/lvm"),
 	}, nil
 }
 

@@ -93,7 +93,7 @@ var _ = Describe("When PVC controller is running", Serial, func() {
 			pvc = GenPVC(testStorageClassName, Namespace, "1Gi")
 			err := k8sClient.Create(ctx, pvc)
 			Expect(err).To(HaveOccurred())
-			Expect(err.Error()).Should(ContainSubstring("only generic ephemeral volumes are allowed for local.csi.azure.com provisioner"))
+			Expect(err.Error()).Should(ContainSubstring("only generic ephemeral volumes are allowed for localdisk.csi.acstor.io provisioner"))
 
 		})
 	})
@@ -108,7 +108,7 @@ var _ = Describe("When PVC controller is running", Serial, func() {
 			pvc = GenPVC(testStorageClassName, Namespace, "1Gi")
 			err := k8sClient.Create(ctx, pvc)
 			Expect(err).To(HaveOccurred())
-			Expect(err.Error()).Should(ContainSubstring("only generic ephemeral volumes are allowed for local.csi.azure.com provisioner"))
+			Expect(err.Error()).Should(ContainSubstring("only generic ephemeral volumes are allowed for localdisk.csi.acstor.io provisioner"))
 		})
 	})
 

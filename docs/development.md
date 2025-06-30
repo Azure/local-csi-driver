@@ -133,8 +133,8 @@ For more details on the bicep template and available parameters, refer to the
 
 ### To Deploy
 
-Build and push the Docker image and Helm chart to your registry
-and Helm repository, respectively. You can do this with:
+Build and push the Docker image and Helm chart to your registry and Helm
+repository, respectively. You can do this with:
 
 ```sh
 REGISTRY=<registry> make docker-build helm-build docker-push helm-push
@@ -148,8 +148,8 @@ REGISTRY=<registry> make docker-build helm-build docker-push helm-push helm-inst
 ```
 
 This will build the Docker image, push it to the specified registry, build the
-Helm chart, push it to the specified Helm repository, and install the project
-to your Kubernetes cluster.
+Helm chart, push it to the specified Helm repository, and install the project to
+your Kubernetes cluster.
 
 ### To Uninstall
 
@@ -163,17 +163,17 @@ This will remove the project from your cluster.
 
 ## Testing the project
 
-The project has a number of tests that can be run to ensure that the project
-is working correctly. The tests are divided into categories: unit tests,
-E2E tests, External E2E tests, and sanity tests. The tests are written in Go.
+The project has a number of tests that can be run to ensure that the project is
+working correctly. The tests are divided into categories: unit tests, E2E tests,
+External E2E tests, and sanity tests. The tests are written in Go.
 
-Generally, if something can be tested with a unit test, it should be. If something
-is too complex to test with a unit test, it should be tested with an E2E test.
-The sanity and external E2E tests are conformance tests provided by the
-Kubernetes community to test CSI drivers. For more details on the tests, refer
-to the [test/README.md](./test/README.md) file. Unit tests can be found in the
-[test/README.md](./test/README.md) file. Unit tests can be found throughout the
-project, but other tests are located in the `test` directory.
+Generally, if something can be tested with a unit test, it should be. If
+something is too complex to test with a unit test, it should be tested with an
+E2E test. The sanity and external E2E tests are conformance tests provided by
+the Kubernetes community to test CSI drivers. For more details on the tests,
+refer to the [test/README.md](./test/README.md) file. Unit tests can be found in
+the [test/README.md](./test/README.md) file. Unit tests can be found throughout
+the project, but other tests are located in the `test` directory.
 
 ### Unit tests
 
@@ -196,8 +196,9 @@ REGISTRY=<registry>.azurecr.io make docker-build helm-build docker-push helm-pus
 
 Those tests that are part of e2e suite are run in the cluster. The tests are
 written in Go and use the Ginkgo testing framework. The tests are located in the
-`test/e2e` directory. By default, the test-e2e test target will include tests that
-we can run in a `kind` cluster. If you have a real AKS cluster, you can run the tests
+`test/e2e` directory. By default, the test-e2e test target will include tests
+that we can run in a `kind` cluster. If you have a real AKS cluster, you can run
+the tests
 
 ```sh
 REGISTRY=<registry>.azurecr.io make docker-build helm-build docker-push helm-push test-e2e-aks
@@ -214,8 +215,8 @@ with:
 make single
 ```
 
-Note: Most of the tests are skipped in this mode, as they require a real aks cluster
-to run.
+Note: Most of the tests are skipped in this mode, as they require a real aks
+cluster to run.
 
 ### External E2E Tests
 
@@ -228,14 +229,14 @@ REGISTRY=<registry>.azurecr.io make docker-build helm-build docker-push helm-pus
 
 This will run the external E2E tests in the cluster using the AKS cluster. The
 tests are written in Go and use the Ginkgo testing framework. There are two
-kinds of tests, the `lvm` and `lvm-annoation` tests.
+kinds of tests, the `lvm` and `lvm-annotation` tests.
 
 The `lvm` tests only run the generic ephemeral volume tests, which is the only
 kind of volume permitted by default by the driver. The `lvm-annotation` tests
 run all the tests specified by the external tests.
 
 It uses [`kyverno`][kyverno] to add the
-`local.csi.azure.com/accept-ephemeral-storage: "true"` annotation to the
+`localdisk.csi.acstor.io/accept-ephemeral-storage: "true"` annotation to the
 persistent volume claim. This allows the tests to test the
 "accept-ephemeral-storage" mode of the driver. The tests are located in the
 `test/e2e/external` directory.

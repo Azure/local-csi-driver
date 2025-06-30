@@ -25,8 +25,8 @@ import (
 	"local-csi-driver/internal/pkg/tracing"
 )
 
-var selectedNodeAnnotation = "testlocal.csi.azure.com/selected-node"
-var selectedInitialNodeAnnotation = "testlocal.csi.azure.com/selected-initial-node"
+var selectedNodeAnnotation = "testlocaldisk.csi.acstor.io/selected-node"
+var selectedInitialNodeAnnotation = "testlocaldisk.csi.acstor.io/selected-initial-node"
 
 func initTestControllerServer(ctrl *gomock.Controller) *Server {
 	vc := core.NewFake()

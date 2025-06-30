@@ -36,7 +36,7 @@ import (
 
 const (
 	testNodeName             = "node-name"
-	driverName               = "testlocal.csi.azure.com"
+	driverName               = "testlocaldisk.csi.acstor.io"
 	testInvalidId            = "invalidId"
 	testVolumeID             = "vg#pv"
 	recoveryOKVolumeID       = "vg#testrecoveryok"
@@ -49,8 +49,8 @@ const (
 	invalidTargetPath        = "invalidTargetPath"
 	permissionError          = "permissionError"
 	testTopologyKey          = "topology." + driverName + "/node"
-	selectedNodeAnnotation   = "testlocal.csi.azure.com/selected-node"
-	selectedInitialNodeParam = "testlocal.csi.azure.com/selected-initial-node"
+	selectedNodeAnnotation   = "testlocaldisk.csi.acstor.io/selected-node"
+	selectedInitialNodeParam = "testlocaldisk.csi.acstor.io/selected-initial-node"
 )
 
 func initTestNodeServer(_ *testing.T, ctrl *gomock.Controller) *Server {
@@ -145,8 +145,8 @@ func initTestNodeServer(_ *testing.T, ctrl *gomock.Controller) *Server {
 							Driver:       driverName,
 							VolumeHandle: recoveryOKVolumeID,
 							VolumeAttributes: map[string]string{
-								selectedInitialNodeParam:       "test-node",
-								"local.csi.azure.com/capacity": "1Gi",
+								selectedInitialNodeParam:           "test-node",
+								"localdisk.csi.acstor.io/capacity": "1Gi",
 							},
 						},
 					},
@@ -751,7 +751,7 @@ func TestNodeStageVolume(t *testing.T) {
 				VolumeContext:     map[string]string{},
 			},
 			resp:      nil,
-			expectErr: status.Error(codes.Internal, fmt.Errorf("volume request size is missing in pv attribute local.csi.azure.com/capacity - recovery impossible").Error()),
+			expectErr: status.Error(codes.Internal, fmt.Errorf("volume request size is missing in pv attribute localdisk.csi.acstor.io/capacity - recovery impossible").Error()),
 		},
 	}
 	for _, test := range tests {

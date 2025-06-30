@@ -26,7 +26,8 @@ To install local-csi-driver using Helm:
 
 Only one instance of local-csi-driver can be installed per cluster.
 
-Helm chart values are documented in: [Helm chart README](./charts/latest/README.md).
+Helm chart values are documented in: [Helm chart
+README](./charts/latest/README.md).
 
 ## Creating a StorageClass
 
@@ -38,8 +39,8 @@ kind: StorageClass
 metadata:
   name: local
 parameters:
-  local.csi.azure.com/vg: containerstorage
-provisioner: local.csi.azure.com
+  localdisk.csi.acstor.io/vg: containerstorage
+provisioner: localdisk.csi.acstor.io
 reclaimPolicy: Delete
 volumeBindingMode: WaitForFirstConsumer
 allowVolumeExpansion: true
@@ -113,9 +114,9 @@ kubectl apply -f statefulset.yaml
 By default, the local-csi-driver only permits the use of generic ephemeral
 volumes. If you want to use a persistent volume claim that is not linked to the
 lifecycle of the pod, you need to add the
-`local.csi.azure.com/accept-ephemeral-storage: "true"` annotation to the
-PersistentVolumeClaim. Note: The data on the volume is local to the node and will
-be lost if the node is deleted or the pod is moved to another node.
+`localdisk.csi.acstor.io/accept-ephemeral-storage: "true"` annotation to the
+PersistentVolumeClaim. Note: The data on the volume is local to the node and
+will be lost if the node is deleted or the pod is moved to another node.
 
 ```yaml
 ---
@@ -155,7 +156,7 @@ spec:
     - metadata:
         name: persistent-storage
         annotations:
-          local.csi.azure.com/accept-ephemeral-storage: "true"
+          localdisk.csi.acstor.io/accept-ephemeral-storage: "true"
       spec:
         accessModes: ["ReadWriteOnce"]
         storageClassName: local

@@ -25,16 +25,16 @@ want and excludes those they do not want.
 ## Design
 
 Currently, we allow customization of the volume group name through the
-StorageClass parameter `local.csi.azure.com/vg`. For example:
+StorageClass parameter `localdisk.csi.acstor.io/vg`. For example:
 
 ```yaml
 apiVersion: storage.k8s.io/v1
 kind: StorageClass
 metadata:
   name: local
-provisioner: local.csi.azure.com
+provisioner: localdisk.csi.acstor.io
 parameters:
-  local.csi.azure.com/vg: containerstorage
+  localdisk.csi.acstor.io/vg: containerstorage
 reclaimPolicy: Delete
 volumeBindingMode: WaitForFirstConsumer
 ```
@@ -42,11 +42,11 @@ volumeBindingMode: WaitForFirstConsumer
 We will add three new parameters to the storage class to allow users to
 customize the disk selection:
 
-- `local.csi.azure.com/disk-path-prefixes`: The prefix of the disk path. For
+- `localdisk.csi.acstor.io/disk-path-prefixes`: The prefix of the disk path. For
   example, `/dev/nvme`.
-- `local.csi.azure.com/disk-models`: The model of the disk. For example,
+- `localdisk.csi.acstor.io/disk-models`: The model of the disk. For example,
   `Microsoft NVMe Direct Disk`.
-- `local.csi.azure.com/disk-types`: The type of the disk. For example, `disk`.
+- `localdisk.csi.acstor.io/disk-types`: The type of the disk. For example, `disk`.
 
 These parameters will be used to filter the disks that are selected for
 provisioning. The driver will only select disks that match all of the
@@ -55,16 +55,16 @@ default value. **The user is not required to specify any of the parameters.** Ou
 defaults will work for NVMe disks found on Azure VMs.
 
 Comma-separated values will be supported for the parameters. For example, if
-the user specifies `local.csi.azure.com/disk-path-prefixes: /dev/nvme,/dev/sda`,
+the user specifies `localdisk.csi.acstor.io/disk-path-prefixes: /dev/nvme,/dev/sda`,
 the driver will select disks that have either `/dev/nvme` or `/dev/sda` as the
 path prefix.
 
 | Parameter                                   | Description                 | Default Value                                              |
 |----------------------------------------------|----------------------------|------------------------------------------------------------|
-| `local.csi.azure.com/vg`                     | Name of the volume group   | `containerstorage`                                         |
-| `local.csi.azure.com/disk-path-prefixes`     | Prefix of the disk path    | `/dev/nvme`                                                |
-| `local.csi.azure.com/disk-models`            | Model of the disk          | `Microsoft NVMe Direct Disk,Microsoft NVMe Direct Disk v2` |
-| `local.csi.azure.com/disk-types`             | Type of the disk           | `disk`                                                     |
+| `localdisk.csi.acstor.io/vg`                     | Name of the volume group   | `containerstorage`                                         |
+| `localdisk.csi.acstor.io/disk-path-prefixes`     | Prefix of the disk path    | `/dev/nvme`                                                |
+| `localdisk.csi.acstor.io/disk-models`            | Model of the disk          | `Microsoft NVMe Direct Disk,Microsoft NVMe Direct Disk v2` |
+| `localdisk.csi.acstor.io/disk-types`             | Type of the disk           | `disk`                                                     |
 
 Example with all parameters:
 
@@ -73,12 +73,12 @@ apiVersion: storage.k8s.io/v1
 kind: StorageClass
 metadata:
   name: local
-provisioner: local.csi.azure.com
+provisioner: localdisk.csi.acstor.io
 parameters:
-  local.csi.azure.com/vg: containerstorage
-  local.csi.azure.com/disk-path-prefixes: /dev/nvme,/dev/sda
-  local.csi.azure.com/disk-models: Microsoft NVMe Direct Disk,Microsoft NVMe Direct Disk v2
-  local.csi.azure.com/disk-types: disk
+  localdisk.csi.acstor.io/vg: containerstorage
+  localdisk.csi.acstor.io/disk-path-prefixes: /dev/nvme,/dev/sda
+  localdisk.csi.acstor.io/disk-models: Microsoft NVMe Direct Disk,Microsoft NVMe Direct Disk v2
+  localdisk.csi.acstor.io/disk-types: disk
 reclaimPolicy: Delete
 volumeBindingMode: WaitForFirstConsumer
 ```
@@ -101,13 +101,13 @@ volumeBindingMode: WaitForFirstConsumer
 - If a user creates two storage classes with the same VG name, but different
   disk selection parameters, we would just use the VG that was created first.
   We would document this behavior.
-- We would likely want to change the parameters, especially the default `local.csi.azure.com/disk-models`
-  parameter, to adjust it for new disk types. This would be a bit strange because
-  storageclasses are meant to be immutable once created. This can present a puzzle
-  if we pass along the default values as values in `VolumeContext` and used those
-  in the non-ephemeral, annotated case. We would not be able to schedule to PV to
-  the new node. We would need to keep track of the default parameters in our code
-  instead.
+- We would likely want to change the parameters, especially the default
+  `localdisk.csi.acstor.io/disk-models` parameter, to adjust it for new disk
+  types. This would be a bit strange because storageclasses are meant to be
+  immutable once created. This can present a puzzle if we pass along the default
+  values as values in `VolumeContext` and used those in the non-ephemeral,
+  annotated case. We would not be able to schedule to PV to the new node. We
+  would need to keep track of the default parameters in our code instead.
 
 ## Related Documentation
 

@@ -66,7 +66,7 @@ func New(volume core.NodeInterface, nodeID, selectedNodeAnnotation, selectedInit
 		selectedInitialNodeParam: selectedInitialNodeParam,
 		removePvNodeAffinity:     removeNodeAffinity,
 		recorder:                 recorder,
-		tracer:                   tp.Tracer("local.csi.azure.com/internal/csi/node"),
+		tracer:                   tp.Tracer("localdisk.csi.acstor.io/internal/csi/node"),
 	}
 }
 

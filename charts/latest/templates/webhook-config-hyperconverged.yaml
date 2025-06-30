@@ -14,7 +14,7 @@ webhooks:
       namespace: '{{ .Release.Namespace }}'
       path: /mutate-pod
   failurePolicy: Ignore
-  name: hyperconverged.local.csi.azure.com
+  name: hyperconverged.localdisk.csi.acstor.io
   rules:
   - apiGroups:
     - ""

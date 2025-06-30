@@ -12,7 +12,8 @@ make test
 
 This will run all the unit tests in the project. Unit tests are throughout the
 code base. All libraries (e.g. `internal/pkg/*`) should be covered completely.
-Elsewhere, functions should be covered as appropriate, depending on their complexity.
+Elsewhere, functions should be covered as appropriate, depending on their
+complexity.
 
 It is expected that all logic outside the controller reconcilers will be covered
 by unit tests. Within the controller reconcilers, complex logic should be
@@ -125,11 +126,12 @@ kinds of tests, the `lvm` and `lvm-annotation` tests.
 The `lvm` tests only run the generic ephemeral volume tests, which is the only
 kind of volume permitted by default by the driver.
 
-The `lvm-annotation` tests run all the tests specified
-by the external tests. It uses [`kyverno`](https://github.com/kyverno/kyverno)
-to add the `local.csi.azure.com/accept-ephemeral-storage: "true"` annotation to
-the persistent volume claim. This allows the tests to test the "accept-ephemeral-storage"
-mode of the driver. The tests are located in the `test/e2e/external` directory.
+The `lvm-annotation` tests run all the tests specified by the external tests. It
+uses [`kyverno`](https://github.com/kyverno/kyverno) to add the
+`localdisk.csi.acstor.io/accept-ephemeral-storage: "true"` annotation to the
+persistent volume claim. This allows the tests to test the
+"accept-ephemeral-storage" mode of the driver. The tests are located in the
+`test/e2e/external` directory.
 
 ### Sanity Tests
 
@@ -139,12 +141,14 @@ To run the sanity tests, run:
 REGISTRY=<registry>.azurecr.io make docker-build helm-build docker-push helm-push test-sanity
 ```
 
-The sanity tests are conformance tests that check if the driver adheres to the CSI
-spec. The tests are written in Go and use the Ginkgo testing framework. The implementation
-can be found in the  [`kubernetes-csi/csi-test`](https://github.com/kubernetes-csi/csi-test)
-repo. The tests are located in the `test/sanity` directory. The tests are run on
-an AKS cluster. If you find a change that you made that breaks the tests, please
-refer to the [`container-storage-interface/spec`](https://github.com/container-storage-interface/spec)
+The sanity tests are conformance tests that check if the driver adheres to the
+CSI spec. The tests are written in Go and use the Ginkgo testing framework. The
+implementation can be found in the
+[`kubernetes-csi/csi-test`](https://github.com/kubernetes-csi/csi-test) repo.
+The tests are located in the `test/sanity` directory. The tests are run on an
+AKS cluster. If you find a change that you made that breaks the tests, please
+refer to the
+[`container-storage-interface/spec`](https://github.com/container-storage-interface/spec)
 repo to review the spec to make any necessary changes to the driver.
 
 ### Scale and AKS Integration Tests
@@ -162,7 +166,8 @@ of volumes can be adjusted by changing the `SCALE` variable.
 
 #### Upgrade Tests
 
-To test the driver's functionality after [upgrading the Kubernetes cluster](https://learn.microsoft.com/en-us/azure/aks/upgrade-aks-cluster?tabs=azure-cli):
+To test the driver's functionality after [upgrading the Kubernetes
+cluster](https://learn.microsoft.com/en-us/azure/aks/upgrade-aks-cluster?tabs=azure-cli):
 
 ```sh
 LABEL_FILTER=lvm make test-upgrade
@@ -176,7 +181,8 @@ These tests ensure that the driver remains functional after a cluster upgrade.
 
 #### Restart Tests
 
-To test the driver's behavior after [restarting the cluster](https://learn.microsoft.com/en-us/azure/aks/start-stop-cluster?tabs=azure-cli):
+To test the driver's behavior after [restarting the
+cluster](https://learn.microsoft.com/en-us/azure/aks/start-stop-cluster?tabs=azure-cli):
 
 ```sh
 make test-restart
@@ -184,7 +190,8 @@ make test-restart
 
 #### Scaledown Tests
 
-To test the driver's behavior when [scaling down the cluster](https://learn.microsoft.com/en-us/azure/aks/scale-cluster?tabs=azure-cli):
+To test the driver's behavior when [scaling down the
+cluster](https://learn.microsoft.com/en-us/azure/aks/scale-cluster?tabs=azure-cli):
 
 ```sh
 make test-scaledown

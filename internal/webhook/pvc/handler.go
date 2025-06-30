@@ -36,7 +36,7 @@ type opType string
 const (
 	unknown                             opType = "unknown"
 	create                              opType = "create"
-	acceptEphemeralStorageAnnotationKey        = "local.csi.azure.com/accept-ephemeral-storage"
+	acceptEphemeralStorageAnnotationKey        = "localdisk.csi.acstor.io/accept-ephemeral-storage"
 )
 
 // Handler implements admission.Handler.
@@ -132,8 +132,8 @@ func (h *Handler) Handle(ctx context.Context, req admission.Request) admission.R
 		}
 	}
 
-	log.Info("denying pv create", "reason", "only generic ephemeral volumes are allowed for local.csi.azure.com provisioner")
-	return observeResponse(create, admission.Denied("only generic ephemeral volumes are allowed for local.csi.azure.com provisioner"))
+	log.Info("denying pv create", "reason", "only generic ephemeral volumes are allowed for localdisk.csi.acstor.io provisioner")
+	return observeResponse(create, admission.Denied("only generic ephemeral volumes are allowed for localdisk.csi.acstor.io provisioner"))
 }
 
 // isRetriableError returns false if the error is not retriable.

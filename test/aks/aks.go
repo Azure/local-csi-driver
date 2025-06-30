@@ -178,7 +178,7 @@ func (ts *testsuite) beforeEach(ctx context.Context) {
 					continue
 				}
 				provisionedBy := pv.Annotations[volume.AnnDynamicallyProvisioned]
-				g.Expect(provisionedBy).NotTo(ContainSubstring("local.csi.azure.com"), "provisionedBy annotation should not contain local.csi.azure.com")
+				g.Expect(provisionedBy).NotTo(ContainSubstring("localdisk.csi.acstor.io"), "provisionedBy annotation should not contain localdisk.csi.acstor.io")
 			}
 		}).WithContext(ctx).Should(Succeed(), "failed to wait for persistent volumes to be empty")
 		Eventually(func(g Gomega, ctx context.Context) {
@@ -359,7 +359,7 @@ func pvAffinityForExistingNode(nodeAffinity *corev1.VolumeNodeAffinity, nodes ma
 
 	for _, term := range nodeAffinity.Required.NodeSelectorTerms {
 		for _, expr := range term.MatchExpressions {
-			if expr.Key == "topology.local.csi.azure.com/node" && expr.Operator == corev1.NodeSelectorOpIn {
+			if expr.Key == "topology.localdisk.csi.acstor.io/node" && expr.Operator == corev1.NodeSelectorOpIn {
 				for _, value := range expr.Values {
 					if _, exists := nodes[value]; exists {
 						return true

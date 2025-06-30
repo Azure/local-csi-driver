@@ -87,7 +87,7 @@ type Client struct {
 func NewClient(opts ...ClientOption) *Client {
 	c := &Client{
 		lvmPath: "/sbin/lvm",
-		tracer:  tracing.NewNoopTracerProvider().Tracer("local.csi.azure.com/internal/pkg/lvm"),
+		tracer:  tracing.NewNoopTracerProvider().Tracer("localdisk.csi.acstor.io/internal/pkg/lvm"),
 	}
 
 	for _, opt := range opts {

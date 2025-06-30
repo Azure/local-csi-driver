@@ -1,7 +1,7 @@
 StorageClass:
   FromFile: test/external/drivers/lvm_storageclass.yaml
 DriverInfo:
-  Name: local.csi.azure.com
+  Name: localdisk.csi.acstor.io
   SupportedFsType: {"ext2", "ext3", "ext4", "xfs"}
   Capabilities:
     # data is persisted across pod restarts

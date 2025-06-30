@@ -56,7 +56,7 @@ var TestConfigs = []testConfig{
 		labels:        Label("aks", "lvm", "sanity"),
 		testVolumeParameters: func() (map[string]string, error) {
 			return map[string]string{
-				"local.csi.azure.com/vg": volumeGroupName,
+				"localdisk.csi.acstor.io/vg": volumeGroupName,
 			}, nil
 		},
 		controllerAddressPort: "10001",

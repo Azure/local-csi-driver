@@ -8,7 +8,7 @@ potential user errors.
 1. **Validation Webhook**: This webhook validates PersistentVolumeClaim (PVC)
 resources to ensure that only generic ephemeral storage is utilized, unless the
 user explicitly permits the creation of persistent volumes via the
-**"local.csi.azure.com/accept-ephemeral-storage"** annotation. This process
+**"localdisk.csi.acstor.io/accept-ephemeral-storage"** annotation. This process
 ensures that users understand that the provisioned volumes will share the
 lifecycle of the node, and true persistence cannot be guaranteed.
 
@@ -40,7 +40,7 @@ lifecycle of the pod, rendering them unable to outlive the node on which they
 reside.
 
 To provide flexibility, users can opt to create persistent volumes by including
-the annotation `local.csi.azure.com/accept-ephemeral-storage: "true"` in their
+the annotation `localdisk.csi.acstor.io/accept-ephemeral-storage: "true"` in their
 PersistentVolumeClaims (PVCs). This annotation signifies that the user
 acknowledges the potential risks of data loss associated with local storage and
 accepts the consequences of its use.
@@ -53,7 +53,7 @@ kind: PersistentVolumeClaim
 metadata:
   name: my-pvc
   annotations:
-    local.csi.azure.com/accept-ephemeral-storage: "true" # Optional, allows creation of persistent volumes
+    localdisk.csi.acstor.io/accept-ephemeral-storage: "true" # Optional, allows creation of persistent volumes
 spec:
   accessModes:
     - ReadWriteOnce
@@ -105,15 +105,15 @@ spec:
     kind: PersistentVolumeClaim
     [...]
   csi:
-    driver: local.csi.azure.com
+    driver: localdisk.csi.acstor.io
     volumeAttributes:
-      local.csi.azure.com/selected-initial-node: nvme-node-0
+      localdisk.csi.acstor.io/selected-initial-node: nvme-node-0
     volumeHandle: containerstorage#pvc-d6efb13d-707f-4876-8622-ea7bf2399c14
   nodeAffinity:
     required:
       nodeSelectorTerms:
         - matchExpressions:
-            - key: topology.local.csi.azure.com/node
+            - key: topology.localdisk.csi.acstor.io/node
               operator: In
               values:
                 - nvme-node-0
@@ -126,7 +126,7 @@ spec:
 
 When the webhook is enabled, instead of setting node affinity on the
 PersistentVolume (PV), the driver adds a
-`local.csi.azure.com/selected-initial-node` parameter to the volume context of
+`localdisk.csi.acstor.io/selected-initial-node` parameter to the volume context of
 the PV. This parameter is later used by the mutation webhook to modify the
 workload Pods to include preferred node affinity rules to the specified node
 ensuring that the workload and the PV are scheduled on the same node.
@@ -135,7 +135,7 @@ In the event of a node deletion, the workload Pods can be seamlessly rescheduled
 to a different node. During this process, the PersistentVolume (PV) will be
 reprovisioned on the new node as a blank volume, enabling the workload to
 continue functioning and writing new data. When such failovers occur, the PV
-resources will be annotated with `"local.csi.azure.com/selected-node"`
+resources will be annotated with `"localdisk.csi.acstor.io/selected-node"`
 information, which will later be used by the hyperconverged webhook to update
 the node affinity of the workload on future failovers.
 
@@ -146,7 +146,7 @@ apiVersion: v1
 kind: PersistentVolume
 metadata:
   annotations:
-    local.csi.azure.com/selected-node: nvme-node-1
+    localdisk.csi.acstor.io/selected-node: nvme-node-1
   finalizers:
     - external-provisioner.volume.kubernetes.io/finalizer
     - kubernetes.io/pv-protection
@@ -162,9 +162,9 @@ spec:
     kind: PersistentVolumeClaim
     [...]
   csi:
-    driver: local.csi.azure.com
+    driver: localdisk.csi.acstor.io
     volumeAttributes:
-      local.csi.azure.com/selected-initial-node: nvme-node-0
+      localdisk.csi.acstor.io/selected-initial-node: nvme-node-0
       [...]
     volumeHandle: containerstorage#pvc-d6efb13d-707f-4876-8622-ea7bf2399c14
   persistentVolumeReclaimPolicy: Delete

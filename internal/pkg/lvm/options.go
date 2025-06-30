@@ -35,6 +35,6 @@ func WithLVM(path string) ClientOption {
 // Set the tracer.
 func WithTracerProvider(tp trace.TracerProvider) ClientOption {
 	return func(c *Client) {
-		c.tracer = tp.Tracer("local.csi.azure.com/internal/pkg/lvm")
+		c.tracer = tp.Tracer("localdisk.csi.acstor.io/internal/pkg/lvm")
 	}
 }

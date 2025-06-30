@@ -215,7 +215,7 @@ spec:
       - name: csi-registrar
         args:
         - --csi-address=/csi/csi.sock
-        - --kubelet-registration-path=/var/lib/kubelet/plugins/local.csi.azure.com/csi.sock
+        - --kubelet-registration-path=/var/lib/kubelet/plugins/localdisk.csi.acstor.io/csi.sock
         - --http-endpoint=:{{ .Values.observability.nodeDriverRegistrar.http.port }}
         - --v={{ .Values.observability.nodeDriverRegistrar.log.level }}
         env:
@@ -268,7 +268,7 @@ spec:
           type: DirectoryOrCreate
         name: k8s-cfg
       - hostPath:
-          path: /var/lib/kubelet/plugins/local.csi.azure.com/
+          path: /var/lib/kubelet/plugins/localdisk.csi.acstor.io/
           type: DirectoryOrCreate
         name: csi-socket-dir
       - hostPath:

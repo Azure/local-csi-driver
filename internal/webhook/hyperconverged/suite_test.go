@@ -59,7 +59,7 @@ webhooks:
       namespace: kube-system
       path: /mutate-pod
   failurePolicy: Fail # Set to fail for tests.
-  name: hyperconverged.local.csi.azure.com
+  name: hyperconverged.localdisk.csi.acstor.io
   rules:
   - apiGroups:
     - ""

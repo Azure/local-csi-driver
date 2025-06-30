@@ -14,7 +14,7 @@ webhooks:
       namespace: '{{ .Release.Namespace }}'
       path: /validate-pvc
   failurePolicy: Ignore
-  name: ephemeral.local.csi.azure.com
+  name: ephemeral.localdisk.csi.acstor.io
   rules:
   - apiGroups:
     - ""

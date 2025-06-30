@@ -13,4 +13,4 @@ spec:
       patchStrategicMerge:
         metadata:
           annotations:
-            +(local.csi.azure.com/accept-ephemeral-storage): "true"
+            +(localdisk.csi.acstor.io/accept-ephemeral-storage): "true"

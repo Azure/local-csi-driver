@@ -53,14 +53,14 @@ func TestLVM_Create(t *testing.T) {
 				VolumeId:      "containerstorage#test-volume",
 				CapacityBytes: 1024 * 1024 * 1024, // 1 GiB
 				VolumeContext: map[string]string{
-					"local.csi.azure.com/vg":       "containerstorage",
-					"local.csi.azure.com/capacity": "1073741824",
-					"local.csi.azure.com/limit":    "0",
+					"localdisk.csi.acstor.io/vg":       "containerstorage",
+					"localdisk.csi.acstor.io/capacity": "1073741824",
+					"localdisk.csi.acstor.io/limit":    "0",
 				},
 				AccessibleTopology: []*csi.Topology{
 					{
 						Segments: map[string]string{
-							"topology.local.csi.azure.com/node": "nodename",
+							"topology.localdisk.csi.acstor.io/node": "nodename",
 						},
 					},
 				},
@@ -82,21 +82,21 @@ func TestLVM_Create(t *testing.T) {
 					},
 				},
 				Parameters: map[string]string{
-					"local.csi.azure.com/vg": testVolumeGroup,
+					"localdisk.csi.acstor.io/vg": testVolumeGroup,
 				},
 			},
 			want: &csi.Volume{
 				VolumeId:      testVolumeGroup + "#test-volume",
 				CapacityBytes: 1024 * 1024 * 1024, // 1 GiB
 				VolumeContext: map[string]string{
-					"local.csi.azure.com/vg":       testVolumeGroup,
-					"local.csi.azure.com/capacity": "1073741824",
-					"local.csi.azure.com/limit":    "0",
+					"localdisk.csi.acstor.io/vg":       testVolumeGroup,
+					"localdisk.csi.acstor.io/capacity": "1073741824",
+					"localdisk.csi.acstor.io/limit":    "0",
 				},
 				AccessibleTopology: []*csi.Topology{
 					{
 						Segments: map[string]string{
-							"topology.local.csi.azure.com/node": "nodename",
+							"topology.localdisk.csi.acstor.io/node": "nodename",
 						},
 					},
 				},
@@ -123,14 +123,14 @@ func TestLVM_Create(t *testing.T) {
 				VolumeId:      "containerstorage#test-volume",
 				CapacityBytes: 1024 * 1024 * 1024, // 1 GiB
 				VolumeContext: map[string]string{
-					"local.csi.azure.com/vg":       "containerstorage",
-					"local.csi.azure.com/capacity": "1073741824",
-					"local.csi.azure.com/limit":    "0",
+					"localdisk.csi.acstor.io/vg":       "containerstorage",
+					"localdisk.csi.acstor.io/capacity": "1073741824",
+					"localdisk.csi.acstor.io/limit":    "0",
 				},
 				AccessibleTopology: []*csi.Topology{
 					{
 						Segments: map[string]string{
-							"topology.local.csi.azure.com/node": "nodename",
+							"topology.localdisk.csi.acstor.io/node": "nodename",
 						},
 					},
 				},
@@ -157,14 +157,14 @@ func TestLVM_Create(t *testing.T) {
 				VolumeId:      "containerstorage#test-volume",
 				CapacityBytes: 1919999279104, // 1831054Mi
 				VolumeContext: map[string]string{
-					"local.csi.azure.com/vg":       "containerstorage",
-					"local.csi.azure.com/capacity": "1919999279104",
-					"local.csi.azure.com/limit":    "0",
+					"localdisk.csi.acstor.io/vg":       "containerstorage",
+					"localdisk.csi.acstor.io/capacity": "1919999279104",
+					"localdisk.csi.acstor.io/limit":    "0",
 				},
 				AccessibleTopology: []*csi.Topology{
 					{
 						Segments: map[string]string{
-							"topology.local.csi.azure.com/node": "nodename",
+							"topology.localdisk.csi.acstor.io/node": "nodename",
 						},
 					},
 				},
@@ -192,14 +192,14 @@ func TestLVM_Create(t *testing.T) {
 				VolumeId:      "containerstorage#test-volume",
 				CapacityBytes: 1073741824, // 1 GiB
 				VolumeContext: map[string]string{
-					"local.csi.azure.com/vg":       "containerstorage",
-					"local.csi.azure.com/capacity": "1073741824",
-					"local.csi.azure.com/limit":    "2147483648",
+					"localdisk.csi.acstor.io/vg":       "containerstorage",
+					"localdisk.csi.acstor.io/capacity": "1073741824",
+					"localdisk.csi.acstor.io/limit":    "2147483648",
 				},
 				AccessibleTopology: []*csi.Topology{
 					{
 						Segments: map[string]string{
-							"topology.local.csi.azure.com/node": "nodename",
+							"topology.localdisk.csi.acstor.io/node": "nodename",
 						},
 					},
 				},
