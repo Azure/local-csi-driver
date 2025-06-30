@@ -17,6 +17,7 @@ Dockerfile.cross
 report.xml
 JUnit.xml
 summary.md
+test.json
 
 # Go workspace file
 go.work

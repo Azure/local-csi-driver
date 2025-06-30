@@ -41,15 +41,15 @@ jobs:
 
       - name: Run unit tests & Generate coverage
         run: |
-          make test
+          CI=true make test
 
       - name: Publish Test Results
         uses: dorny/test-reporter@890a17cecf52a379fc869ab770a71657660be727 # v2.1.0
         if: always()
         with:
           name: Unit Test Results
-          path: ./test.xml
-          reporter: java-junit
+          path: ./test.json
+          reporter: golang-json
           token: ${{ secrets.GITHUB_TOKEN }}
           fail-on-error: true
           fail-on-empty: true

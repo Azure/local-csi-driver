@@ -28,6 +28,7 @@ LDFLAGS += -X local-csi-driver/internal/pkg/version.buildDate=$(BUILD_DATE)
 # ENVTEST_K8S_VERSION refers to the version of kubebuilder assets to be downloaded by envtest binary.
 ENVTEST_K8S_VERSION = 1.31.0
 
+TEST_FLAGS ?= ""
 TEST_OUTPUT ?= $(shell pwd)/test.xml
 TEST_COVER ?= $(shell pwd)/coverage.out
 NO_COLOR ?= false
@@ -38,6 +39,13 @@ TEST_TIMEOUT ?= 50m
 SCALE ?= 150
 # Flag determines how many times to repeat aks integration test
 REPEAT ?= 1
+
+# CI is used to determine if the tests are running in a CI environment.
+CI ?= ""
+ifeq ($(CI),true)
+TEST_FLAGS=-json
+TEST_REDIRECT=> test.json
+endif
 
 # Get the currently used golang install path (in GOPATH/bin, unless GOBIN is set)
 ifeq (,$(shell go env GOBIN))
@@ -92,11 +100,11 @@ vet: ## Run go vet against code.
 	go vet ./...
 
 .PHONY: test
-test: envtest go-junit-report gocov gocov-xml ## Run tests and generate coverage report
+test: envtest gocov gocov-xml ## Run tests and generate coverage report
 	$(eval TMP := $(shell mktemp -d))
 	KUBEBUILDER_ASSETS="$(shell $(ENVTEST) use $(ENVTEST_K8S_VERSION) --bin-dir $(LOCALBIN) -p path)" \
-		go test -race -v -p 8 $$(go list ./... | grep -v -e /test/) -coverprofile $(TMP)/cover.out 2>&1 | \
-		$(GO_JUNIT_REPORT) -set-exit-code -iocopy -out $(TEST_OUTPUT)
+		go test -race -v -p 8 $$(go list ./... | grep -v -e /test/) -coverprofile $(TMP)/cover.out $(TEST_FLAGS) \
+		$(TEST_REDIRECT)
 	@cat $(TMP)/cover.out | grep -v -E -f .covignore > $(TMP)/cover.clean
 	@$(GOCOV) convert $(TMP)/cover.clean | $(GOCOV_XML) > $(TEST_COVER)
 	@rm $(TMP)/cover.out $(TMP)/cover.clean && rmdir $(TMP)
