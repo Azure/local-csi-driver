@@ -132,3 +132,7 @@ scalability:
     kubeApi:
       qps: 100
       burst: 200
+
+# Metrics configuration.
+metrics:
+  enabled: true
