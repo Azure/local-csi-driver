@@ -80,9 +80,9 @@ spec:
             fieldRef:
               fieldPath: spec.nodeName
         {{- if hasPrefix "/" .Values.image.driver.repository }}
-        image: "{{ .Values.image.baseRepo }}{{ .Values.image.driver.repository }}:{{ .Values.image.driver.tag | default .Chart.Version }}"
+        image: "{{ .Values.image.baseRepo }}{{ .Values.image.driver.repository }}:{{ .Values.image.driver.tag | default .Chart.AppVersion }}"
         {{- else }}
-        image: "{{ .Values.image.driver.repository }}:{{ .Values.image.driver.tag | default .Chart.Version }}"
+        image: "{{ .Values.image.driver.repository }}:{{ .Values.image.driver.tag | default .Chart.AppVersion }}"
         {{- end }}
         imagePullPolicy: {{ .Values.image.driver.pullPolicy }}
         livenessProbe:

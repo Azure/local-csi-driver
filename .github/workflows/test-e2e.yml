@@ -47,11 +47,11 @@ jobs:
           # Get short commit SHA (7 characters)
           SHORT_SHA=$(git rev-parse --short HEAD)
           # Create tag in format MAJOR.MINOR.PATCH-REF
-          TAG="${{ env.MAJOR }}.${{ env.MINOR }}.${{ env.PATCH }}-${SHORT_SHA}"
+          TAG="v${{ env.MAJOR }}.${{ env.MINOR }}.${{ env.PATCH }}-${SHORT_SHA}"
           echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
 
           if [[ "${GITHUB_REF}" == "refs/heads/main" ]]; then
-            LATEST_TAG="${{ env.MAJOR }}.${{ env.MINOR }}.${{ env.PATCH }}-latest"
+            LATEST_TAG="v${{ env.MAJOR }}.${{ env.MINOR }}.${{ env.PATCH }}-latest"
           else
             LATEST_TAG=""
           fi

@@ -10,7 +10,8 @@ REPO_BASE := $(if $(REPO_BASE),$(REPO_BASE),acstor)
 REPO ?= $(REPO_BASE)/local-csi-driver
 
 COMMIT_HASH ?= $(shell git describe --always --dirty)
-TAG ?= 0.0.0-$(COMMIT_HASH)
+TAG ?= v0.0.0-$(COMMIT_HASH)
+HELM_TAG ?= $(shell echo $(TAG) | sed 's/^v//')
 IMG ?= $(REGISTRY)/$(REPO):$(TAG)
 CHART_REPO ?= $(REGISTRY)/$(REPO_BASE)/charts
 CHART_IMG ?= $(CHART_REPO)/local-csi-driver
@@ -243,8 +244,8 @@ docker-lint: hadolint
 .PHONY: helm-build
 helm-build: helm ## Generate a consolidated Helm chart with CRDs and deployment.
 	cp charts/latest/Chart.yaml charts/latest/Chart.yaml.bak
-	./hack/fix-helm-chart.sh --chart charts/latest --version $(TAG)
-	$(HELM) package --dependency-update charts/latest -d dist --version $(TAG)
+	./hack/fix-helm-chart.sh --chart charts/latest --version $(HELM_TAG) --app-version $(TAG)
+	$(HELM) package --dependency-update charts/latest -d dist --version $(HELM_TAG) --app-version $(TAG)
 	mv charts/latest/Chart.yaml.bak charts/latest/Chart.yaml
 
 # Helm login
@@ -288,14 +289,14 @@ HELM_ARGS ?=
 helm-install: helm ## Install the Helm chart from REGISTRY into the K8s cluster specified in ~/.kube/config.
 	$(HELM) install local-csi-driver oci://$(CHART_IMG) \
 		--namespace kube-system \
-		--version $(TAG) \
+		--version $(HELM_TAG) \
 		--set image.driver.repository=$(REGISTRY)/$(REPO) \
 		--set image.driver.tag=$(TAG) \
 		--debug --wait --atomic $(HELM_ARGS)
 
 .PHONY: helm-show-values
 helm-show-values: helm ## Show the default values of the Helm chart.
-	@$(HELM) show values oci://$(CHART_IMG) --version $(TAG)
+	@$(HELM) show values oci://$(CHART_IMG) --version $(HELM_TAG)
 
 .PHONY: uninstall-helm
 uninstall-helm: helm ## Uninstall the Helm chart from the K8s cluster specified in ~/.kube/config.
