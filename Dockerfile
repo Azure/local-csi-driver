@@ -1,5 +1,5 @@
 # Build the node binary
-FROM --platform=$BUILDPLATFORM mcr.microsoft.com/oss/go/microsoft/golang:1.24-azurelinux3.0@sha256:250d01e55a37bd79d7014ae83f9f50aa6fa5570ca910e7f19faeff4bb0132ae1 AS builder
+FROM --platform=$BUILDPLATFORM mcr.microsoft.com/oss/go/microsoft/golang:1.24-azurelinux3.0@sha256:ee8e9998cd2d487d9096eb9c2ccf42bb036f632948e17020ec8619f4cd30b512 AS builder
 ARG TARGETOS
 ARG TARGETARCH
 
