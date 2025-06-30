@@ -92,6 +92,10 @@ resources:
 
 # Observability and health configuration.
 observability:
+  metrics:
+    # Endpoints are always enabled, toggling this only affects the RBAC
+    # rule creation.
+    enabled: true
   driver:
     log:
       level: 2
@@ -132,7 +136,3 @@ scalability:
     kubeApi:
       qps: 100
       burst: 200
-
-# Metrics configuration.
-metrics:
-  enabled: true
