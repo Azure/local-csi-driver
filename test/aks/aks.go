@@ -257,7 +257,7 @@ func (ts *testsuite) beforeEach(ctx context.Context) {
 //  1. If the test failed or was skipped, afterEach is skipped. No need to check.
 //  2. Otherwise, it verifies that:
 //     - All cluster nodes are in Ready condition
-//     - All CNS system pods are running properly
+//     - All local-csi-driver system pods are running properly
 //     - All DiskPools are ready and not degraded
 //     - All application StatefulSets are running with expected replica counts
 //     - All application pods can write to their mounted volumes
@@ -324,7 +324,7 @@ func (ts *testsuite) verifyApplicationRunning(g Gomega, ctx context.Context) {
 		// This can happen when the nexus is paused
 		writeCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 		defer cancel()
-		cmd := exec.CommandContext(writeCtx, "kubectl", "exec", pod.Name, "-n", applicationNamespace, "--", "sh", "-c", fmt.Sprintf("echo '%s' > /mnt/cns/check", time.Now().UTC().Format(time.RFC3339)))
+		cmd := exec.CommandContext(writeCtx, "kubectl", "exec", pod.Name, "-n", applicationNamespace, "--", "sh", "-c", fmt.Sprintf("echo '%s' > /mnt/lcd/check", time.Now().UTC().Format(time.RFC3339)))
 		_, err := utils.Run(cmd)
 		g.Expect(err).NotTo(HaveOccurred(), "Failed to write to pod mount")
 	}

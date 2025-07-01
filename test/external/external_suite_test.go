@@ -58,7 +58,7 @@ func TestExternalE2E(t *testing.T) {
 	SetDefaultEventuallyPollingInterval(time.Second)
 	EnforceDefaultTimeoutsWhenUsingContexts()
 	RegisterFailHandler(Fail)
-	_, _ = fmt.Fprintf(GinkgoWriter, "Starting cns integration test suite\n")
+	_, _ = fmt.Fprintf(GinkgoWriter, "Starting lcd integration test suite\n")
 	RunSpecs(t, "external e2e suite")
 }
 

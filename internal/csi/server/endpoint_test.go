@@ -16,9 +16,9 @@ func Test_parseEndpoint(t *testing.T) {
 		wantAddr  string
 		wantErr   bool
 	}{
-		{"unix:///var/lib/cns/csi.sock", "unix", "/var/lib/cns/csi.sock", false},
+		{"unix:///var/lib/lcd/csi.sock", "unix", "/var/lib/lcd/csi.sock", false},
 		{"tcp://10.0.0.1:1000", "tcp", "10.0.0.1:1000", false},
-		{"/var/lib/cns/csi.sock", "", "", true},
+		{"/var/lib/lcd/csi.sock", "", "", true},
 		{"10.0.0.1:1000", "", "", true},
 	}
 	for _, tt := range tests {

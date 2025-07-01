@@ -16,15 +16,15 @@ spec:
       nodeSelector:
         "kubernetes.io/os": linux
       containers:
-        - name: statefulset-cns
+        - name: statefulset-lcd
           image: mcr.microsoft.com/azurelinux/busybox:1.36
           command:
             - "/bin/sh"
             - "-c"
-            - set -euo pipefail; trap exit TERM; while true; do echo $(date) >> /mnt/cns/outfile; sleep 1; done
+            - set -euo pipefail; trap exit TERM; while true; do date -u +"%Y-%m-%dT%H:%M:%SZ" >> /mnt/lcd/outfile; sleep 1; done
           volumeMounts:
             - name: ephemeral-storage
-              mountPath: /mnt/cns
+              mountPath: /mnt/lcd
       volumes:
         - name: ephemeral-storage
           ephemeral:

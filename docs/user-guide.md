@@ -65,7 +65,7 @@ To create a StatefulSet using the StorageClass, apply the following YAML:
 apiVersion: apps/v1
 kind: StatefulSet
 metadata:
-  name: statefulset-cns-lvm
+  name: statefulset-lcd-lvm
   labels:
     app: busybox
 spec:
@@ -79,15 +79,15 @@ spec:
       nodeSelector:
         "kubernetes.io/os": linux
       containers:
-        - name: statefulset-cns
+        - name: statefulset-lcd
           image: mcr.microsoft.com/azurelinux/busybox:1.36
           command:
             - "/bin/sh"
             - "-c"
-            - set -euo pipefail; trap exit TERM; while true; do echo $(date -u +"%Y-%m-%dT%H:%M:%SZ") | tee -a /mnt/cns/outfile; sleep 1; done
+            - set -euo pipefail; trap exit TERM; while true; do date -u +"%Y-%m-%dT%H:%M:%SZ" | tee -a /mnt/lcd/outfile; sleep 1; done
           volumeMounts:
             - name: ephemeral-storage
-              mountPath: /mnt/cns
+              mountPath: /mnt/lcd
       volumes:
         - name: ephemeral-storage
           ephemeral:
@@ -127,12 +127,12 @@ will be lost if the node is deleted or the pod is moved to another node.
 apiVersion: apps/v1
 kind: StatefulSet
 metadata:
-  name: statefulset-cns-lvm-annotation
+  name: statefulset-lcd-lvm-annotation
   labels:
     app: busybox
 spec:
   podManagementPolicy: Parallel  # default is OrderedReady
-  serviceName: statefulset-cns
+  serviceName: statefulset-lcd
   replicas: 10
   template:
     metadata:
@@ -142,15 +142,15 @@ spec:
       nodeSelector:
         "kubernetes.io/os": linux
       containers:
-        - name: statefulset-cns
+        - name: statefulset-lcd
           image: mcr.microsoft.com/azurelinux/busybox:1.36
           command:
             - "/bin/sh"
             - "-c"
-            - set -euo pipefail; trap exit TERM; while true; do echo $(date) >> /mnt/cns/outfile; sleep 1; done
+            - set -euo pipefail; trap exit TERM; while true; do date -u +"%Y-%m-%dT%H:%M:%SZ" >> /mnt/lcd/outfile; sleep 1; done
           volumeMounts:
             - name: persistent-storage
-              mountPath: /mnt/cns
+              mountPath: /mnt/lcd
   updateStrategy:
     type: RollingUpdate
   selector:

@@ -9,9 +9,9 @@ the PVCs.
 ## Controller Behaviour
 
 The PVC controller watches for PVC create requests. When a request is received,
-it will try to rule out non-cns PVCs or PVCs from non-ephemeral pools and
-allow them immediately. For PVCs from ephemeral pools, it allows those with
-multiple replicas.
+it will try to rule out non-local-csi-driver PVCs or PVCs from non-ephemeral
+pools and allow them immediately. For PVCs from ephemeral pools, it allows those
+with multiple replicas.
 
 For unreplicated PVCs from ephemeral pools, it only allows them if they have an
 ownerReference set to a Pod or an annotation indicating ephemeral storage is

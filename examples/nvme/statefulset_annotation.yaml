@@ -7,8 +7,7 @@ metadata:
     app: busybox
 spec:
   podManagementPolicy: Parallel  # default is OrderedReady
-  serviceName: statefulset-lcd
-  replicas: 10
+  replicas:  5
   template:
     metadata:
       labels:
@@ -34,8 +33,6 @@ spec:
   volumeClaimTemplates:
     - metadata:
         name: persistent-storage
-        labels:
-          part-of: e2e-test
         annotations:
           localdisk.csi.acstor.io/accept-ephemeral-storage: "true"
       spec:

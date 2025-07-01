@@ -221,7 +221,7 @@ func (t *testConfig) SkipUnsupportedTest() {
 	}
 }
 
-// mkdirInPod creates a directory in the cns-node-agent pod.
+// mkdirInPod creates a directory in the csi-local-node pod.
 func mkdirInPod(path string) (string, error) {
 	procPath := fmt.Sprintf("%s-%d", path, GinkgoParallelProcess())
 	_, err := execInPod("mkdir", "-p", procPath)
@@ -231,13 +231,13 @@ func mkdirInPod(path string) (string, error) {
 	return procPath, nil
 }
 
-// removePathInPod removes a path in the cns-node-agent pod.
+// removePathInPod removes a path in the csi-local-node pod.
 func removePathInPod(path string) error {
 	_, err := execInPod("rm", "-rf", path)
 	return err
 }
 
-// checkPathInPod checks the type of path in the cns-node-agent pod.
+// checkPathInPod checks the type of path in the csi-local-node pod.
 func checkPathInPod(path string) (sanity.PathKind, error) {
 	output, err := execInPod("sh", "-c", "if [ -f "+path+" ]; then echo file; elif [ -d "+path+" ]; then echo directory; elif [ ! -e "+path+" ]; then echo not_found; else echo other; fi")
 	if err != nil {
