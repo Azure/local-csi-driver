@@ -6,8 +6,14 @@
 
 ## Install
 
+Find the latest release by navigating to
+<https://github.com/Azure/local-csi-driver/releases/latest>.
+
+Substitute the release name (without the 'v' prefix) in the Helm install command
+below:
+
 ```console
-helm install local-csi-driver oci://localcsidriver.azurecr.io/acstor/charts/local-csi-driver --version 0.0.1-latest --namespace kube-system
+helm install local-csi-driver oci://localcsidriver.azurecr.io/acstor/charts/local-csi-driver --version <release> --namespace kube-system
 ```
 
 ## Uninstall
