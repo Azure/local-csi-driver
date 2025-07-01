@@ -8,12 +8,12 @@ import (
 	"testing"
 
 	"local-csi-driver/internal/csi/testutil"
-	"local-csi-driver/internal/pkg/tracing"
+	"local-csi-driver/internal/pkg/telemetry"
 )
 
 func MakeFile(t *testing.T) {
 	testTarget, err := testutil.GetWorkDirPath("test")
-	mounter := New(tracing.NewNoopTracerProvider())
+	mounter := New(telemetry.NewNoopTracerProvider())
 	if err != nil {
 		t.Errorf("Failed to get work dir path: %v", err)
 		os.Exit(1)

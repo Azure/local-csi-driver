@@ -22,7 +22,7 @@ import (
 	"local-csi-driver/internal/csi/core"
 	"local-csi-driver/internal/csi/mounter"
 	"local-csi-driver/internal/pkg/events"
-	"local-csi-driver/internal/pkg/tracing"
+	"local-csi-driver/internal/pkg/telemetry"
 )
 
 var selectedNodeAnnotation = "testlocaldisk.csi.acstor.io/selected-node"
@@ -32,7 +32,7 @@ func initTestControllerServer(ctrl *gomock.Controller) *Server {
 	vc := core.NewFake()
 	m := mounter.NewMockMounter(ctrl)
 	r := events.NewNoopRecorder()
-	tp := tracing.NewNoopTracerProvider()
+	tp := telemetry.NewNoopTracerProvider()
 	scheme := k8sruntime.NewScheme()
 	_ = corev1.AddToScheme(scheme)
 	pvs := corev1.PersistentVolumeList{

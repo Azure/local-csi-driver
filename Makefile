@@ -21,6 +21,11 @@ ADDITIONAL_GINKGO_FLAGS ?=
 SUPPORT_BUNDLE_OUTPUT_DIR ?= $(shell pwd)/support-bundles
 SUPPORT_BUNDLE_SINCE_TIME ?=
 
+# OpenTelemetry endpoint for tracing. Set to
+# jaeger-collector.observability.svc.cluster.local:4317 to use the endpoint
+# trace endpoint created by `make jaeger`.
+OTEL_ENDPOINT ?=
+
 # Build info
 BUILD_DATE ?= $(shell date -u +"%Y-%m-%dT%H:%M:%SZ")
 LDFLAGS += -X local-csi-driver/internal/pkg/version.gitCommit=$(COMMIT_HASH)
@@ -310,6 +315,7 @@ deploy: helm ## Deploy to the K8s cluster specified in ~/.kube/config.
 		--set image.driver.repository=$(REGISTRY)/$(REPO) \
 		--set image.driver.tag=$(TAG) \
 		--set image.driver.pullPolicy=Always \
+		--set observability.driver.trace.endpoint=$(OTEL_ENDPOINT) \
 		--debug --wait --atomic $(HELM_ARGS)
 
 .PHONY: undeploy

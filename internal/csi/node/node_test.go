@@ -31,7 +31,7 @@ import (
 	"local-csi-driver/internal/csi/testutil"
 	"local-csi-driver/internal/pkg/convert"
 	"local-csi-driver/internal/pkg/events"
-	"local-csi-driver/internal/pkg/tracing"
+	"local-csi-driver/internal/pkg/telemetry"
 )
 
 const (
@@ -57,7 +57,7 @@ func initTestNodeServer(_ *testing.T, ctrl *gomock.Controller) *Server {
 	vc := core.NewFake()
 	m := mounter.NewMockMounter(ctrl)
 	r := events.NewNoopRecorder()
-	tp := tracing.NewNoopTracerProvider()
+	tp := telemetry.NewNoopTracerProvider()
 	scheme := k8sruntime.NewScheme()
 	_ = corev1.AddToScheme(scheme)
 	pvs := corev1.PersistentVolumeList{

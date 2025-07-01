@@ -36,7 +36,7 @@ import (
 	"go.opentelemetry.io/otel/trace"
 
 	sysutils "local-csi-driver/internal/pkg/sys"
-	"local-csi-driver/internal/pkg/tracing"
+	"local-csi-driver/internal/pkg/telemetry"
 )
 
 var (
@@ -87,7 +87,7 @@ type Client struct {
 func NewClient(opts ...ClientOption) *Client {
 	c := &Client{
 		lvmPath: "/sbin/lvm",
-		tracer:  tracing.NewNoopTracerProvider().Tracer("localdisk.csi.acstor.io/internal/pkg/lvm"),
+		tracer:  telemetry.NewNoopTracerProvider().Tracer("localdisk.csi.acstor.io/internal/pkg/lvm"),
 	}
 
 	for _, opt := range opts {

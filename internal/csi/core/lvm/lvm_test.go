@@ -20,7 +20,7 @@ import (
 	"local-csi-driver/internal/pkg/convert"
 	lvmMgr "local-csi-driver/internal/pkg/lvm"
 	"local-csi-driver/internal/pkg/probe"
-	"local-csi-driver/internal/pkg/tracing"
+	"local-csi-driver/internal/pkg/telemetry"
 )
 
 const (
@@ -37,7 +37,7 @@ func initTestLVM(ctrl *gomock.Controller) (*lvm.LVM, *probe.Mock, *lvmMgr.MockMa
 	c := fake.NewClientBuilder().
 		WithScheme(runtime.NewScheme()).
 		Build()
-	t := tracing.NewNoopTracerProvider()
+	t := telemetry.NewNoopTracerProvider()
 	p := probe.NewMock(ctrl)
 	lvmMgr := lvmMgr.NewMockManager(ctrl)
 	l, err := lvm.New(c, testPodName, testNodeName, testPodNamespace, p, lvmMgr, t)
@@ -69,7 +69,7 @@ func TestNewLVM(t *testing.T) {
 		namespace: testPodNamespace,
 		probe:     probe.NewMock(ctrl),
 		manager:   lvmMgr.NewMockManager(ctrl),
-		tracer:    tracing.NewNoopTracerProvider(),
+		tracer:    telemetry.NewNoopTracerProvider(),
 	}
 
 	testCases := []struct {

@@ -17,7 +17,7 @@ import (
 	"local-csi-driver/internal/csi/core/lvm"
 	lvmMgr "local-csi-driver/internal/pkg/lvm"
 	"local-csi-driver/internal/pkg/probe"
-	"local-csi-driver/internal/pkg/tracing"
+	"local-csi-driver/internal/pkg/telemetry"
 )
 
 const (
@@ -235,7 +235,7 @@ func TestLVM_Create(t *testing.T) {
 			c := fake.NewClientBuilder().
 				WithScheme(runtime.NewScheme()).
 				Build()
-			tp := tracing.NewNoopTracerProvider()
+			tp := telemetry.NewNoopTracerProvider()
 			p := probe.NewFake([]string{"device1", "device2"}, nil)
 			lvmMgr := lvmMgr.NewFake()
 

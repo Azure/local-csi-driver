@@ -41,6 +41,9 @@ func New(ctx context.Context, opts ...Option) (*OtelProviders, error) {
 
 	tp, err := InitTracing(ctx, cfg)
 	if err != nil {
+		if mp != nil {
+			_ = mp.Shutdown(ctx)
+		}
 		return nil, fmt.Errorf("failed to initialize tracing: %w", err)
 	}
 
@@ -77,11 +80,11 @@ func InitTracing(ctx context.Context, cfg config) (tracing.TracerProvider, error
 	return tp, nil
 }
 
-// InitMetrics initializes the OpenTelemetry metrics provider. It should be called
-// before metrics are used.
+// InitMetrics initializes the OpenTelemetry metrics provider. It should be
+// called before metrics are used.
 //
-// TODO: Only the prometheus exporter is currently supported. The OTLP exporter
-// should work but it's not been tested.
+// Only the prometheus exporter is currently supported. The OTLP exporter should
+// work but it's not been tested.
 func InitMetrics(ctx context.Context, cfg config) (*metric.MeterProvider, error) {
 	resource, err := resource.New(ctx, NewResourceOptions(cfg)...)
 	if err != nil {
@@ -165,4 +168,9 @@ func (p *OtelProviders) Start(ctx context.Context) error {
 // be available.
 func (p *OtelProviders) NeedLeaderElection() bool {
 	return false
+}
+
+// NewNoopTracerProvider creates a new no-op tracing provider.
+func NewNoopTracerProvider() tracing.TracerProvider {
+	return tracing.NewNoopTracerProvider()
 }

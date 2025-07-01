@@ -13,7 +13,7 @@ import (
 	"local-csi-driver/internal/csi/capability"
 	"local-csi-driver/internal/csi/core"
 	"local-csi-driver/internal/pkg/events"
-	"local-csi-driver/internal/pkg/tracing"
+	"local-csi-driver/internal/pkg/telemetry"
 )
 
 func TestNewCombinedDriver(t *testing.T) {
@@ -22,7 +22,7 @@ func TestNewCombinedDriver(t *testing.T) {
 		WithScheme(runtime.NewScheme()).
 		Build()
 	recorder := events.NewNoopRecorder()
-	tracerProvider := tracing.NewNoopTracerProvider()
+	tracerProvider := telemetry.NewNoopTracerProvider()
 
 	driver := NewCombined("node1", fakeVolumeClient, fakeClient, false, recorder, tracerProvider)
 
@@ -52,7 +52,7 @@ func TestNewControllerDriver(t *testing.T) {
 		WithScheme(runtime.NewScheme()).
 		Build()
 	recorder := events.NewNoopRecorder()
-	tracerProvider := tracing.NewNoopTracerProvider()
+	tracerProvider := telemetry.NewNoopTracerProvider()
 
 	driver := NewController(fakeVolumeClient, fakeClient, false, recorder, tracerProvider)
 
@@ -82,7 +82,7 @@ func TestNewNodeDriver(t *testing.T) {
 		WithScheme(runtime.NewScheme()).
 		Build()
 	recorder := events.NewNoopRecorder()
-	tracerProvider := tracing.NewNoopTracerProvider()
+	tracerProvider := telemetry.NewNoopTracerProvider()
 
 	driver := NewNode("node1", fakeVolumeClient, fakeClient, false, recorder, tracerProvider)
 
@@ -112,7 +112,7 @@ func TestDriver_GetIdentityServer(t *testing.T) {
 		WithScheme(runtime.NewScheme()).
 		Build()
 	recorder := events.NewNoopRecorder()
-	tracerProvider := tracing.NewNoopTracerProvider()
+	tracerProvider := telemetry.NewNoopTracerProvider()
 
 	driver := NewCombined("node1", fakeVolumeClient, fakeClient, false, recorder, tracerProvider)
 
@@ -128,7 +128,7 @@ func TestDriver_GetControllerServer(t *testing.T) {
 		WithScheme(runtime.NewScheme()).
 		Build()
 	recorder := events.NewNoopRecorder()
-	tracerProvider := tracing.NewNoopTracerProvider()
+	tracerProvider := telemetry.NewNoopTracerProvider()
 
 	driver := NewCombined("node1", fakeVolumeClient, fakeClient, false, recorder, tracerProvider)
 
@@ -144,7 +144,7 @@ func TestDriver_GetNodeServer(t *testing.T) {
 		WithScheme(runtime.NewScheme()).
 		Build()
 	recorder := events.NewNoopRecorder()
-	tracerProvider := tracing.NewNoopTracerProvider()
+	tracerProvider := telemetry.NewNoopTracerProvider()
 
 	driver := NewCombined("node1", fakeVolumeClient, fakeClient, false, recorder, tracerProvider)
 
