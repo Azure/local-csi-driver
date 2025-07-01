@@ -262,7 +262,7 @@ helm-login: helm ## Log in to the ACR Helm registry.
 
 .PHONY: helm-push
 helm-push: helm helm-build ## Push the Helm chart to the Helm repository.
-	$(HELM) push dist/local-csi-driver-$(TAG).tgz oci://$(CHART_REPO)
+	$(HELM) push dist/local-csi-driver-$(HELM_TAG).tgz oci://$(CHART_REPO)
 
 ##@ Deployment
 
