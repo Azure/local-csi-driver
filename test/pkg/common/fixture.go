@@ -10,7 +10,9 @@ var (
 	FakeCertFixture = filepath.Join(basePath, "fake_cert.yaml")
 
 	LvmStorageClassFixture          = filepath.Join(basePath, "lvm_storageclass.yaml")
+	LvmStorageClassXfsFixture       = filepath.Join(basePath, "lvm_storageclass_xfs.yaml")
 	LvmStatefulSetFixture           = filepath.Join(basePath, "lvm_statefulset.yaml")
+	LvmStatefulSetXfsFixture        = filepath.Join(basePath, "lvm_statefulset_xfs.yaml")
 	LvmAnnotationStatefulSetFixture = filepath.Join(basePath, "lvm_annotation_statefulset.yaml")
 	LvmPvcNoAnnotationFixture       = filepath.Join(basePath, "lvm_pvc_no_annotation.yaml")
 	LvmPvcAnnotationFixure          = filepath.Join(basePath, "lvm_pvc_annotation.yaml")

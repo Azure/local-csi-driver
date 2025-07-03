@@ -132,6 +132,8 @@ spec:
         - mountPath: /var/lib/kubelet/
           mountPropagation: Bidirectional
           name: mountpoint-dir
+        - mountPath: /host
+          name: host
 
       - name: csi-provisioner
         args:
@@ -279,3 +281,7 @@ spec:
           path: /var/lib/kubelet/
           type: DirectoryOrCreate
         name: mountpoint-dir
+      - hostPath:
+          path: /
+          type: DirectoryOrCreate
+        name: host

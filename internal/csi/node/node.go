@@ -468,12 +468,6 @@ func (ns *Server) NodeStageVolume(ctx context.Context, req *csi.NodeStageVolumeR
 	}
 
 	formatOptions := []string{}
-	if fsType == "xfs" {
-		// Needed for compatibility with early kernels in azurelinux2.0 and ubuntu
-		formatOptions = append(formatOptions, "-i", "nrext64=0")
-
-	}
-
 	if err := ns.mounter.FormatAndMountSensitiveWithFormatOptions(source, stagingTargetPath, fsType, mountOptions, nil, formatOptions); err != nil {
 		log.Error(err, "failed to format and mount")
 		span.SetStatus(otcodes.Error, "failed to format and mount")
