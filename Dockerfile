@@ -54,7 +54,6 @@ RUN tdnf install -y --releasever 3.0 --installroot /staging \
     # ensure that libcrypto.so.X is available for dlopen for fips builds
     openssl-libs \
     util-linux \
-    xfsprogs \
     && tdnf clean all \
     && rm -rf /staging/run /staging/var/log /staging/var/cache/tdnf
 
@@ -63,6 +62,7 @@ FROM mcr.microsoft.com/azurelinux/distroless/minimal:3.0@sha256:0801b80a09273095
 WORKDIR /
 COPY --from=builder /workspace/local-csi-driver .
 COPY --from=dependency-install /staging /
+COPY ./scripts/mkfs.xfs.sh /usr/local/bin/mkfs.xfs
 
 # Set the environment variable to disable udev and just use lvm.
 ENV DM_DISABLE_UDEV=1
