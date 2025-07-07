@@ -290,12 +290,13 @@ func main() {
 
 	// TODO(sc): move filter to controller so we can read filters from
 	// storageclass params. Hardcoded for now.
-	deviceProbe := probe.New(block.New(exec.New()), probe.EphemeralDiskFilter)
+	blockDevUtils := block.New()
+	deviceProbe := probe.New(blockDevUtils, probe.EphemeralDiskFilter)
 
 	// Create the LVM manager.
 	// LVM manager is an abstraction that understands how to create and
 	// manage LVM resources like PV, VG, and LV.
-	lvmMgr := lvmMgr.NewClient(lvmMgr.WithTracerProvider(tp))
+	lvmMgr := lvmMgr.NewClient(lvmMgr.WithTracerProvider(tp), lvmMgr.WithSystemUtilities(blockDevUtils))
 	if !lvmMgr.IsSupported() {
 		logAndExit(fmt.Errorf("lvm is not supported on this node"), "lvm is not supported")
 	}

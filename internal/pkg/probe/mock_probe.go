@@ -46,19 +46,19 @@ func (m *Mock) EXPECT() *MockMockRecorder {
 	return m.recorder
 }
 
-// GetDevices mocks base method.
-func (m *Mock) GetDevices(ctx context.Context) (*block.DeviceList, error) {
+// ScanAvailableDevices mocks base method.
+func (m *Mock) ScanAvailableDevices(ctx context.Context, log logr.Logger) (*block.DeviceList, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "GetDevices", ctx)
+	ret := m.ctrl.Call(m, "ScanAvailableDevices", ctx, log)
 	ret0, _ := ret[0].(*block.DeviceList)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
-// GetDevices indicates an expected call of GetDevices.
-func (mr *MockMockRecorder) GetDevices(ctx any) *gomock.Call {
+// ScanAvailableDevices indicates an expected call of ScanAvailableDevices.
+func (mr *MockMockRecorder) ScanAvailableDevices(ctx, log any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetDevices", reflect.TypeOf((*Mock)(nil).GetDevices), ctx)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ScanAvailableDevices", reflect.TypeOf((*Mock)(nil).ScanAvailableDevices), ctx, log)
 }
 
 // ScanDevices mocks base method.

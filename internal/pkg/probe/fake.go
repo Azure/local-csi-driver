@@ -36,13 +36,18 @@ func (f *Fake) ScanDevices(ctx context.Context, log logr.Logger) ([]string, erro
 }
 
 // GetDevices returns a list of devices.
-func (f *Fake) GetDevices(ctx context.Context) (*block.DeviceList, error) {
+func (f *Fake) ScanAvailableDevices(ctx context.Context, log logr.Logger) (*block.DeviceList, error) {
 	if f.Err != nil {
 		return nil, f.Err
 	}
-	devices := []block.Device{}
-	for _, path := range f.Devices {
-		devices = append(devices, block.Device{Path: path})
+	if len(f.Devices) == 0 {
+		return nil, ErrNoDevicesFound
 	}
+
+	devices := make([]block.Device, len(f.Devices))
+	for i, path := range f.Devices {
+		devices[i] = block.Device{Path: path}
+	}
+
 	return &block.DeviceList{Devices: devices}, nil
 }

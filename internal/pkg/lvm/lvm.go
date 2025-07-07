@@ -35,7 +35,7 @@ import (
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
 
-	sysutils "local-csi-driver/internal/pkg/sys"
+	sysutils "local-csi-driver/internal/pkg/block"
 	"local-csi-driver/internal/pkg/telemetry"
 )
 
@@ -79,8 +79,9 @@ func IgnoreNotFound(err error) error {
 }
 
 type Client struct {
-	lvmPath string
-	tracer  trace.Tracer
+	sysutils sysutils.Interface
+	lvmPath  string
+	tracer   trace.Tracer
 }
 
 // Construct a new lvm2 client.
@@ -189,10 +190,9 @@ func (c *Client) CreatePhysicalVolume(ctx context.Context, opts CreatePVOptions)
 	))
 	defer span.End()
 
-	sysClient := sysutils.New()
-	_, err := sysClient.IsBlkDevUnformatted(opts.Name)
+	_, err := c.sysutils.IsBlkDevUnformatted(opts.Name)
 	if err != nil {
-		return err
+		return getErrorType(err)
 	}
 
 	// We won't provide --yes to the pvcreate command as we want to confirm the creation of the PV.
@@ -688,8 +688,7 @@ func (c *Client) ExtendLogicalVolume(ctx context.Context, opts ExtendLVOptions) 
 	defer span.End()
 
 	lvPath := "/dev/" + opts.Name
-	sysClient := sysutils.New()
-	unformatted, err := sysClient.IsBlkDevUnformatted(lvPath)
+	unformatted, err := c.sysutils.IsBlkDevUnformatted(lvPath)
 	if err != nil {
 		return err
 	}
@@ -799,6 +798,9 @@ func getErrorType(err error) error {
 		return fmt.Errorf("%w: %s", ErrResourceExhausted, err.Error())
 	case containsIgnoreCase(err.Error(), "is already in volume group"):
 		return fmt.Errorf("%w: %s", ErrPVAlreadyInVolumeGroup, err.Error())
+	case containsIgnoreCase(err.Error(), "device has a signature"):
+		// return as resource exhausted to prompt scheduler to move the workload to another node
+		return fmt.Errorf("%w: %s", ErrResourceExhausted, err.Error())
 	default:
 		return err
 	}

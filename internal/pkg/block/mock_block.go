@@ -58,3 +58,33 @@ func (mr *MockMockRecorder) GetDevices(ctx any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetDevices", reflect.TypeOf((*Mock)(nil).GetDevices), ctx)
 }
+
+// IsBlkDevUnformatted mocks base method.
+func (m *Mock) IsBlkDevUnformatted(device string) (bool, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "IsBlkDevUnformatted", device)
+	ret0, _ := ret[0].(bool)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// IsBlkDevUnformatted indicates an expected call of IsBlkDevUnformatted.
+func (mr *MockMockRecorder) IsBlkDevUnformatted(device any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "IsBlkDevUnformatted", reflect.TypeOf((*Mock)(nil).IsBlkDevUnformatted), device)
+}
+
+// IsBlockDevice mocks base method.
+func (m *Mock) IsBlockDevice(path string) (bool, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "IsBlockDevice", path)
+	ret0, _ := ret[0].(bool)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// IsBlockDevice indicates an expected call of IsBlockDevice.
+func (mr *MockMockRecorder) IsBlockDevice(path any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "IsBlockDevice", reflect.TypeOf((*Mock)(nil).IsBlockDevice), path)
+}

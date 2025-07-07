@@ -291,8 +291,8 @@ func (l *LVM) AvailableCapacity(ctx context.Context, vgName string) (int64, erro
 	}
 
 	// Otherwise, the volume group hasn't been created yet, so we can return the
-	// total size of all disks matching the device filter.
-	devices, err := l.probe.ScanDevices(ctx, log)
+	// total size of all available disks matching the device filter.
+	filtered, err := l.probe.ScanAvailableDevices(ctx, log)
 	if err != nil {
 		if errors.Is(err, probe.ErrNoDevicesFound) || errors.Is(err, probe.ErrNoDevicesMatchingFilter) {
 			span.SetStatus(codes.Ok, "no devices found matching filter")
@@ -302,47 +302,35 @@ func (l *LVM) AvailableCapacity(ctx context.Context, vgName string) (int64, erro
 		span.RecordError(err)
 		return 0, fmt.Errorf("failed to scan devices: %w", err)
 	}
-	span.SetAttributes(attribute.StringSlice("devices", devices))
 
-	// Get list of disks matching our filter.
-	existing := map[string]struct{}{}
+	// Get the list of physical volumes to filter out devices that are already
+	// allocated to a volume group.
 	pvs, err := l.lvm.ListPhysicalVolumes(ctx, nil)
 	if err != nil {
 		span.SetStatus(codes.Error, "failed to list physical volumes")
 		span.RecordError(err)
 		return 0, fmt.Errorf("failed to list physical volumes: %w", err)
 	}
+	isPhysicalVolume := map[string]struct{}{}
 	for _, pv := range pvs {
-		existing[pv.Name] = struct{}{}
-	}
-
-	// Get the full list of devices, which includes the size.
-	all, err := l.probe.GetDevices(ctx)
-	if err != nil {
-		span.SetStatus(codes.Error, "failed to get all devices")
-		span.RecordError(err)
-		return 0, fmt.Errorf("failed to get all devices: %w", err)
+		isPhysicalVolume[pv.Name] = struct{}{}
 	}
 
 	// Calculate the available capacity from unallocated disks.
 	var availableCapacity int64
-	for _, device := range devices {
-		if _, ok := existing[device]; ok {
+	for _, device := range filtered.Devices {
+		if _, ok := isPhysicalVolume[device.Path]; ok {
 			log.V(2).Info("physical volume already allocated to a volume group", "device", device)
 			continue
 		}
 
-		// Get the size of the device.
-		for _, d := range all.Devices {
-			if d.Path == device {
-				availableCapacity += d.Size
-				span.AddEvent("device size", trace.WithAttributes(
-					attribute.String("device", device),
-					attribute.Int64("size", d.Size),
-				))
-				continue
-			}
-		}
+		// Get the size of the device that is not not allocated to a volume
+		// group.
+		availableCapacity += device.Size
+		span.AddEvent("device size", trace.WithAttributes(
+			attribute.String("device", device.Path),
+			attribute.Int64("size", device.Size),
+		))
 	}
 
 	span.AddEvent("available disk capacity", trace.WithAttributes(
