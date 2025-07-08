@@ -799,8 +799,7 @@ func getErrorType(err error) error {
 	case containsIgnoreCase(err.Error(), "is already in volume group"):
 		return fmt.Errorf("%w: %s", ErrPVAlreadyInVolumeGroup, err.Error())
 	case containsIgnoreCase(err.Error(), "device has a signature"):
-		// return as resource exhausted to prompt scheduler to move the workload to another node
-		return fmt.Errorf("%w: %s", ErrResourceExhausted, err.Error())
+		return fmt.Errorf("%w: %s", ErrInUse, err.Error())
 	default:
 		return err
 	}

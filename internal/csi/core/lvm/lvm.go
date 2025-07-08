@@ -342,6 +342,7 @@ func (l *LVM) EnsurePhysicalVolumes(ctx context.Context) ([]string, error) {
 
 	// Get list of existing physical volumes.
 	existing := map[string]struct{}{}
+	finalPvs := make([]string, 0, len(devices))
 	pvs, err := l.lvm.ListPhysicalVolumes(ctx, nil)
 	if err != nil {
 		span.SetStatus(codes.Error, "failed to list physical volumes")
@@ -353,8 +354,10 @@ func (l *LVM) EnsurePhysicalVolumes(ctx context.Context) ([]string, error) {
 	}
 
 	// Create any missing physical volumes.
+	createErrors := make([]error, 0, len(devices))
 	for _, device := range devices {
 		if _, ok := existing[device]; ok {
+			finalPvs = append(finalPvs, device)
 			log.V(2).Info("physical volume already exists", "device", device)
 			continue
 		}
@@ -366,13 +369,25 @@ func (l *LVM) EnsurePhysicalVolumes(ctx context.Context) ([]string, error) {
 			span.SetStatus(codes.Error, "failed to create physical volume")
 			span.RecordError(err)
 			recorder.Eventf(corev1.EventTypeWarning, provisioningPhysicalVolumeFailed, "Provisioning physical volume %s failed: %s", device, err)
-			return nil, fmt.Errorf("failed to create physical volume: %w", err)
+			createErrors = append(createErrors, fmt.Errorf("failed to create physical volume %s: %w", device, err))
+			continue
 		}
+		finalPvs = append(finalPvs, device)
 		recorder.Eventf(corev1.EventTypeNormal, provisionedPhysicalVolume, "Successfully provisioned physical volume %s", device)
 		log.V(1).Info("created physical volume", "device", device)
 	}
 
-	return devices, nil
+	if len(createErrors) > 0 {
+		if len(finalPvs) == 0 {
+			log.Error(fmt.Errorf("no physical volumes created"), "no physical volumes created")
+			// return as resource exhausted to prompt scheduler to move the workload to another node
+			return nil, fmt.Errorf("%w: no physical volumes created: %v", core.ErrResourceExhausted, createErrors)
+		}
+		// If there were errors creating physical volumes, return them.
+		log.Error(fmt.Errorf("failed to create physical volumes for some disks: %v", createErrors), "failed to create physical volumes")
+	}
+
+	return finalPvs, nil
 }
 
 // EnsureVolume ensures that the volume exists with the given name and size.
