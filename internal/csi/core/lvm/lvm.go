@@ -377,14 +377,14 @@ func (l *LVM) EnsurePhysicalVolumes(ctx context.Context) ([]string, error) {
 		log.V(1).Info("created physical volume", "device", device)
 	}
 
-	if len(createErrors) > 0 {
-		if len(finalPvs) == 0 {
-			log.Error(fmt.Errorf("no physical volumes created"), "no physical volumes created")
-			// return as resource exhausted to prompt scheduler to move the workload to another node
-			return nil, fmt.Errorf("%w: no physical volumes created: %v", core.ErrResourceExhausted, createErrors)
+	if len(finalPvs) == 0 {
+		if len(createErrors) > 0 {
+			log.Error(fmt.Errorf("failed to create physical volumes for some disks: %v", createErrors), "failed to create physical volumes")
+			return nil, errors.Join(createErrors...)
 		}
-		// If there were errors creating physical volumes, return them.
-		log.Error(fmt.Errorf("failed to create physical volumes for some disks: %v", createErrors), "failed to create physical volumes")
+		log.Error(fmt.Errorf("no disks are available"), "no disks are available")
+		// return as resource exhausted to prompt scheduler to move the workload to another node
+		return nil, fmt.Errorf("%w: no disks are available", core.ErrResourceExhausted)
 	}
 
 	return finalPvs, nil

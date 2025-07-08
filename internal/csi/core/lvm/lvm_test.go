@@ -247,7 +247,7 @@ func TestEnsurePhysicalVolumes(t *testing.T) {
 			},
 			expectLvm: func(m *lvmMgr.MockManager) {
 				m.EXPECT().ListPhysicalVolumes(gomock.Any(), gomock.Any()).Return(nil, nil)
-				m.EXPECT().CreatePhysicalVolume(gomock.Any(), gomock.Any()).Return(errTestInternal)
+				m.EXPECT().CreatePhysicalVolume(gomock.Any(), gomock.Any()).Return(errTestInternal).Times(2)
 			},
 			expectedPaths: nil,
 			expectedErr:   errTestInternal,
