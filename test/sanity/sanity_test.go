@@ -29,8 +29,6 @@ const (
 	targetPath = "/tmp/csi-mount"
 	// stagingPath is the path where the volume is staged in the sanity tests.
 	stagingPath = "/tmp/csi-staging"
-	// volumeGroupName is the name of the volume group used in the sanity tests.
-	volumeGroupName = "lcd-vg"
 )
 
 // testConfig is a configuration for a sanity test.
@@ -39,8 +37,6 @@ type testConfig struct {
 	testSuiteName string
 	// labels are the labels for the test
 	labels Labels
-	// testVolumeParameters are the volume parameters for the test
-	testVolumeParameters func() (map[string]string, error)
 	// controllerAddressPort is the address of the csi-controller plugin after port forwarding
 	controllerAddressPort string
 	// socatPort is the port on which the socat is listening for the socket in agent or manager
@@ -52,13 +48,8 @@ type testConfig struct {
 // TestConfigs is a list of test configurations to run.
 var TestConfigs = []testConfig{
 	{
-		testSuiteName: "lvm CSI Sanity Suite",
-		labels:        Label("aks", "lvm", "sanity"),
-		testVolumeParameters: func() (map[string]string, error) {
-			return map[string]string{
-				"localdisk.csi.acstor.io/vg": volumeGroupName,
-			}, nil
-		},
+		testSuiteName:         "lvm CSI Sanity Suite",
+		labels:                Label("aks", "lvm", "sanity"),
 		controllerAddressPort: "10001",
 		socatPort:             "10000",
 		skips: []string{
@@ -133,17 +124,12 @@ func (t *testConfig) RegisterTests() {
 		sanityConfig.RemoveStagingPath = removePathInPod
 		sanityConfig.RemoveTargetPath = removePathInPod
 		sanityConfig.CheckPath = checkPathInPod
-		idGen, err := NewLVMGenerator(volumeGroupName)
+		idGen, err := NewLVMGenerator()
 		if err != nil {
 			panic("Failed to create ID generator: " + err.Error())
 		}
 		sanityConfig.IDGen = idGen
 
-		// setup test volume parameters
-		sanityConfig.TestVolumeParameters, err = t.testVolumeParameters()
-		if err != nil {
-			panic("Failed to get test volume parameters: " + err.Error())
-		}
 		dialOptions := []grpc.DialOption{
 			grpc.WithTransportCredentials(insecure.NewCredentials()),
 			grpc.WithAuthority("localhost"),

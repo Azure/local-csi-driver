@@ -2,8 +2,6 @@ apiVersion: storage.k8s.io/v1
 kind: StorageClass
 metadata:
   name: local
-# parameters:
-#   localdisk.csi.acstor.io/vg: containerstorage
 provisioner: localdisk.csi.acstor.io
 reclaimPolicy: Delete
 volumeBindingMode: WaitForFirstConsumer

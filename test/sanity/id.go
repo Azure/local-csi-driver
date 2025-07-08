@@ -10,6 +10,11 @@ import (
 	"github.com/kubernetes-csi/csi-test/v5/pkg/sanity"
 )
 
+const (
+	// volumeGroupName is the name of the volume group used in the sanity tests.
+	volumeGroupName = "containerstorage"
+)
+
 // Verify VGIDGenerator implements IDGenerator interface.
 var _ sanity.IDGenerator = &LvmIDGenerator{}
 
@@ -17,21 +22,15 @@ var _ sanity.IDGenerator = &LvmIDGenerator{}
 // It generates volume IDs in the format "vgName#volumeName".
 type LvmIDGenerator struct {
 	sanity.DefaultIDGenerator
-	// VolumeGroupName is the volume group name to use in generated IDs
-	VolumeGroupName string
 }
 
 // NewLVMGenerator creates a new VGIDGenerator with the specified volume group name.
-func NewLVMGenerator(volumeGroupName string) (*LvmIDGenerator, error) {
-	if len(volumeGroupName) == 0 {
-		return nil, fmt.Errorf("volume group name cannot be empty")
-	}
-	return &LvmIDGenerator{
-		VolumeGroupName: volumeGroupName,
-	}, nil
+func NewLVMGenerator() (*LvmIDGenerator, error) {
+
+	return &LvmIDGenerator{}, nil
 }
 
 // GenerateUniqueValidVolumeID generates a unique volume ID in the format "vgName#volumeName".
 func (g LvmIDGenerator) GenerateUniqueValidVolumeID() string {
-	return fmt.Sprintf("%s#%s", g.VolumeGroupName, uuid.New().String()[:10])
+	return fmt.Sprintf("%s#%s", volumeGroupName, uuid.New().String()[:10])
 }

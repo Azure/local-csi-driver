@@ -51,16 +51,7 @@ func (l *LVM) Create(ctx context.Context, req *csi.CreateVolumeRequest) (*csi.Vo
 	log := log.FromContext(ctx)
 	log.V(1).Info("creating volume")
 
-	// Validate request parameters.
-	params := req.GetParameters()
-	if params == nil {
-		params = make(map[string]string)
-	}
-
-	if params[VolumeGroupParam] == "" {
-		params[VolumeGroupParam] = DefaultVolumeGroup
-	}
-	span.SetAttributes(attribute.String("vol.group", params[VolumeGroupParam]))
+	span.SetAttributes(attribute.String("vol.group", DefaultVolumeGroup))
 
 	// Validate capacity.
 	capacity := req.GetCapacityRange().GetRequiredBytes()
@@ -74,11 +65,17 @@ func (l *LVM) Create(ctx context.Context, req *csi.CreateVolumeRequest) (*csi.Vo
 	}
 	span.SetAttributes(attribute.Int64("capacity.bytes", capacity))
 
+	// Validate request parameters.
+	params := req.GetParameters()
+	if params == nil {
+		params = make(map[string]string)
+	}
+
 	// Set the size in the VolumeContext so it can be used for PV recovery.
 	params[CapacityParam] = fmt.Sprint(capacity)
 	params[LimitParam] = fmt.Sprint(limit)
 
-	id, err := newVolumeId(params[VolumeGroupParam], req.Name)
+	id, err := newVolumeId(DefaultVolumeGroup, req.Name)
 	if err != nil {
 		log.Error(err, "failed to create volume id", "name", req.Name)
 		span.SetStatus(codes.Error, "failed to create volume id")
@@ -227,10 +224,8 @@ func (l *LVM) GetCapacity(ctx context.Context, req *csi.GetCapacityRequest) (*cs
 	if params == nil {
 		params = make(map[string]string)
 	}
-	if params[VolumeGroupParam] == "" {
-		params[VolumeGroupParam] = DefaultVolumeGroup
-	}
-	span.SetAttributes(attribute.String("vol.group", params[VolumeGroupParam]))
+
+	span.SetAttributes(attribute.String("vol.group", DefaultVolumeGroup))
 
 	for k, v := range params {
 		span.SetAttributes(attribute.String(k, v))
@@ -256,7 +251,7 @@ func (l *LVM) GetCapacity(ctx context.Context, req *csi.GetCapacityRequest) (*cs
 
 	// Fetch the available capacity for the volume group, or the matching disks
 	// if not created yet.
-	availableCapacity, err := l.AvailableCapacity(ctx, params[VolumeGroupParam])
+	availableCapacity, err := l.AvailableCapacity(ctx, DefaultVolumeGroup)
 	if err != nil {
 		return nil, err
 	}
@@ -362,11 +357,6 @@ func (l *LVM) ValidateCapabilities(ctx context.Context, req *csi.ValidateVolumeC
 	log := log.FromContext(ctx)
 	log.V(1).Info("validating volume")
 
-	params := req.GetParameters()
-	if params == nil {
-		params = make(map[string]string)
-	}
-
 	id, err := newIdFromString(req.GetVolumeId())
 	if err != nil {
 		log.Error(err, "failed to parse volume id", "name", req.GetVolumeId())
@@ -375,16 +365,15 @@ func (l *LVM) ValidateCapabilities(ctx context.Context, req *csi.ValidateVolumeC
 		return nil, fmt.Errorf("failed to parse volume id %s: %w", req.GetVolumeId(), err)
 	}
 
-	// params is optional and can be empty. We don't want to default to some
-	// group because VG will be present in the volume id. If the volume group
-	// name is set, check if it matches the volume id.
-	if _, ok := params[VolumeGroupParam]; ok {
-		if id.VolumeGroup != params[VolumeGroupParam] {
-			log.Error(err, "volume group name does not match", "name", req.GetVolumeId())
-			span.SetStatus(codes.Error, "volume group name does not match")
-			span.RecordError(err)
-			return nil, fmt.Errorf("volume group name %s does not match volume id %s", params[VolumeGroupParam], req.GetVolumeId())
-		}
+	// Volume group is part of the first part of the volume ID. If the volume ID
+	// VG is not the default (we do not support multiple volume groups),
+	// we return an error.
+	if id.VolumeGroup != DefaultVolumeGroup {
+		err := fmt.Errorf("invalid volume group %s, expected %s", id.VolumeGroup, DefaultVolumeGroup)
+		log.Error(err, "invalid volume group", "expected", DefaultVolumeGroup, "got", id.VolumeGroup)
+		span.SetStatus(codes.Error, "invalid volume group")
+		span.RecordError(err)
+		return nil, err
 	}
 
 	span.SetAttributes(attribute.String("vol.group", id.VolumeGroup))

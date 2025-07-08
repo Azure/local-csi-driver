@@ -69,11 +69,6 @@ const (
 
 // Volume context parameters.
 var (
-	// VolumeGroupParam is the expected key used in the volume create request to
-	// specify the LVM volume group name where the logical volume should be
-	// created.
-	VolumeGroupParam = DriverName + "/vg"
-
 	// CapacityParam and LimitParam are used in the volume context to specify
 	// the requested and maximum size of the logical volume. It is used for PV
 	// recovery during NodeStageVolume to recreate the volume if it doesn't

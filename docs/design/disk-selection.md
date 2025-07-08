@@ -24,21 +24,6 @@ want and excludes those they do not want.
 
 ## Design
 
-Currently, we allow customization of the volume group name through the
-StorageClass parameter `localdisk.csi.acstor.io/vg`. For example:
-
-```yaml
-apiVersion: storage.k8s.io/v1
-kind: StorageClass
-metadata:
-  name: local
-provisioner: localdisk.csi.acstor.io
-parameters:
-  localdisk.csi.acstor.io/vg: containerstorage
-reclaimPolicy: Delete
-volumeBindingMode: WaitForFirstConsumer
-```
-
 We will add three new parameters to the storage class to allow users to
 customize the disk selection:
 
@@ -61,7 +46,6 @@ path prefix.
 
 | Parameter                                   | Description                 | Default Value                                              |
 |----------------------------------------------|----------------------------|------------------------------------------------------------|
-| `localdisk.csi.acstor.io/vg`                     | Name of the volume group   | `containerstorage`                                         |
 | `localdisk.csi.acstor.io/disk-path-prefixes`     | Prefix of the disk path    | `/dev/nvme`                                                |
 | `localdisk.csi.acstor.io/disk-models`            | Model of the disk          | `Microsoft NVMe Direct Disk,Microsoft NVMe Direct Disk v2` |
 | `localdisk.csi.acstor.io/disk-types`             | Type of the disk           | `disk`                                                     |
@@ -75,7 +59,6 @@ metadata:
   name: local
 provisioner: localdisk.csi.acstor.io
 parameters:
-  localdisk.csi.acstor.io/vg: containerstorage
   localdisk.csi.acstor.io/disk-path-prefixes: /dev/nvme,/dev/sda
   localdisk.csi.acstor.io/disk-models: Microsoft NVMe Direct Disk,Microsoft NVMe Direct Disk v2
   localdisk.csi.acstor.io/disk-types: disk
