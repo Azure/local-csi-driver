@@ -15,7 +15,7 @@ spec:
     - logs:
         name: logs
         selector:
-          - control-plane=local-csi-driver
+          - app=csi-local-node
         namespace: kube-system
         limits:
           maxAge: 720h
@@ -23,7 +23,7 @@ spec:
     - exec:
         collectorName: lsblk
         selector:
-          - control-plane=local-csi-driver
+          - app=csi-local-node
         namespace: kube-system
         command: ["/bin/sh", "-c"]
         args: ["lsblk --json --output-all"]
@@ -31,7 +31,7 @@ spec:
     - exec:
         collectorName: pvs
         selector:
-          - control-plane=local-csi-driver
+          - app=csi-local-node
         namespace: kube-system
         command: ["/bin/sh", "-c"]
         args: ["pvs --reportformat=json --binary --unit=B --options=pv_all,vg_name"]
@@ -39,7 +39,7 @@ spec:
     - exec:
         collectorName: vgs
         selector:
-          - control-plane=local-csi-driver
+          - app=csi-local-node
         namespace: kube-system
         command: ["/bin/sh", "-c"]
         args: ["vgs --reportformat=json --binary --unit=B --options=vg_all"]
@@ -47,7 +47,7 @@ spec:
     - exec:
         collectorName: lvs
         selector:
-          - control-plane=local-csi-driver
+          - app=csi-local-node
         namespace: kube-system
         command: ["/bin/sh", "-c"]
         args: ["lvs --reportformat=json --binary --unit=B --options=lv_all,seg_all,vg_name"]

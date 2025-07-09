@@ -1,0 +1,44 @@
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: statefulset-lcd-lvm
+  labels:
+    app: busybox
+spec:
+  podManagementPolicy: Parallel
+  replicas: 10
+  template:
+    metadata:
+      labels:
+        app: busybox
+    spec:
+      nodeSelector:
+        "kubernetes.io/os": linux
+      containers:
+        - name: statefulset-lcd
+          image: mcr.microsoft.com/azurelinux/busybox:1.36
+          command:
+            - "/bin/sh"
+            - "-c"
+            - set -euo pipefail; trap exit TERM; while true; do date -u +"%Y-%m-%dT%H:%M:%SZ"| tee -a /mnt/lcd/outfile; sleep 1; done
+          volumeMounts:
+            - name: ephemeral-storage
+              mountPath: /mnt/lcd
+      volumes:
+        - name: ephemeral-storage
+          ephemeral:
+            volumeClaimTemplate:
+              spec:
+                resources:
+                  requests:
+                    storage: 10Gi
+                volumeMode: Filesystem
+                accessModes:
+                  - ReadWriteOnce
+                storageClassName: local-xfs
+  updateStrategy:
+    type: RollingUpdate
+  selector:
+    matchLabels:
+      app: busybox
