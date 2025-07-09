@@ -199,7 +199,7 @@ func TestGetNodeDevice(t *testing.T) {
 
 func TestEnsurePhysicalVolumes(t *testing.T) {
 	t.Parallel()
-	devices := &block.DeviceList{Devices: []block.Device{block.Device{Path: "/dev/pv1"}, block.Device{Path: "/dev/pv2"}}}
+	devices := &block.DeviceList{Devices: []block.Device{{Path: "/dev/pv1"}, {Path: "/dev/pv2"}}}
 	tests := []struct {
 		name          string
 		expectProbe   func(*probe.Mock)
@@ -218,7 +218,7 @@ func TestEnsurePhysicalVolumes(t *testing.T) {
 		{
 			name: "no matching physical volumes",
 			expectProbe: func(p *probe.Mock) {
-				p.EXPECT().ScanAvailableDevices(gomock.Any(), gomock.Any()).Return(nil, probe.ErrNoDevicesMatchingFilter)
+				p.EXPECT().ScanAvailableDevices(gomock.Any(), gomock.Any()).Return(nil, probe.ErrNoDevicesFound)
 			},
 			expectedPaths: nil,
 			expectedErr:   core.ErrResourceExhausted,
@@ -475,7 +475,7 @@ func TestEnsureVolume(t *testing.T) {
 	// Use bytes for size: 1024MiB == 1073741824 bytes
 	testLv1GiB := &lvmMgr.LogicalVolume{Name: "lv", Size: lvmMgr.Int64String(convert.MiBToBytes(1024))}
 	testLv2GiB := &lvmMgr.LogicalVolume{Name: "lv", Size: lvmMgr.Int64String(convert.MiBToBytes(2048))}
-	devices := &block.DeviceList{Devices: []block.Device{block.Device{Path: "/dev/pv1"}, block.Device{Path: "/dev/pv2"}}}
+	devices := &block.DeviceList{Devices: []block.Device{{Path: "/dev/pv1"}, {Path: "/dev/pv2"}}}
 
 	tests := []struct {
 		name        string

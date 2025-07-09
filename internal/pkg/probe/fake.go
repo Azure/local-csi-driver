@@ -24,7 +24,7 @@ func NewFake(devices []string, err error) *Fake {
 	}
 }
 
-// GetDevices returns a list of devices.
+// ScanAvailableDevices simulates scanning for available devices.
 func (f *Fake) ScanAvailableDevices(ctx context.Context, log logr.Logger) (*block.DeviceList, error) {
 	if f.Err != nil {
 		return nil, f.Err

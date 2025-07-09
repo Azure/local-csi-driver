@@ -326,7 +326,7 @@ func (l *LVM) EnsurePhysicalVolumes(ctx context.Context) ([]string, error) {
 	// Get list of physical disks matching the device filter.
 	devices, err := l.probe.ScanAvailableDevices(ctx, log)
 	if err != nil {
-		if errors.Is(err, probe.ErrNoDevicesFound) || errors.Is(err, probe.ErrNoDevicesMatchingFilter) {
+		if errors.Is(err, probe.ErrNoDevicesFound) {
 			log.Error(err, "no devices found")
 			span.SetStatus(codes.Error, "no devices found")
 			recorder.Eventf(corev1.EventTypeWarning, provisioningPhysicalVolumeFailed, "Provisioning physical volume failed: %s", err.Error())

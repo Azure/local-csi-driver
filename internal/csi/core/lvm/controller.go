@@ -294,7 +294,7 @@ func (l *LVM) AvailableCapacity(ctx context.Context, vgName string) (int64, erro
 	// total size of all available disks matching the device filter.
 	filtered, err := l.probe.ScanAvailableDevices(ctx, log)
 	if err != nil {
-		if errors.Is(err, probe.ErrNoDevicesFound) || errors.Is(err, probe.ErrNoDevicesMatchingFilter) {
+		if errors.Is(err, probe.ErrNoDevicesFound) || errors.Is(err, probe.ErrNoDevicesFound) {
 			span.SetStatus(codes.Ok, "no devices found matching filter")
 			return 0, nil
 		}

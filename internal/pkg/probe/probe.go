@@ -15,9 +15,6 @@ import (
 var (
 	// ErrNoDevicesFound is returned when no devices are found.
 	ErrNoDevicesFound = fmt.Errorf("no devices found")
-
-	// ErrNoDevicesMatchingFilter is returned when no devices match the filter.
-	ErrNoDevicesMatchingFilter = fmt.Errorf("no devices matching filter found")
 )
 
 //go:generate mockgen -copyright_file ../../../hack/mockgen_copyright.txt -destination=mock_probe.go -mock_names=Interface=Mock -package=probe -source=probe.go Interface
@@ -38,7 +35,7 @@ func New(b block.Interface, f *Filter) Interface {
 	return &deviceScanner{b, f}
 }
 
-// GetUnfomattedDevices retrieves devices that are unformatted.
+// ScanAvailableDevices retrieves devices that are unformatted.
 func (m *deviceScanner) ScanAvailableDevices(ctx context.Context, log logr.Logger) (*block.DeviceList, error) {
 	devices, err := m.GetDevices(ctx)
 	if err != nil {
