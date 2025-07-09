@@ -84,7 +84,7 @@ func (l *LVM) Create(ctx context.Context, req *csi.CreateVolumeRequest) (*csi.Vo
 	}
 
 	// Check for existing volume on the node.
-	if err := l.EnsureVolume(ctx, id.String(), capacity, limit); err != nil {
+	if err := l.EnsureVolume(ctx, id.String(), capacity, limit, false); err != nil {
 		log.Error(err, "failed to ensure volume", "name", id.String())
 		span.SetStatus(codes.Error, "failed to ensure volume")
 		span.RecordError(err)

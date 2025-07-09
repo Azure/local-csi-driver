@@ -604,7 +604,7 @@ func TestEnsureVolume(t *testing.T) {
 			if tt.expectProbe != nil {
 				tt.expectProbe(p)
 			}
-			err = l.EnsureVolume(context.Background(), tt.volumeId, tt.request, tt.limit)
+			err = l.EnsureVolume(context.Background(), tt.volumeId, tt.request, tt.limit, true)
 			if !errors.Is(err, tt.expectedErr) {
 				t.Errorf("EnsureVolume() error = %v, expectErr %v", err, tt.expectedErr)
 			}
