@@ -50,7 +50,6 @@ func (m *deviceScanner) ScanAvailableDevices(ctx context.Context, log logr.Logge
 		}
 		isFormatted, err := m.IsFormatted(device.Path)
 		if err != nil {
-			log.V(2).Error(err, "failed to check if device is unformatted", "device", device)
 			return nil, fmt.Errorf("failed to check if device is unformatted: %w", err)
 		}
 		if !isFormatted {
