@@ -60,18 +60,3 @@ func (mr *MockMockRecorder) ScanAvailableDevices(ctx, log any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ScanAvailableDevices", reflect.TypeOf((*Mock)(nil).ScanAvailableDevices), ctx, log)
 }
-
-// ScanDevices mocks base method.
-func (m *Mock) ScanDevices(ctx context.Context, log logr.Logger) ([]string, error) {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "ScanDevices", ctx, log)
-	ret0, _ := ret[0].([]string)
-	ret1, _ := ret[1].(error)
-	return ret0, ret1
-}
-
-// ScanDevices indicates an expected call of ScanDevices.
-func (mr *MockMockRecorder) ScanDevices(ctx, log any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ScanDevices", reflect.TypeOf((*Mock)(nil).ScanDevices), ctx, log)
-}

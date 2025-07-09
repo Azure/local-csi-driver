@@ -324,7 +324,7 @@ func (l *LVM) EnsurePhysicalVolumes(ctx context.Context) ([]string, error) {
 	defer span.End()
 
 	// Get list of physical disks matching the device filter.
-	devices, err := l.probe.ScanDevices(ctx, log)
+	devices, err := l.probe.ScanAvailableDevices(ctx, log)
 	if err != nil {
 		if errors.Is(err, probe.ErrNoDevicesFound) || errors.Is(err, probe.ErrNoDevicesMatchingFilter) {
 			log.Error(err, "no devices found")
@@ -336,13 +336,11 @@ func (l *LVM) EnsurePhysicalVolumes(ctx context.Context) ([]string, error) {
 		span.RecordError(err)
 		return nil, fmt.Errorf("failed to scan devices: %w", err)
 	}
-
-	span.SetAttributes(attribute.StringSlice("devices", devices))
 	log.V(2).Info("found devices", "devices", devices)
 
 	// Get list of existing physical volumes.
 	existing := map[string]struct{}{}
-	finalPvs := make([]string, 0, len(devices))
+	finalPvs := make([]string, 0, len(devices.Devices))
 	pvs, err := l.lvm.ListPhysicalVolumes(ctx, nil)
 	if err != nil {
 		span.SetStatus(codes.Error, "failed to list physical volumes")
@@ -354,36 +352,33 @@ func (l *LVM) EnsurePhysicalVolumes(ctx context.Context) ([]string, error) {
 	}
 
 	// Create any missing physical volumes.
-	createErrors := make([]error, 0, len(devices))
-	for _, device := range devices {
-		if _, ok := existing[device]; ok {
-			finalPvs = append(finalPvs, device)
+	for _, device := range devices.Devices {
+		if _, ok := existing[device.Path]; ok {
+			finalPvs = append(finalPvs, device.Path)
 			log.V(2).Info("physical volume already exists", "device", device)
 			continue
 		}
 		recorder.Eventf(corev1.EventTypeNormal, provisioningPhysicalVolume, "Provisioning physical volume %s", device)
 		pvCreateOptions := lvm.CreatePVOptions{
-			Name: device,
+			Name: device.Path,
 		}
 		if err := l.lvm.CreatePhysicalVolume(ctx, pvCreateOptions); err != nil {
 			span.SetStatus(codes.Error, "failed to create physical volume")
 			span.RecordError(err)
 			recorder.Eventf(corev1.EventTypeWarning, provisioningPhysicalVolumeFailed, "Provisioning physical volume %s failed: %s", device, err)
-			createErrors = append(createErrors, fmt.Errorf("failed to create physical volume %s: %w", device, err))
+			if !errors.Is(err, lvm.ErrInUse) {
+				return nil, fmt.Errorf("failed to create physical volume %s: %w", device.Path, err)
+			}
 			continue
 		}
-		finalPvs = append(finalPvs, device)
+		finalPvs = append(finalPvs, device.Path)
 		recorder.Eventf(corev1.EventTypeNormal, provisionedPhysicalVolume, "Successfully provisioned physical volume %s", device)
 		log.V(1).Info("created physical volume", "device", device)
 	}
 
 	if len(finalPvs) == 0 {
-		if len(createErrors) > 0 {
-			log.Error(fmt.Errorf("failed to create physical volumes for some disks: %v", createErrors), "failed to create physical volumes")
-			return nil, errors.Join(createErrors...)
-		}
 		log.Error(fmt.Errorf("no disks are available"), "no disks are available")
-		// return as resource exhausted to prompt scheduler to move the workload to another node
+		// Return as resource exhausted to prompt scheduler to move the workload to another node
 		return nil, fmt.Errorf("%w: no disks are available", core.ErrResourceExhausted)
 	}
 
@@ -524,12 +519,6 @@ func (l *LVM) Cleanup(ctx context.Context) error {
 
 	log := log.FromContext(ctx)
 	log.V(1).Info("validating volume")
-
-	devices, err := l.probe.ScanDevices(ctx, log)
-	if err != nil {
-		return fmt.Errorf("failed to scan devices: %w", err)
-	}
-
 	volumeGroup, err := l.lvm.ListVolumeGroups(ctx, &lvm.ListVGOptions{Select: "vg_tags=" + DefaultVolumeGroupTag})
 	if err != nil {
 		log.Error(err, "failed to list volume groups")
@@ -542,6 +531,18 @@ func (l *LVM) Cleanup(ctx context.Context) error {
 			return err
 		}
 	}
+
+	pvs, err := l.lvm.ListPhysicalVolumes(ctx, nil)
+	if err != nil {
+		log.Error(err, "failed to list physical volumes")
+		return fmt.Errorf("failed to list physical volumes: %w", err)
+	}
+
+	devices := make([]string, 0, len(pvs))
+	for _, pv := range pvs {
+		devices = append(devices, pv.Name)
+	}
+
 	if err := l.removePhysicalVolumes(ctx, devices); err != nil {
 		log.Error(err, "failed to remove physical volumes", "devices", devices)
 		return err

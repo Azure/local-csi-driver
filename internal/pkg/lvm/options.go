@@ -21,9 +21,9 @@
 package lvm
 
 import (
-	"local-csi-driver/internal/pkg/block"
-
 	"go.opentelemetry.io/otel/trace"
+
+	"local-csi-driver/internal/pkg/block"
 )
 
 // ClientOption is an option for configuring the lvm2 client.
@@ -36,10 +36,10 @@ func WithLVM(path string) ClientOption {
 	}
 }
 
-// Set the path to the system utilities executable.
-func WithSystemUtilities(utils block.Interface) ClientOption {
+// Set the path to the block device utilities.
+func WithBlockDeviceUtilities(blockUtils block.Interface) ClientOption {
 	return func(c *Client) {
-		c.sysutils = utils
+		c.block = blockUtils
 	}
 }
 

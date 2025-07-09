@@ -296,7 +296,7 @@ func main() {
 	// Create the LVM manager.
 	// LVM manager is an abstraction that understands how to create and
 	// manage LVM resources like PV, VG, and LV.
-	lvmMgr := lvmMgr.NewClient(lvmMgr.WithTracerProvider(tp), lvmMgr.WithSystemUtilities(blockDevUtils))
+	lvmMgr := lvmMgr.NewClient(lvmMgr.WithTracerProvider(tp), lvmMgr.WithBlockDeviceUtilities(blockDevUtils))
 	if !lvmMgr.IsSupported() {
 		logAndExit(fmt.Errorf("lvm is not supported on this node"), "lvm is not supported")
 	}

@@ -35,7 +35,7 @@ import (
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
 
-	sysutils "local-csi-driver/internal/pkg/block"
+	"local-csi-driver/internal/pkg/block"
 	"local-csi-driver/internal/pkg/telemetry"
 )
 
@@ -79,9 +79,9 @@ func IgnoreNotFound(err error) error {
 }
 
 type Client struct {
-	sysutils sysutils.Interface
-	lvmPath  string
-	tracer   trace.Tracer
+	block   block.Interface
+	lvmPath string
+	tracer  trace.Tracer
 }
 
 // Construct a new lvm2 client.
@@ -190,9 +190,13 @@ func (c *Client) CreatePhysicalVolume(ctx context.Context, opts CreatePVOptions)
 	))
 	defer span.End()
 
-	_, err := c.sysutils.IsBlkDevUnformatted(opts.Name)
+	formatted, err := c.block.IsFormatted(opts.Name)
 	if err != nil {
 		return getErrorType(err)
+	}
+
+	if formatted {
+		return fmt.Errorf("%w: %s is already formatted", ErrInUse, opts.Name)
 	}
 
 	// We won't provide --yes to the pvcreate command as we want to confirm the creation of the PV.
@@ -688,14 +692,14 @@ func (c *Client) ExtendLogicalVolume(ctx context.Context, opts ExtendLVOptions) 
 	defer span.End()
 
 	lvPath := "/dev/" + opts.Name
-	unformatted, err := c.sysutils.IsBlkDevUnformatted(lvPath)
+	formatted, err := c.block.IsFormatted(lvPath)
 	if err != nil {
 		return err
 	}
 
 	// If the logical volume is unformatted, we cannot resize the filesystem.
 	// lvextend will fail looking for a filesystem to resize.
-	if opts.ResizeFS && unformatted {
+	if opts.ResizeFS && !formatted {
 		opts.ResizeFS = false
 	}
 

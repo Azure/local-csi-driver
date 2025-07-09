@@ -24,17 +24,6 @@ func NewFake(devices []string, err error) *Fake {
 	}
 }
 
-// ScanDevices returns the list of devices or an error if no devices are found.
-func (f *Fake) ScanDevices(ctx context.Context, log logr.Logger) ([]string, error) {
-	if f.Err != nil {
-		return nil, f.Err
-	}
-	if len(f.Devices) == 0 {
-		return nil, ErrNoDevicesFound
-	}
-	return f.Devices, nil
-}
-
 // GetDevices returns a list of devices.
 func (f *Fake) ScanAvailableDevices(ctx context.Context, log logr.Logger) (*block.DeviceList, error) {
 	if f.Err != nil {

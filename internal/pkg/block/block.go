@@ -25,7 +25,7 @@ const (
 type Interface interface {
 	GetDevices(ctx context.Context) (*DeviceList, error)
 	IsBlockDevice(path string) (bool, error)
-	IsBlkDevUnformatted(device string) (bool, error)
+	IsFormatted(device string) (bool, error)
 }
 
 // block implements the Interface.
@@ -78,7 +78,7 @@ func (s *block) IsBlockDevice(path string) (bool, error) {
 	return false, nil
 }
 
-// IsBlkDevUnformatted reports whether the given block device is unformatted.
+// IsFormatted reports whether the given block device is formatted.
 // blockDev is the path to the block device e.g. /dev/nvme0n1.
 // Uses system utility blkid to get information about the device.
 // blkid exit status is:
@@ -87,31 +87,29 @@ func (s *block) IsBlockDevice(path string) (bool, error) {
 //   - 4, usage or other errors.
 //   - 8, ambivalent probing result was detected by low-level probing mode (-p).
 //
-// The function is mainly centered around the exit status as 2 of blkid.
-// returns true if the device is unformatted, false otherwise.
-func (s *block) IsBlkDevUnformatted(blockDev string) (bool, error) {
+// Returns true if the device is formatted, false otherwise.
+func (s *block) IsFormatted(blockDev string) (bool, error) {
 	devPresent, err := s.IsBlockDevice(blockDev)
 	if err != nil {
 		return false, err
 	}
-	if devPresent {
-		// Run the "blkid" command to get information about the device
-		args := []string{"-p", blockDev}
-		_, err := s.exec.Command(blkidCmd, args...).CombinedOutput()
-		if err != nil {
-			if exit, ok := err.(utilexec.ExitError); ok {
-				if exit.ExitStatus() == 2 {
-					// Disk device is unformatted.
-					// For `blkid`, if the specified token (TYPE/PTTYPE, etc) was
-					// not found, or no (specified) devices could be identified, an
-					// exit code of 2 is returned.
-					return true, nil
-				}
-			}
-			return false, fmt.Errorf("could not discover filesystem format for device path (%s): %w", blockDev, err)
+	if !devPresent {
+		return false, fmt.Errorf("device %s not present", blockDev)
+	}
+
+	args := []string{"-p", blockDev}
+	_, err = s.exec.Command(blkidCmd, args...).CombinedOutput()
+	if err == nil {
+		// Exit code 0: device is formatted
+		return true, nil
+	}
+	if exit, ok := err.(utilexec.ExitError); ok {
+		if exit.ExitStatus() == 2 {
+			// Exit code 2: device is unformatted
+			return false, nil
 		}
 	}
-	return false, nil
+	return false, fmt.Errorf("could not determine if device %s is formatted: %w", blockDev, err)
 }
 
 // parseLsblkOutput parses the JSON output of the lsblk command.
