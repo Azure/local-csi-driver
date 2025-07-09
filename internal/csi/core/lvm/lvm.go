@@ -65,6 +65,7 @@ const (
 	provisionedLogicalVolume             = "ProvisionedLogicalVolume"
 	provisioningLogicalVolumeFailed      = "ProvisioningLogicalVolumeFailed"
 	provisionedLogicalVolumeSizeMismatch = "ProvisionedLogicalVolumeSizeMismatch"
+	provisionedEmptyVolume               = "ProvisionedEmptyVolume"
 )
 
 // Volume context parameters.
@@ -373,7 +374,7 @@ func (l *LVM) EnsurePhysicalVolumes(ctx context.Context) ([]string, error) {
 // EnsureVolume ensures that the volume exists with the given name and size.
 // If the volume already exists, it returns it. Otherwise it creates the
 // volume and returns it.
-func (l *LVM) EnsureVolume(ctx context.Context, volumeId string, capacity int64, limit int64) error {
+func (l *LVM) EnsureVolume(ctx context.Context, volumeId string, capacity int64, limit int64, isMountOperation bool) error {
 	ctx, span := l.tracer.Start(ctx, "volume.lvm.csi/EnsureVolume", trace.WithAttributes(
 		attribute.String("vol.id", volumeId),
 		attribute.Int64("vol.capacity", capacity),
@@ -481,6 +482,9 @@ func (l *LVM) EnsureVolume(ctx context.Context, volumeId string, capacity int64,
 	log.V(1).Info("created logical volume", "capacity", capacity)
 	span.AddEvent("created logical volume", trace.WithAttributes(attribute.Int64("capacity", capacity)))
 	recorder.Eventf(corev1.EventTypeNormal, provisionedLogicalVolume, "Successfully provisioned logical volume %s/%s", id.VolumeGroup, id.LogicalVolume)
+	if isMountOperation {
+		recorder.Eventf(corev1.EventTypeNormal, provisionedEmptyVolume, "A new empty volume was created during mount because the logical volume %s/%s was not found on the node. This may indicate the volume was not previously provisioned on this node.", id.VolumeGroup, id.LogicalVolume)
+	}
 	return nil
 }
 
