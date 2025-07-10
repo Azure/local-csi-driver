@@ -4,16 +4,19 @@ metadata:
   name: {{ .Values.name }}-node
   labels:
     app: {{ .Values.name }}
+    app.kubernetes.io/component: csi-local-node
   {{- include "chart.labels" . | nindent 4 }}
 spec:
   selector:
     matchLabels:
       app: {{ .Values.name }}-node
+      app.kubernetes.io/component: csi-local-node
     {{- include "chart.selectorLabels" . | nindent 6 }}
   template:
     metadata:
       labels:
         app: {{ .Values.name }}-node
+        app.kubernetes.io/component: csi-local-node
       {{- include "chart.selectorLabels" . | nindent 8 }}
       annotations:
         kubectl.kubernetes.io/default-container: driver
