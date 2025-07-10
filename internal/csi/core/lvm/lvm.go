@@ -377,7 +377,6 @@ func (l *LVM) EnsurePhysicalVolumes(ctx context.Context) ([]string, error) {
 	}
 
 	if len(finalPvs) == 0 {
-		log.Error(fmt.Errorf("no disks are available"), "no disks are available")
 		// Return as resource exhausted to prompt scheduler to move the workload to another node
 		return nil, fmt.Errorf("%w: no disks are available", core.ErrResourceExhausted)
 	}
@@ -527,14 +526,12 @@ func (l *LVM) Cleanup(ctx context.Context) error {
 
 	for _, vg := range volumeGroup {
 		if err := l.removeVolumeGroup(ctx, vg.Name); err != nil {
-			log.Error(err, "failed to remove volume group", "vg", DefaultVolumeGroup)
-			return err
+			return fmt.Errorf("failed to remove volume group %s: %w", vg.Name, err)
 		}
 	}
 
 	pvs, err := l.lvm.ListPhysicalVolumes(ctx, nil)
 	if err != nil {
-		log.Error(err, "failed to list physical volumes")
 		return fmt.Errorf("failed to list physical volumes: %w", err)
 	}
 
