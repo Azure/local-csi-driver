@@ -24,8 +24,8 @@ helm uninstall local-csi-driver --namespace kube-system
 
 ## Configuration
 
-This table list the configurable parameters of the latest Local CSI Driver chart
-and their default values.
+This table lists the configurable parameters of the latest Local CSI Driver
+chart and their default values.
 
 <!-- markdownlint-disable MD033 -->
 | Parameter                                     | Description                                                                        | Default                                                                                                                  |
@@ -35,15 +35,20 @@ and their default values.
 | `image.driver.repository`                     | local-csi-driver container image.                                                  | `/acstor/local-csi-driver`                                                                                               |
 | `image.driver.tag`                            | local-csi-driver container image tag. Uses chart version when unset (recommended). |                                                                                                                          |
 | `image.driver.pullPolicy`                     | local-csi-driver image pull policy.                                                | `IfNotPresent`                                                                                                           |
-| `image.csiProvisioner.repository`             | csi-provisioner container image.                                                   | `/oss/kubernetes-csi/csi-provisioner`                                                                                    |
+| `image.csiProvisioner.repository`             | csi-provisioner container image.                                                   | `/oss/v2/kubernetes-csi/csi-provisioner`                                                                                 |
 | `image.csiProvisioner.tag`                    | csi-provisioner container image tag.                                               | `v5.2.0`                                                                                                                 |
 | `image.csiProvisioner.pullPolicy`             | csi-provisioner image pull policy.                                                 | `IfNotPresent`                                                                                                           |
-| `image.csiResizer.repository`                 | csi-resizer container image.                                                       | `/oss/kubernetes-csi/csi-resizer`                                                                                        |
+| `image.csiResizer.repository`                 | csi-resizer container image.                                                       | `/oss/v2/kubernetes-csi/csi-resizer`                                                                                     |
 | `image.csiResizer.tag`                        | csi-resizer container image tag.                                                   | `v1.13.2`                                                                                                                |
 | `image.csiResizer.pullPolicy`                 | csi-resizer image pull policy.                                                     | `IfNotPresent`                                                                                                           |
-| `image.nodeDriverRegistrar.repository`        | csi-node-driver-registrar container image.                                         | `/oss/kubernetes-csi/csi-node-driver-registrar`                                                                          |
+| `image.nodeDriverRegistrar.repository`        | csi-node-driver-registrar container image.                                         | `/oss/v2/kubernetes-csi/csi-node-driver-registrar`                                                                       |
 | `image.nodeDriverRegistrar.tag`               | csi-node-driver-registrar container image tag.                                     | `v2.13.0`                                                                                                                |
 | `image.nodeDriverRegistrar.pullPolicy`        | csi-node-driver-registrar image pull policy.                                       | `IfNotPresent`                                                                                                           |
+| `storageClass.enabled`                        | Indicates whether the storage class should be created by Helm.                     | `true`                                                                                                                   |
+| `storageClass.name`                           | The name of the storage class.                                                     | `local`                                                                                                                  |
+| `storageClass.reclaimPolicy`                  | The reclaim policy for the storage class. Can be either Delete or Retain.          | `Delete`                                                                                                                 |
+| `storageClass.volumeBindingMode`              | The volume binding mode for the storage class.                                     | `WaitForFirstConsumer`                                                                                                   |
+| `storageClass.allowVolumeExpansion`           | The allowVolumeExpansion flag for the storage class.                               | `true`                                                                                                                   |
 | `daemonset.nodeSelector`                      | Node selector for the DaemonSet. If empty, all nodes are selected.                 |                                                                                                                          |
 | `daemonset.tolerations`                       | Tolerations for the DaemonSet. If empty, no tolerations are applied.               | <code>- effect: NoSchedule<br>&nbsp;&nbsp;operator: Exists<br>- effect: NoExecute<br>&nbsp;&nbsp;operator: Exists</code> |
 | `daemonset.serviceAccount.annotations`        | Annotations for the service account. If empty, no annotations are applied.         |                                                                                                                          |

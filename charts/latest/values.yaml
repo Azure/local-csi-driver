@@ -24,6 +24,22 @@ image:
     tag: v2.13.0
     pullPolicy: IfNotPresent
 
+# Storage class configuration.
+storageClass:
+  # Indicates whether the storage class should be created by Helm. If false, it
+  # should be created manually or by another tool.
+  enabled: true
+  # The name of the storage class.
+  name: "local"
+  # The reclaim policy for the storage class. Can be either Delete or Retain.
+  reclaimPolicy: Delete
+  # The volume binding mode for the storage class. Can be either Immediate or
+  # WaitForFirstConsumer.
+  volumeBindingMode: WaitForFirstConsumer
+  # The allowVolumeExpansion flag for the storage class. If true, volumes can be
+  # expanded. If false, volumes cannot be expanded.
+  allowVolumeExpansion: true
+
 # DaemonSet configuration.
 daemonset:
   # Node selector for the DaemonSet. If empty, all nodes are selected. This can
