@@ -150,7 +150,7 @@ spec:
         - --feature-gates=Topology=true
         - --strict-topology=true
         - --enable-capacity
-        - --capacity-ownerref-level=1
+        - --capacity-ownerref-level=0
         - --capacity-poll-interval=15s
         - --v={{ .Values.observability.csiProvisioner.log.level }}
         env:
