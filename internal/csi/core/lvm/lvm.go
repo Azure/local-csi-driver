@@ -383,10 +383,10 @@ func (l *LVM) EnsurePhysicalVolumes(ctx context.Context) ([]string, error) {
 // EnsureVolume ensures that the volume exists with the given name and size.
 // If the volume already exists, it returns it. Otherwise it creates the
 // volume and returns it.
-func (l *LVM) EnsureVolume(ctx context.Context, volumeId string, capacity int64, limit int64, isMountOperation bool) error {
+func (l *LVM) EnsureVolume(ctx context.Context, volumeId string, capacity *int64, limit int64, isMountOperation bool) error {
 	ctx, span := l.tracer.Start(ctx, "volume.lvm.csi/EnsureVolume", trace.WithAttributes(
 		attribute.String("vol.id", volumeId),
-		attribute.Int64("vol.capacity", capacity),
+		attribute.Int64("vol.capacity", *capacity),
 		attribute.Int64("vol.limit", limit),
 	))
 	defer span.End()
@@ -409,8 +409,8 @@ func (l *LVM) EnsureVolume(ctx context.Context, volumeId string, capacity int64,
 		span.SetStatus(codes.Error, "volume group name is required")
 		return fmt.Errorf("%w: volume group name is required", core.ErrInvalidArgument)
 	}
-	if capacity <= 0 || limit < 0 || (limit > 0 && limit < capacity) {
-		log.Error(fmt.Errorf("invalid capacity or limit"), "capacity", capacity, "limit", limit)
+	if *capacity <= 0 || limit < 0 || (limit > 0 && limit < *capacity) {
+		log.Error(fmt.Errorf("invalid capacity or limit"), "capacity", *capacity, "limit", limit)
 		span.SetStatus(codes.Error, "invalid capacity or limit")
 		return fmt.Errorf("%w: invalid capacity %d or limit %d", core.ErrInvalidArgument, capacity, limit)
 	}
@@ -426,8 +426,8 @@ func (l *LVM) EnsureVolume(ctx context.Context, volumeId string, capacity int64,
 		span.AddEvent("found existing volume", trace.WithAttributes(attribute.Int64("bytes", int64(lv.Size))))
 
 		// Check volume size.
-		if int64(lv.Size) < capacity || (limit > 0 && int64(lv.Size) > limit) {
-			log.Error(err, "volume size mismatch", "request", capacity, "limit", limit, "actual", lv.Size)
+		if int64(lv.Size) < *capacity || (limit > 0 && int64(lv.Size) > limit) {
+			log.Error(err, "volume size mismatch", "request", *capacity, "limit", limit, "actual", lv.Size)
 			span.SetStatus(codes.Error, "volume size mismatch")
 			recorder.Eventf(corev1.EventTypeWarning, provisionedLogicalVolumeSizeMismatch, "Volume size mismatch %s/%s: request %d, limit %d, actual %d", id.VolumeGroup, id.LogicalVolume, capacity, limit, lv.Size)
 			return fmt.Errorf("volume size mismatch: request %d, limit %d, actual %d: %w", capacity, limit, lv.Size, core.ErrVolumeSizeMismatch)
@@ -468,7 +468,7 @@ func (l *LVM) EnsureVolume(ctx context.Context, volumeId string, capacity int64,
 	createOps := lvm.CreateLVOptions{
 		Name:   id.LogicalVolume,
 		VGName: vg.Name,
-		Size:   fmt.Sprintf("%dB", capacity),
+		Size:   fmt.Sprintf("%dB", *capacity),
 	}
 
 	// if we have more than one PV, create a raid0 volume. Otherwise, create a
@@ -478,8 +478,9 @@ func (l *LVM) EnsureVolume(ctx context.Context, volumeId string, capacity int64,
 		createOps.Stripes = ptr.Of(int(vg.PVCount))
 	}
 
-	if err := l.lvm.CreateLogicalVolume(ctx, createOps); err != nil {
-		log.Error(err, "failed to create logical volume", "capacity", capacity)
+	allocated_size, err := l.lvm.CreateLogicalVolume(ctx, createOps)
+	if err != nil {
+		log.Error(err, "failed to create logical volume", "capacity", *capacity)
 		span.SetStatus(codes.Error, "failed to create logical volume")
 		span.RecordError(err)
 		recorder.Eventf(corev1.EventTypeWarning, provisioningLogicalVolumeFailed, "Provisioning logical volume %s/%s failed: %s", id.VolumeGroup, id.LogicalVolume, err)
@@ -488,8 +489,14 @@ func (l *LVM) EnsureVolume(ctx context.Context, volumeId string, capacity int64,
 		}
 		return fmt.Errorf("failed to create logical volume: %w", err)
 	}
+
+	if allocated_size > *capacity {
+		log.V(1).Info("allocated logical volume size is larger than requested", "allocated", allocated_size, "requested", capacity)
+	}
+	*capacity = allocated_size
+
 	log.V(1).Info("created logical volume", "capacity", capacity)
-	span.AddEvent("created logical volume", trace.WithAttributes(attribute.Int64("capacity", capacity)))
+	span.AddEvent("created logical volume", trace.WithAttributes(attribute.Int64("capacity", *capacity)))
 	recorder.Eventf(corev1.EventTypeNormal, provisionedLogicalVolume, "Successfully provisioned logical volume %s/%s", id.VolumeGroup, id.LogicalVolume)
 	if isMountOperation {
 		recorder.Eventf(corev1.EventTypeNormal, provisionedEmptyVolume, "A new empty volume was created during mount because the logical volume %s/%s was not found on the node. This may indicate the volume was not previously provisioned on this node.", id.VolumeGroup, id.LogicalVolume)

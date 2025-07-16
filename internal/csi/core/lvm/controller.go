@@ -71,10 +71,6 @@ func (l *LVM) Create(ctx context.Context, req *csi.CreateVolumeRequest) (*csi.Vo
 		params = make(map[string]string)
 	}
 
-	// Set the size in the VolumeContext so it can be used for PV recovery.
-	params[CapacityParam] = fmt.Sprint(capacity)
-	params[LimitParam] = fmt.Sprint(limit)
-
 	id, err := newVolumeId(DefaultVolumeGroup, req.Name)
 	if err != nil {
 		log.Error(err, "failed to create volume id", "name", req.Name)
@@ -84,12 +80,16 @@ func (l *LVM) Create(ctx context.Context, req *csi.CreateVolumeRequest) (*csi.Vo
 	}
 
 	// Check for existing volume on the node.
-	if err := l.EnsureVolume(ctx, id.String(), capacity, limit, false); err != nil {
+	if err := l.EnsureVolume(ctx, id.String(), &capacity, limit, false); err != nil {
 		log.Error(err, "failed to ensure volume", "name", id.String())
 		span.SetStatus(codes.Error, "failed to ensure volume")
 		span.RecordError(err)
 		return nil, fmt.Errorf("failed to ensure volume: %w", err)
 	}
+
+	// Set the size in the VolumeContext so it can be used for PV recovery.
+	params[CapacityParam] = fmt.Sprint(capacity)
+	params[LimitParam] = fmt.Sprint(limit)
 
 	return &csi.Volume{
 		CapacityBytes: capacity,

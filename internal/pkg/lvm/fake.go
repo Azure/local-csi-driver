@@ -6,6 +6,7 @@ package lvm
 import (
 	"context"
 	"strconv"
+	"strings"
 )
 
 type Fake struct {
@@ -97,12 +98,28 @@ func (f *Fake) RemoveVolumeGroup(ctx context.Context, opts RemoveVGOptions) erro
 }
 
 // CreateLogicalVolume creates an LV on a VG.
-func (f *Fake) CreateLogicalVolume(ctx context.Context, opts CreateLVOptions) error {
+func (f *Fake) CreateLogicalVolume(ctx context.Context, opts CreateLVOptions) (int64, error) {
+	// Parse the requested size (format: "123456B")
+	sizeStr := opts.Size
+	sizeStr = strings.TrimSuffix(sizeStr, "B")
+
+	requestedSize, err := strconv.ParseInt(sizeStr, 10, 64)
+	if err != nil {
+		return 0, err
+	}
+
+	// Simulate LVM extent allocation (default 4MiB extents)
+	const extentSize = 4 * 1024 * 1024                             // 4 MiB
+	extentsNeeded := (requestedSize + extentSize - 1) / extentSize // Round up
+	actualSize := extentsNeeded * extentSize
+
 	lv := LogicalVolume{
 		Name: opts.Name,
+		Size: Int64String(actualSize),
 	}
 	f.LVs[opts.Name] = lv
-	return nil
+
+	return actualSize, nil
 }
 
 // RemoveLogicalVolume removes a LV from a VG.

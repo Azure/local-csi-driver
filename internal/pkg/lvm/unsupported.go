@@ -30,8 +30,8 @@ func (l *Noop) IsSupported() bool {
 }
 
 // CreateLogicalVolume implements Manager.
-func (l *Noop) CreateLogicalVolume(ctx context.Context, opts CreateLVOptions) error {
-	return ErrUnsupported
+func (l *Noop) CreateLogicalVolume(ctx context.Context, opts CreateLVOptions) (int64, error) {
+	return 0, ErrUnsupported
 }
 
 // CreatePhysicalVolume implements Manager.

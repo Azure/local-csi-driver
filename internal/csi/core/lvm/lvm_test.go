@@ -566,7 +566,7 @@ func TestEnsureVolume(t *testing.T) {
 			expectLvm: func(m *lvmMgr.MockManager) {
 				m.EXPECT().GetLogicalVolume(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, nil)
 				m.EXPECT().GetVolumeGroup(gomock.Any(), gomock.Any()).Return(testVg, nil)
-				m.EXPECT().CreateLogicalVolume(gomock.Any(), gomock.Any()).Return(nil)
+				m.EXPECT().CreateLogicalVolume(gomock.Any(), gomock.Any()).Return(convert.MiBToBytes(1024), nil)
 			},
 			expectedErr: nil,
 		},
@@ -588,7 +588,7 @@ func TestEnsureVolume(t *testing.T) {
 				}
 				m.EXPECT().GetLogicalVolume(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, nil)
 				m.EXPECT().GetVolumeGroup(gomock.Any(), gomock.Any()).Return(stripedVg, nil)
-				m.EXPECT().CreateLogicalVolume(gomock.Any(), createArgs).Return(nil)
+				m.EXPECT().CreateLogicalVolume(gomock.Any(), createArgs).Return(convert.MiBToBytes(1024), nil)
 			},
 			expectedErr: nil,
 		},
@@ -647,7 +647,7 @@ func TestEnsureVolume(t *testing.T) {
 			if tt.expectProbe != nil {
 				tt.expectProbe(p)
 			}
-			err = l.EnsureVolume(context.Background(), tt.volumeId, tt.request, tt.limit, true)
+			err = l.EnsureVolume(context.Background(), tt.volumeId, ptr.Of(tt.request), tt.limit, true)
 			if !errors.Is(err, tt.expectedErr) {
 				t.Errorf("EnsureVolume() error = %v, expectErr %v", err, tt.expectedErr)
 			}

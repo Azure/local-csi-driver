@@ -280,7 +280,7 @@ func TestClient(t *testing.T) { //nolint:gocyclo
 
 		t.Log("Creating logical volume", lvName)
 
-		err = c.CreateLogicalVolume(ctx, lvm.CreateLVOptions{
+		_, err = c.CreateLogicalVolume(ctx, lvm.CreateLVOptions{
 			Name:     lvName,
 			VGName:   vgName,
 			Size:     "100M",
@@ -413,7 +413,7 @@ func TestClient(t *testing.T) { //nolint:gocyclo
 
 		// Create logical volume.
 		t.Log("Creating logical volume", lvName)
-		err = c.CreateLogicalVolume(ctx, lvm.CreateLVOptions{
+		_, err = c.CreateLogicalVolume(ctx, lvm.CreateLVOptions{
 			Name:     lvName,
 			VGName:   vgName,
 			Size:     "100M",

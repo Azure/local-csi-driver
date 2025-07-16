@@ -23,7 +23,7 @@ const (
 // we can add it later. context is used to pass the context to the functions. It
 // is used to cancel the operation if required.
 //
-//go:generate mockgen -copyright_file ../../../hack/mockgen_copyright.txt  -source=manager.go -destination=mock.go -package=lvm .
+//go:generate mockgen -copyright_file ../../../hack/mockgen_copyright.txt -source=manager.go -destination=mock.go -package=lvm
 type Manager interface {
 	// IsSupported returns true if LVM is supported on the current node.
 	IsSupported() bool
@@ -44,7 +44,7 @@ type Manager interface {
 	// RemoveVolumeGroup removes a VG.
 	RemoveVolumeGroup(ctx context.Context, opts RemoveVGOptions) error
 	// CreateLogicalVolume creates an LV on a VG.
-	CreateLogicalVolume(ctx context.Context, opts CreateLVOptions) error
+	CreateLogicalVolume(ctx context.Context, opts CreateLVOptions) (int64, error)
 	// RemoveLogicalVolume removes a LV from a VG
 	RemoveLogicalVolume(ctx context.Context, opts RemoveLVOptions) error
 	// ListLogicalVolumes lists the specified LVs.

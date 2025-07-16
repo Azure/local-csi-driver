@@ -612,7 +612,7 @@ func (c *Client) ListLogicalVolumes(ctx context.Context, opts *ListLVOptions) ([
 }
 
 // Create a new logical volume in a volume group.
-func (c *Client) CreateLogicalVolume(ctx context.Context, opts CreateLVOptions) error {
+func (c *Client) CreateLogicalVolume(ctx context.Context, opts CreateLVOptions) (int64, error) {
 	ctx, span := c.tracer.Start(ctx, "lvm/CreateLogicalVolume", trace.WithAttributes(
 		attribute.String("lv.name", opts.Name),
 		attribute.String("vg.name", opts.VGName),
@@ -625,9 +625,26 @@ func (c *Client) CreateLogicalVolume(ctx context.Context, opts CreateLVOptions) 
 
 	_, err := c.run(ctx, cmdArgs...)
 	if err != nil {
-		return getErrorType(err)
+		return 0, getErrorType(err)
 	}
-	return nil
+
+	// Get the actual allocated size of the logical volume.
+	lv, err := c.GetLogicalVolume(ctx, opts.VGName, opts.Name)
+	if err != nil {
+		span.RecordError(err)
+		return 0, fmt.Errorf("failed to get logical volume after creation: %w", err)
+	}
+	if lv == nil {
+		span.RecordError(err)
+		return 0, fmt.Errorf("logical volume %s/%s not found after creation", opts.VGName, opts.Name)
+	}
+
+	actualSize := int64(lv.Size)
+	span.SetAttributes(
+		attribute.Int64("lv.actual_size", actualSize),
+	)
+
+	return actualSize, nil
 }
 
 // Change logical volume attributes.

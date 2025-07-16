@@ -45,11 +45,12 @@ func (m *MockManager) EXPECT() *MockManagerMockRecorder {
 }
 
 // CreateLogicalVolume mocks base method.
-func (m *MockManager) CreateLogicalVolume(ctx context.Context, opts CreateLVOptions) error {
+func (m *MockManager) CreateLogicalVolume(ctx context.Context, opts CreateLVOptions) (int64, error) {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "CreateLogicalVolume", ctx, opts)
-	ret0, _ := ret[0].(error)
-	return ret0
+	ret0, _ := ret[0].(int64)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
 }
 
 // CreateLogicalVolume indicates an expected call of CreateLogicalVolume.
