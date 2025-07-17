@@ -425,14 +425,15 @@ func (l *LVM) EnsureVolume(ctx context.Context, volumeId string, capacity int64,
 		log.V(2).Info("found existing volume", "bytes", lv.Size)
 		span.AddEvent("found existing volume", trace.WithAttributes(attribute.Int64("bytes", int64(lv.Size))))
 
+		lvSize := int64(lv.Size)
 		// Check volume size.
-		if int64(lv.Size) < capacity || (limit > 0 && int64(lv.Size) > limit) {
+		if lvSize < capacity || (limit > 0 && lvSize > limit) {
 			log.Error(err, "volume size mismatch", "request", capacity, "limit", limit, "actual", lv.Size)
 			span.SetStatus(codes.Error, "volume size mismatch")
 			recorder.Eventf(corev1.EventTypeWarning, provisionedLogicalVolumeSizeMismatch, "Volume size mismatch %s/%s: request %d, limit %d, actual %d", id.VolumeGroup, id.LogicalVolume, capacity, limit, lv.Size)
 			return 0, fmt.Errorf("volume size mismatch: request %d, limit %d, actual %d: %w", capacity, limit, lv.Size, core.ErrVolumeSizeMismatch)
 		}
-		return 0, nil
+		return lvSize, nil
 	}
 
 	recorder.Eventf(corev1.EventTypeNormal, provisioningLogicalVolume, "Provisioning logical volume %s/%s", id.VolumeGroup, id.LogicalVolume)
