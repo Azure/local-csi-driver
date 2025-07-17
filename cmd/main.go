@@ -30,6 +30,7 @@ import (
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
 
+	"local-csi-driver/internal/capacity"
 	driver "local-csi-driver/internal/csi"
 	"local-csi-driver/internal/csi/core/lvm"
 	"local-csi-driver/internal/csi/server"
@@ -88,6 +89,7 @@ func main() {
 	var tlsOpts []func(*tls.Config)
 	var printVersionAndExit bool
 	var eventRecorderEnabled bool
+	var csiStorageCapacityCleanupEnabled bool
 	flag.StringVar(&nodeName, "node-name", "",
 		"The name of the node this agent is running on.")
 	flag.StringVar(&podName, "pod-name", "",
@@ -129,6 +131,7 @@ func main() {
 	flag.BoolVar(&printVersionAndExit, "version", false, "Print version and exit")
 	flag.BoolVar(&eventRecorderEnabled, "event-recorder-enabled", true,
 		"If enabled, the driver will use the event recorder to record events. This is useful for debugging and monitoring purposes.")
+	flag.BoolVar(&csiStorageCapacityCleanupEnabled, "csistoragecapacity-cleanup-enabled", true, "If enabled, the driver will clean up stale CSIStorageCapacity objects.")
 
 	// Initialize logger flagsconfig.
 	logConfig := textlogger.NewConfig(textlogger.VerbosityFlagName("v"))
@@ -378,6 +381,17 @@ func main() {
 			mgr.GetWebhookServer().Register("/mutate-pod", &webhook.Admission{Handler: hyperconvergedHandler})
 		}
 	}()
+
+	if csiStorageCapacityCleanupEnabled {
+		cscCleanupController, err := capacity.NewCleanupController(mgr, nodeName, volumeClient.GetDriverName(), lvm.TopologyKey)
+		if err != nil {
+			logAndExit(err, "unable to create csistoragecapacity cleanup controller")
+		}
+
+		if err := cscCleanupController.SetupWithManager(mgr); err != nil {
+			logAndExit(err, "unable to set up csistoragecapacity cleanup controller")
+		}
+	}
 
 	log.Info("starting manager")
 	span.AddEvent("starting manager")
