@@ -120,7 +120,7 @@ observability:
       port: 8091
   nodeDriverRegistrar:
     log:
-      level: 2
+      level: 1
     http:
       port: 8092
 

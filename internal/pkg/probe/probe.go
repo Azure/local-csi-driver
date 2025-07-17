@@ -45,7 +45,7 @@ func (m *deviceScanner) ScanAvailableDevices(ctx context.Context, log logr.Logge
 	var unformatted []block.Device
 	for _, device := range devices.Devices {
 		if !m.filter.Match(device) {
-			log.V(2).Info("device filtered out", "device", device)
+			log.V(3).Info("device filtered out", "device", device)
 			continue
 		}
 		isFormatted, err := m.IsFormatted(device.Path)
@@ -53,11 +53,11 @@ func (m *deviceScanner) ScanAvailableDevices(ctx context.Context, log logr.Logge
 			return nil, fmt.Errorf("failed to check if device is unformatted: %w", err)
 		}
 		if !isFormatted {
-			log.V(2).Info("unformatted device found", "device", device)
+			log.V(3).Info("unformatted device found", "device", device)
 			unformatted = append(unformatted, device)
 			continue
 		}
-		log.V(2).Info("device is formatted, skipping", "device", device)
+		log.V(3).Info("device is formatted, skipping", "device", device)
 	}
 
 	if len(unformatted) == 0 {
