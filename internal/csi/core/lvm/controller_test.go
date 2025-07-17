@@ -252,6 +252,41 @@ func TestLVM_Create(t *testing.T) {
 			},
 			wantErr: false,
 		},
+		{
+			name: "lvm extent boundary allocation with limit",
+			req: &csi.CreateVolumeRequest{
+				Name: "test-volume",
+				CapacityRange: &csi.CapacityRange{
+					RequiredBytes: 1073741824 + 2097152, // 1 GiB + 2 MiB (not aligned to 4MiB boundary)
+					LimitBytes:    2147483648 + 3145728, // 2 GiB + 3 MiB (not aligned to 4MiB boundary)
+				},
+				VolumeCapabilities: []*csi.VolumeCapability{
+					{
+						AccessType: &csi.VolumeCapability_Block{
+							Block: &csi.VolumeCapability_BlockVolume{},
+						},
+					},
+				},
+				Parameters: map[string]string{},
+			},
+			want: &csi.Volume{
+				VolumeId:      "containerstorage#test-volume",
+				CapacityBytes: 1077936128, // 1 GiB + 4 MiB (rounded up to next 4MiB boundary)
+				VolumeContext: map[string]string{
+					"localdisk.csi.acstor.io/capacity": "1077936128", // actual allocated size
+					// We won't be rounding up the limit. Its a validation and not allocation.
+					"localdisk.csi.acstor.io/limit": "2150629376", // Limit won't be rounded up
+				},
+				AccessibleTopology: []*csi.Topology{
+					{
+						Segments: map[string]string{
+							"topology.localdisk.csi.acstor.io/node": "nodename",
+						},
+					},
+				},
+			},
+			wantErr: false,
+		},
 	}
 	for _, tt := range tests {
 		var tt = tt
