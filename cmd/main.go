@@ -273,8 +273,9 @@ func main() {
 				fmt.Sprintf("%s.%s.svc.cluster.local", webhookSvcName, namespace),
 				fmt.Sprintf("%s.%s", webhookSvcName, namespace),
 			},
-			Webhooks: webhooks,
-			IsReady:  certSetupFinished,
+			Webhooks:             webhooks,
+			IsReady:              certSetupFinished,
+			EnableReadinessCheck: true,
 		}); err != nil {
 			logAndExit(err, "unable to set up cert rotation")
 		}
