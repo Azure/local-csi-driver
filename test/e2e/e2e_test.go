@@ -68,5 +68,5 @@ var _ = Describe("Local CSI Driver", Label("e2e"), Ordered, func() {
 	// Context("CSI Controller", testLVMWait)
 	Context("Metrics", testMetrics)
 
-	Context("LVM", Label("lvm"), testLvmStoragePool)
+	Context("LVM", Label("lvm"), testLocalStorageClass)
 })

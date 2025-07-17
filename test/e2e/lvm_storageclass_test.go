@@ -14,30 +14,41 @@ import (
 	"local-csi-driver/test/pkg/utils"
 )
 
-var testLvmStoragePool = func() {
-	Context("lvm controllers", Label("lvm"), func() {
-		It("should create storageclass", func(ctx context.Context) {
-			cmd := exec.CommandContext(ctx, "kubectl", "apply", "-f", common.LvmStorageClassFixture)
-			_, err := utils.Run(cmd)
-			Expect(err).NotTo(HaveOccurred(), "Failed to apply storageclass")
-
-			Eventually(func(g Gomega, ctx context.Context) {
-				cmd := exec.CommandContext(ctx, "kubectl", "get", "storageclass", "local")
+var testLocalStorageClass = func() {
+	Context("local csi driver", Label("lvm"), func() {
+		BeforeAll(func(ctx context.Context) {
+			fixtures := []string{
+				common.LvmStorageClassFixture,
+				common.LvmStorageClassXfsFixture,
+			}
+			for _, fixture := range fixtures {
+				cmd := exec.CommandContext(ctx, "kubectl", "apply", "-f", fixture)
 				_, err := utils.Run(cmd)
-				g.Expect(err).NotTo(HaveOccurred(), "local storageclass does not exist")
-			}).WithContext(ctx).Should(Succeed(), "Failed to create storageclass")
+				Expect(err).NotTo(HaveOccurred(), "Failed to apply storageclass")
+
+				DeferCleanup(func(ctx context.Context) {
+					By("Deleting storageclass")
+					Eventually(func(g Gomega, ctx context.Context) {
+						cmd := exec.CommandContext(ctx, "kubectl", "delete", "--wait", "--ignore-not-found", "-f", fixture)
+						_, err := utils.Run(cmd)
+						g.Expect(err).NotTo(HaveOccurred(), "Failed to delete storageclass")
+					}).WithContext(ctx).Should(Succeed(), "Failed to eventually delete storageclass")
+				})
+			}
 		})
 
-		lvmStatefulsetTest("should create statefulset with local storagepool", common.LvmStatefulSetFixture)
-		lvmStatefulsetTest("should create annotation statefulset with local storagepool", common.LvmAnnotationStatefulSetFixture)
-		lvmWebhookRejectTest("should reject statefulset with non-ephemeral local storagepool", common.LvmPvcNoAnnotationFixture)
-		lvmHyperconvergedTest("should create hyperconverged pod with local storagepool", common.LvmPvcAnnotationFixure, common.LvmPodAnnotationFixture)
+		localStatefulsetTest("should create statefulset with local storageclass", common.LvmStatefulSetFixture)
+		localStatefulsetTest("should create statefulset with local storageclass and xfs fs", common.LvmStatefulSetXfsFixture)
+		localStatefulsetTest("should create annotation statefulset with local storageclass", common.LvmAnnotationStatefulSetFixture)
+		lvmWebhookRejectTest("should reject statefulset with non-ephemeral local storageclass", common.LvmPvcNoAnnotationFixture)
+		lvmHyperconvergedTest("should create hyperconverged pod with local storageclass", common.LvmPvcAnnotationFixure, common.LvmPodAnnotationFixture)
 	})
 
 }
 
-// lvmStatefulsetTest applies a statefulset fixture and waits for it to be ready.
-func lvmStatefulsetTest(name, statefulsetFixture string) {
+// localStatefulsetTest applies a statefulset fixture and waits for it to be
+// ready.
+func localStatefulsetTest(name, statefulsetFixture string) {
 	It(name, Label("aks"), func(ctx context.Context) {
 		cmd := exec.CommandContext(ctx, "kubectl", "apply", "-f", statefulsetFixture)
 		_, err := utils.Run(cmd)
@@ -61,7 +72,8 @@ func lvmStatefulsetTest(name, statefulsetFixture string) {
 	})
 }
 
-// lvmWebhookRejectTest tests that the webhook rejects PVCs that are not ephemeral.
+// lvmWebhookRejectTest tests that the webhook rejects PVCs that are not
+// ephemeral.
 func lvmWebhookRejectTest(name, fixture string) {
 	It(name, func(ctx context.Context) {
 		cmd := exec.CommandContext(ctx, "kubectl", "apply", "-f", fixture)
