@@ -1,6 +1,8 @@
-# local-csi-driver Disk Selection
+# Disk Selection
 
-## Scenario Definition
+Status: proposed
+
+## Background
 
 In the local-csi-driver, we create an LVM volume group and LVM physical volumes
 for the NVMe devices on the node. From that created volume group, we dynamically
@@ -18,9 +20,18 @@ When a volume is provisioned, we ensure that all disks matching the filter are
 LVM physical volumes. We also ensure that the volume group is created with all
 of the physical volumes.
 
-We would like to make this more flexible, allowing users to specify their own
-filters, so they can ensure that local-csi-driver picks up only the disks they
-want and excludes those they do not want.
+## Goals
+
+- Users should be able to specify their own filters, so they can ensure that
+  local-csi-driver picks up only the disks they want and excludes those they do
+  not want.
+- The design should be flexible enough to accommodate disk selection other cloud
+  providers or on premises infrastructure, either VM-based or bare metal.
+
+## Non-goals
+
+- Testing on platforms other than Azure. We are open to adding tests where
+  resources are available.
 
 ## Design
 
