@@ -107,7 +107,7 @@ REGISTRY=<registry>.azurecr.io make docker-build helm-build docker-push helm-pus
 ```
 
 For more information on how to set up the AKS cluster, see the deployment
-instructions in the deployment [README](../deployment/README.md).
+instructions in the deployment [README](../deploy/README.md).
 
 ### External E2E Tests
 

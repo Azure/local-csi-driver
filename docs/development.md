@@ -129,7 +129,7 @@ make aks
 ```
 
 For more details on the bicep template and available parameters, refer to the
-[aks/README.md](./deploy/README.md) file.
+[deploy/README.md](../deploy/README.md) file.
 
 ### To Deploy
 
@@ -171,8 +171,7 @@ Generally, if something can be tested with a unit test, it should be. If
 something is too complex to test with a unit test, it should be tested with an
 E2E test. The sanity and external E2E tests are conformance tests provided by
 the Kubernetes community to test CSI drivers. For more details on the tests,
-refer to the [test/README.md](./test/README.md) file. Unit tests can be found in
-the [test/README.md](./test/README.md) file. Unit tests can be found throughout
+refer to the [test/README.md](../test/README.md) file. Unit tests can be found throughout
 the project, but other tests are located in the `test` directory.
 
 ### Unit tests

@@ -31,7 +31,7 @@ below:
 Only one instance of local-csi-driver can be installed per cluster.
 
 Helm chart values are documented in: [Helm chart
-README](./charts/latest/README.md).
+README](../charts/latest/README.md).
 
 ## Creating a StorageClass
 

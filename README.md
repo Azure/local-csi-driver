@@ -5,7 +5,7 @@ The local-csi-driver provides access to local NVMe disks on Kubernetes clusters.
 ## Getting Started
 
 For details on how to get started with the local-csi-driver, see the [User
-Guide](./docs/user-guide.md) or [Helm Chart](./chart/latest/README.md).
+Guide](./docs/user-guide.md) or [Helm Chart](./charts/latest/README.md).
 
 ## Development
 

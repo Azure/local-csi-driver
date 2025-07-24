@@ -15,4 +15,4 @@ changes.
 
 ## Usage
 
-For detailed examples see the [lvm_test.go](./lvm2_test.go) file.
+For detailed examples see the [lvm_test.go](./lvm_test.go) file.

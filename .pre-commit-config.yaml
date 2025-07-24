@@ -37,6 +37,11 @@ repos:
   rev: v1.7.7
   hooks:
   - id: actionlint-docker
+- repo: https://github.com/tcort/markdown-link-check
+  rev: v3.12.2 # Use older version as current version has 0 exit code for broken links
+  hooks:
+    - id: markdown-link-check
+      args: [--verbose, --config, .markdown-links-config.json]
 - repo: local
   hooks:
   - id: bicep-lint
