@@ -114,7 +114,7 @@ func InitMetrics(ctx context.Context, cfg config) (*metric.MeterProvider, error)
 		}
 		opts = append(opts, metric.WithReader(metric.NewPeriodicReader(exp, metric.WithProducer(bridge))))
 	case cfg.exporters[Prometheus]:
-		exp, err := prometheus.New(prometheus.WithRegisterer(cfg.prometheus))
+		exp, err := prometheus.New(prometheus.WithRegisterer(cfg.prometheus), prometheus.WithoutTargetInfo())
 		if err != nil {
 			return nil, fmt.Errorf("failed to initialize Prometheus exporter: %w", err)
 		}
