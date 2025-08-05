@@ -48,10 +48,9 @@ cleanup:
 
 # Webhook configuration.
 webhook:
-  ephemeral:
-    # Enables the ephemeral PVC validation webhook, which enforces that PVCs are
-    # ephemeral, or that the `acstor.azure.com/accept-ephemeral-storage=true`
-    # annotation is present.
+  enforceEphemeral:
+    # Enables the enforce ephemeral PVC validation webhook, which enforces that PVCs are
+    # ephemeral, or that the `localdisk.csi.acstor.io/accept-ephemeral-storage` label is set to `true`.
     enabled: true
   hyperconverged:
     # Enables the hyperconverged pod mutation webhook. Required to allow pods to

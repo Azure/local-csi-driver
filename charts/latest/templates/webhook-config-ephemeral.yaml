@@ -1,8 +1,8 @@
-{{- if .Values.webhook.ephemeral.enabled }}
+{{- if .Values.webhook.enforceEphemeral.enabled }}
 apiVersion: admissionregistration.k8s.io/v1
 kind: ValidatingWebhookConfiguration
 metadata:
-  name: {{ .Values.name }}-ephemeral-webhook
+  name: {{ .Values.name }}-enforce-ephemeral
   labels:
   {{- include "chart.labels" . | nindent 4 }}
 webhooks:
@@ -14,7 +14,7 @@ webhooks:
       namespace: '{{ .Release.Namespace }}'
       path: /validate-pvc
   failurePolicy: Ignore
-  name: ephemeral.localdisk.csi.acstor.io
+  name: enforceEphemeral.localdisk.csi.acstor.io
   rules:
   - apiGroups:
     - ""

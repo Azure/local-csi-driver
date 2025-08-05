@@ -41,8 +41,8 @@ import (
 
 	"local-csi-driver/internal/pkg/telemetry"
 	"local-csi-driver/internal/pkg/version"
+	"local-csi-driver/internal/webhook/enforceEphemeral"
 	"local-csi-driver/internal/webhook/hyperconverged"
-	"local-csi-driver/internal/webhook/pvc"
 )
 
 const (
@@ -70,7 +70,7 @@ func main() {
 	var namespace string
 	var webhookSvcName string
 	var webhookPort int
-	var ephemeralCreateWebhookConfig string
+	var enforceEphemeralWebhookConfig string
 	var hyperconvergedWebhookConfig string
 	var certSecretName string
 	var csiAddr string
@@ -98,8 +98,8 @@ func main() {
 	flag.StringVar(&webhookSvcName, "webhook-service-name", "",
 		"The name of the service used by the webhook server. Must be set to enable webhooks.")
 	flag.IntVar(&webhookPort, "webhook-port", 9443, "The port the webhook server listens on.")
-	flag.StringVar(&ephemeralCreateWebhookConfig, "ephemeral-webhook-config", "",
-		"The name of the ephemeral webhook config. Must be set to enable the webhook.")
+	flag.StringVar(&enforceEphemeralWebhookConfig, "enforce-ephemeral-webhook-config", "",
+		"The name of the enforce ephemeral webhook config. Must be set to enable the webhook.")
 	flag.StringVar(&hyperconvergedWebhookConfig, "hyperconverged-webhook-config", "",
 		"The name of the hyperconverged webhook config. Must be set to enable the webhook.")
 	flag.StringVar(&certSecretName, "certificate-secret-name", "",
@@ -219,7 +219,7 @@ func main() {
 
 	// Leader election must be enabled when webhooks are active so that the cert rotator
 	// runs on a single instance of the controller.
-	enableLeaderElection := hyperconvergedWebhookConfig != "" || ephemeralCreateWebhookConfig != ""
+	enableLeaderElection := hyperconvergedWebhookConfig != "" || enforceEphemeralWebhookConfig != ""
 
 	mgr, err := ctrl.NewManager(restCfg, ctrl.Options{
 		Scheme:                 scheme,
@@ -240,9 +240,9 @@ func main() {
 
 	// Make sure certs are generated and valid if webhooks are enabled.
 	webhooks := []rotator.WebhookInfo{}
-	if ephemeralCreateWebhookConfig != "" {
+	if enforceEphemeralWebhookConfig != "" {
 		webhooks = append(webhooks, rotator.WebhookInfo{
-			Name: ephemeralCreateWebhookConfig,
+			Name: enforceEphemeralWebhookConfig,
 			Type: rotator.Validating,
 		})
 	}
@@ -363,12 +363,12 @@ func main() {
 		<-certSetupFinished
 
 		// Register webhooks.
-		if ephemeralCreateWebhookConfig != "" {
-			pvcHandler, err := pvc.NewHandler(volumeClient.GetDriverName(), mgr.GetClient(), mgr.GetScheme(), recorder)
+		if enforceEphemeralWebhookConfig != "" {
+			enforceEphemeralHandler, err := enforceEphemeral.NewHandler(volumeClient.GetDriverName(), mgr.GetClient(), mgr.GetScheme(), recorder)
 			if err != nil {
-				logAndExit(err, "unable to create pvc handler")
+				logAndExit(err, "unable to create enforce ephemeral handler")
 			}
-			mgr.GetWebhookServer().Register("/validate-pvc", &webhook.Admission{Handler: pvcHandler})
+			mgr.GetWebhookServer().Register("/validate-pvc", &webhook.Admission{Handler: enforceEphemeralHandler})
 		}
 
 		// When node affinity is removed from PVs, we ensure that the PV is bound to

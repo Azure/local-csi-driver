@@ -30,7 +30,7 @@ the workload remains operational and can continue to write new data.
 Both of the webhooks are optional and can be enabled or disabled via the
 appropriate values for `.Values.webhook` in the Helm chart.
 
-## Validation (Emphemeral) Webhook
+## Validation (EnforceEmphemeral) Webhook
 
 The validation webhook serves a critical role in ensuring that users fully
 understand the implications of utilizing local storage for their workloads. By

@@ -52,7 +52,7 @@ var _ = Describe("Local CSI Driver", Label("e2e"), Ordered, func() {
 			verifyCAInjection := func(g Gomega) {
 				cmd := exec.Command("kubectl", "get",
 					"validatingwebhookconfigurations.admissionregistration.k8s.io",
-					*helmPrefix+"-ephemeral-webhook",
+					*helmPrefix+"-enforce-ephemeral",
 					"-o", "go-template={{ range .webhooks }}{{ .clientConfig.caBundle }}{{ end }}")
 				vwhOutput, err := utils.Run(cmd)
 				g.Expect(err).NotTo(HaveOccurred())
