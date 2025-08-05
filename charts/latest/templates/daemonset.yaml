@@ -55,16 +55,16 @@ spec:
         - --trace-sample-rate={{ .Values.observability.driver.trace.sampleRate }}
         - --trace-service-id=$(POD_NAME)
         - --v={{ .Values.observability.driver.log.level }}
-        {{- if or .Values.webhook.ephemeral.enabled .Values.webhook.hyperconverged.enabled }}
+        {{- if or .Values.webhook.enforceEphemeral.enabled .Values.webhook.hyperconverged.enabled }}
         - --webhook-service-name={{ .Values.name }}-webhook-service
         {{- end }}
-        {{- if .Values.webhook.ephemeral.enabled }}
-        - --ephemeral-webhook-config={{ .Values.name }}-ephemeral-webhook
+        {{- if .Values.webhook.enforceEphemeral.enabled }}
+        - --enforce-ephemeral-webhook-config={{ .Values.name }}-enforce-ephemeral
         {{- end }}
         {{- if .Values.webhook.hyperconverged.enabled }}
         - --hyperconverged-webhook-config={{ .Values.name }}-hyperconverged-webhook
         {{- end }}
-        {{- if or .Values.webhook.ephemeral.enabled .Values.webhook.hyperconverged.enabled }}
+        {{- if or .Values.webhook.enforceEphemeral.enabled .Values.webhook.hyperconverged.enabled }}
         - --certificate-secret-name={{ .Values.name }}-webhook-cert
         {{- end }}
         command:
@@ -120,7 +120,7 @@ spec:
         terminationMessagePath: /tmp/termination-log
         terminationMessagePolicy: FallbackToLogsOnError
         volumeMounts:
-        {{- if or .Values.webhook.ephemeral.enabled .Values.webhook.hyperconverged.enabled }}
+        {{- if or .Values.webhook.enforceEphemeral.enabled .Values.webhook.hyperconverged.enabled }}
         - mountPath: /tmp/k8s-webhook-server/serving-certs
           name: cert
           readOnly: true
@@ -154,6 +154,8 @@ spec:
         - --capacity-poll-interval=15s
         - --v={{ .Values.observability.csiProvisioner.log.level }}
         env:
+        # POD_NAME and POD_NAMESPACE are used for capacity tracking support
+        # More info: https://github.com/kubernetes-csi/external-provisioner?tab=readme-ov-file#capacity-support
         - name: NAMESPACE
           valueFrom:
             fieldRef:
@@ -257,7 +259,7 @@ spec:
       terminationGracePeriodSeconds: 60
       tolerations: {{- toYaml .Values.daemonset.tolerations | nindent 8 }}
       volumes:
-      {{- if or .Values.webhook.ephemeral.enabled .Values.webhook.hyperconverged.enabled }}
+      {{- if or .Values.webhook.enforceEphemeral.enabled .Values.webhook.hyperconverged.enabled }}
       - name: cert
         secret:
           secretName: {{ .Values.name }}-webhook-cert

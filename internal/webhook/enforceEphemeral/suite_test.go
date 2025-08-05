@@ -1,7 +1,7 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-package pvc
+package enforceEphemeral
 
 import (
 	"context"
@@ -38,21 +38,21 @@ const (
 )
 
 var (
-	cfg          *rest.Config
-	testEnv      *envtest.Environment
-	k8sClient    client.Client
-	k8sClientSet kubernetes.Clientset
-	recorder     *record.FakeRecorder
-	ctx          context.Context
-	cancel       context.CancelFunc
-	pvcHandler   *Handler
+	cfg                     *rest.Config
+	testEnv                 *envtest.Environment
+	k8sClient               client.Client
+	k8sClientSet            kubernetes.Clientset
+	recorder                *record.FakeRecorder
+	ctx                     context.Context
+	cancel                  context.CancelFunc
+	enforceEphemeralHandler *Handler
 )
 
 var config = `
 apiVersion: admissionregistration.k8s.io/v1
 kind: ValidatingWebhookConfiguration
 metadata:
-  name: ephemeral-webhook
+  name: enforce-ephemeral-webhook
 webhooks:
 - admissionReviewVersions:
   - v1
@@ -152,10 +152,10 @@ var _ = BeforeSuite(func() {
 	// Controller setup using fake clients.
 	recorder = record.NewFakeRecorder(10)
 
-	pvcHandler, err = NewHandler(DriverName, mgr.GetClient(), mgr.GetScheme(), recorder)
-	Expect(err).NotTo(HaveOccurred(), "failed to create pvc controller")
+	enforceEphemeralHandler, err = NewHandler(DriverName, mgr.GetClient(), mgr.GetScheme(), recorder)
+	Expect(err).NotTo(HaveOccurred(), "failed to create enforce ephemeral handler")
 
-	mgr.GetWebhookServer().Register("/validate-pvc", &webhook.Admission{Handler: pvcHandler})
+	mgr.GetWebhookServer().Register("/validate-pvc", &webhook.Admission{Handler: enforceEphemeralHandler})
 
 	go func() {
 		defer GinkgoRecover()
