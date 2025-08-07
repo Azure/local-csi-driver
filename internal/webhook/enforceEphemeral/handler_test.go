@@ -1,7 +1,7 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-package pvc
+package enforceEphemeral
 
 import (
 	"time"
@@ -22,7 +22,7 @@ const (
 	testStorageClassName = "test-sc"
 )
 
-var _ = Describe("When PVC controller is running", Serial, func() {
+var _ = Describe("When EnforceEphemeral webhook is enabled", Serial, func() {
 	const (
 		timeout  = time.Minute * 3
 		interval = time.Millisecond * 250

@@ -1,4 +1,4 @@
-{{- if or .Values.webhook.ephemeral.enabled .Values.webhook.hyperconverged.enabled }}
+{{- if or .Values.webhook.enforceEphemeral.enabled .Values.webhook.hyperconverged.enabled }}
 apiVersion: v1
 kind: Service
 metadata:
