@@ -4,11 +4,18 @@ The PVC controller enforces the use of [generic ephemeral volumes] for volumes c
 
 ## Controller Behaviour
 
-The PVC controller monitors PVC creation requests. If a request is not for a local-csi-driver PVC, it is allowed immediately.
+The PVC controller monitors PVC creation requests.
 
-A PVC is only permitted if it either has an `ownerReference` set to a Pod or includes the annotation `localdisk.csi.acstor.io/accept-ephemeral-storage=true`. The `ownerReference` is typically set when a Pod is created with one or more [generic ephemeral volumes], ensuring that the PVC is deleted when the Pod is removed. Alternatively, manually created PVCs must include the annotation to be accepted.
+A PVC is permitted if it meets any of the following conditions:
+
+- The request is not for a local-csi-driver PVC; such requests are allowed immediately.
+- It has an `ownerReference` set to a Pod.
+    - This is typically set automatically when a Pod is created with one or more [generic ephemeral volumes], ensuring the PVC is deleted when the Pod is removed.
+- It includes the annotation `localdisk.csi.acstor.io/accept-ephemeral-storage=true`.
+    - Manually created PVCs must include this annotation to be accepted.
 
 ## Events
+
 Kubernetes events are generated for each PVC creation request that is allowed, denied, or encounters an error.
 
 ## Metrics
@@ -39,5 +46,4 @@ pvc_duration_seconds_sum 0
 pvc_duration_seconds_count 0
 ```
 
-[generic ephemeral volumes]:
-    https://kubernetes.io/docs/concepts/storage/ephemeral-volumes/#generic-ephemeral-volumes
+[generic ephemeral volumes]: https://kubernetes.io/docs/concepts/storage/ephemeral-volumes/#generic-ephemeral-volumes
