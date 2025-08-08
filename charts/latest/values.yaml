@@ -42,6 +42,10 @@ daemonset:
     # Annotations for the service account. If empty, no annotations are applied.
     annotations: {}
 
+cleanup:
+  # Cleanup volume groups and physical volumes on pod termination if logical volume are not in use.
+  enabled: true
+
 # Webhook configuration.
 webhook:
   ephemeral:

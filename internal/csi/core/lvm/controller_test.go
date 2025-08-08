@@ -11,8 +11,6 @@ import (
 
 	"github.com/container-storage-interface/spec/lib/go/csi"
 	"go.uber.org/mock/gomock"
-	"k8s.io/apimachinery/pkg/runtime"
-	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	"local-csi-driver/internal/csi/core/lvm"
 	lvmMgr "local-csi-driver/internal/pkg/lvm"
@@ -292,15 +290,11 @@ func TestLVM_Create(t *testing.T) {
 		var tt = tt
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-
-			c := fake.NewClientBuilder().
-				WithScheme(runtime.NewScheme()).
-				Build()
 			tp := telemetry.NewNoopTracerProvider()
 			p := probe.NewFake([]string{"device1", "device2"}, nil)
 			lvmMgr := lvmMgr.NewFake()
 
-			l, err := lvm.New(c, "podname", "nodename", "default", p, lvmMgr, tp)
+			l, err := lvm.New("podname", "nodename", "default", true, p, lvmMgr, tp)
 			if err != nil {
 				t.Fatalf("failed to create LVM instance: %v", err)
 			}

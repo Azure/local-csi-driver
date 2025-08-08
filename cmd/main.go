@@ -88,6 +88,7 @@ func main() {
 	var tlsOpts []func(*tls.Config)
 	var printVersionAndExit bool
 	var eventRecorderEnabled bool
+	var enableCleanup bool
 	flag.StringVar(&nodeName, "node-name", "",
 		"The name of the node this agent is running on.")
 	flag.StringVar(&podName, "pod-name", "",
@@ -129,6 +130,7 @@ func main() {
 	flag.BoolVar(&printVersionAndExit, "version", false, "Print version and exit")
 	flag.BoolVar(&eventRecorderEnabled, "event-recorder-enabled", true,
 		"If enabled, the driver will use the event recorder to record events. This is useful for debugging and monitoring purposes.")
+	flag.BoolVar(&enableCleanup, "enable-cleanup", true, "If enabled, the driver will clean up the LVM volume groups and persistent volumes when not in use")
 
 	// Initialize logger flagsconfig.
 	logConfig := textlogger.NewConfig(textlogger.VerbosityFlagName("v"))
@@ -306,7 +308,7 @@ func main() {
 	//
 	// Volume client is an abstraction that understands csi requests and
 	// responses and how to implement them for a storage type.
-	volumeClient, err := lvm.New(mgr.GetClient(), podName, nodeName, namespace, deviceProbe, lvmMgr, tp)
+	volumeClient, err := lvm.New(podName, nodeName, namespace, enableCleanup, deviceProbe, lvmMgr, tp)
 	if err != nil {
 		logAndExit(err, "unable to create lvm volume client")
 	}

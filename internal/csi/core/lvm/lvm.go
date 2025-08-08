@@ -10,16 +10,13 @@ import (
 	"time"
 
 	"github.com/container-storage-interface/spec/lib/go/csi"
-	"github.com/go-logr/logr"
 	"github.com/gotidy/ptr"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
-	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	storagev1 "k8s.io/api/storage/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	"local-csi-driver/internal/csi/core"
@@ -152,17 +149,17 @@ var (
 )
 
 type LVM struct {
-	client.Client
 	releaseNamespace string
 	podName          string
 	nodeName         string
+	enableCleanup    bool
 	probe            probe.Interface
 	lvm              lvm.Manager
 	tracer           trace.Tracer
 }
 
 // New creates a new LVM volume manager.
-func New(k8sclient client.Client, podName, nodeName, releaseNamespace string, probe probe.Interface, lvmMgr lvm.Manager, tp trace.TracerProvider) (*LVM, error) {
+func New(podName, nodeName, releaseNamespace string, enableCleanup bool, probe probe.Interface, lvmMgr lvm.Manager, tp trace.TracerProvider) (*LVM, error) {
 	if podName == "" {
 		return nil, fmt.Errorf("podName must not be empty")
 	}
@@ -173,10 +170,10 @@ func New(k8sclient client.Client, podName, nodeName, releaseNamespace string, pr
 		return nil, fmt.Errorf("releaseNamespace must not be empty")
 	}
 	return &LVM{
-		Client:           k8sclient,
 		podName:          podName,
 		nodeName:         nodeName,
 		releaseNamespace: releaseNamespace,
+		enableCleanup:    enableCleanup,
 		probe:            probe,
 		lvm:              lvmMgr,
 		tracer:           tp.Tracer("localdisk.csi.acstor.io/internal/csi/api/volume/lvm"),
@@ -186,24 +183,22 @@ func New(k8sclient client.Client, podName, nodeName, releaseNamespace string, pr
 // Start starts the LVM volume manager.
 func (l *LVM) Start(ctx context.Context) error {
 	ctxMain, cancelMain := context.WithCancel(context.Background())
+	defer cancelMain()
 	log := log.FromContext(ctxMain).WithValues("lvm", "start")
 
 	<-ctx.Done()
-	defer cancelMain()
 
-	log.Info("pod shutdown signal received, checking if cleanup is required")
-	cleanup, err := isCleanupRequired(ctxMain, l.Client, l.podName, l.releaseNamespace, log)
-	if err != nil {
-		log.Error(err, "failed to check if cleanup is required")
+	if !l.enableCleanup {
+		log.Info("cleanup of lvm resources is disabled, skipping")
+		return nil
+	}
+
+	log.Info("running cleanup of lvm resources")
+	if err := l.Cleanup(ctxMain); err != nil {
+		log.Error(err, "failed to cleanup lvm resources")
 		return err
 	}
-	if cleanup {
-		log.Info("running cleanup of lvm resources")
-		if err := l.Cleanup(ctxMain); err != nil {
-			log.Error(err, "failed to cleanup lvm resources")
-			return err
-		}
-	}
+
 	log.Info("cleanup of lvm resources completed")
 	return nil
 }
@@ -521,17 +516,32 @@ func (l *LVM) GetNodeDevicePath(volumeId string) (string, error) {
 func (l *LVM) Cleanup(ctx context.Context) error {
 	ctx, span := l.tracer.Start(ctx, "volume.lvm.csi/Cleanup")
 	defer span.End()
-
 	log := log.FromContext(ctx)
-	log.V(1).Info("validating volume")
+
 	volumeGroup, err := l.lvm.ListVolumeGroups(ctx, &lvm.ListVGOptions{Select: "vg_tags=" + DefaultVolumeGroupTag})
 	if err != nil {
+		span.SetStatus(codes.Error, "failed to list volume groups")
+		span.RecordError(err)
 		log.Error(err, "failed to list volume groups")
 		return fmt.Errorf("failed to list volume groups: %w", err)
 	}
 
+	totalLVCount := 0
+	for _, vg := range volumeGroup {
+		totalLVCount += int(vg.LVCount)
+	}
+	if totalLVCount > 0 {
+		log.V(1).Info("found existing logical volumes, skipping VG and PV cleanup", "count", totalLVCount)
+		span.AddEvent("found existing logical volumes, skipping VG and PV cleanup", trace.WithAttributes(attribute.Int("count", totalLVCount)))
+		span.SetStatus(codes.Ok, "found existing logical volumes, skipping VG and PV cleanup")
+		return nil
+	}
+
 	for _, vg := range volumeGroup {
 		if err := l.removeVolumeGroup(ctx, vg.Name); err != nil {
+			log.Error(err, "failed to remove volume group", "vg", vg.Name)
+			span.SetStatus(codes.Error, "failed to remove volume group")
+			span.RecordError(err)
 			return fmt.Errorf("failed to remove volume group %s: %w", vg.Name, err)
 		}
 	}
@@ -599,57 +609,4 @@ func (l *LVM) removePhysicalVolumes(ctx context.Context, devicePaths []string) e
 		}
 	}
 	return nil
-}
-
-// isCleanupRequired checks if the cleanup of lvm resources is required during
-// the shutdown of the controller. Cleanup is only required if the daemonset for
-// the deployment is being deleted. Othrewise, cleanup is skipped because the
-// shutdown is likely due to a pod failover, eviction, restart or other transient issue.
-func isCleanupRequired(ctx context.Context, c client.Client, podName, namespace string, log logr.Logger) (bool, error) {
-	log.Info("getting daemonset name from pod name", "podName", podName)
-	daemonsetName, err := getDaemonSetNameFromPodName(ctx, c, podName, namespace)
-	if err != nil {
-		log.Error(err, "pod is not part of a daemonset")
-		return false, err
-	}
-
-	// get the daemonset and check the deletion timestamp
-	daemonset := &appsv1.DaemonSet{}
-	err = c.Get(ctx, client.ObjectKey{
-		Name:      daemonsetName,
-		Namespace: namespace,
-	}, daemonset)
-
-	if client.IgnoreNotFound(err) != nil {
-		log.Error(err, "failed to get daemonset")
-		return false, err
-	}
-	if err != nil || !daemonset.DeletionTimestamp.IsZero() {
-		log.Info("daemonset is being deleted, cleanup required")
-		return true, nil
-	}
-	log.Info("daemonset is not being deleted, cleanup not required")
-	return false, nil
-}
-
-// getDaemonSetNameFromPodName retrieves the name of the Kubernetes DaemonSet
-// based on the given pod name.
-func getDaemonSetNameFromPodName(ctx context.Context, c client.Client, podName, namespace string) (string, error) {
-	pod := &corev1.Pod{}
-	err := c.Get(ctx, client.ObjectKey{
-		Name:      podName,
-		Namespace: namespace,
-	}, pod)
-	if err != nil {
-		return "", err
-	}
-
-	ownerReferences := pod.GetOwnerReferences()
-	for _, owner := range ownerReferences {
-		if owner.Kind == "DaemonSet" {
-			return owner.Name, nil
-		}
-	}
-
-	return "", fmt.Errorf("no DaemonSet found for pod: %s", podName)
 }

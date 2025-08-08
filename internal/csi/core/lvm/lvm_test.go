@@ -11,9 +11,6 @@ import (
 	"github.com/gotidy/ptr"
 	"go.opentelemetry.io/otel/trace"
 	"go.uber.org/mock/gomock"
-	"k8s.io/apimachinery/pkg/runtime"
-	"sigs.k8s.io/controller-runtime/pkg/client"
-	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	"local-csi-driver/internal/csi/core"
 	"local-csi-driver/internal/csi/core/lvm"
@@ -25,9 +22,10 @@ import (
 )
 
 const (
-	testPodName      = "test-pod"
-	testPodNamespace = "test-namespace"
-	testNodeName     = "test-node"
+	testPodName       = "test-pod"
+	testPodNamespace  = "test-namespace"
+	testNodeName      = "test-node"
+	testEnableCleanup = true
 )
 
 var (
@@ -35,13 +33,10 @@ var (
 )
 
 func initTestLVM(ctrl *gomock.Controller) (*lvm.LVM, *probe.Mock, *lvmMgr.MockManager, error) {
-	c := fake.NewClientBuilder().
-		WithScheme(runtime.NewScheme()).
-		Build()
 	t := telemetry.NewNoopTracerProvider()
 	p := probe.NewMock(ctrl)
 	lvmMgr := lvmMgr.NewMockManager(ctrl)
-	l, err := lvm.New(c, testPodName, testNodeName, testPodNamespace, p, lvmMgr, t)
+	l, err := lvm.New(testPodName, testNodeName, testPodNamespace, true, p, lvmMgr, t)
 	if err != nil {
 		return nil, nil, nil, err
 	}
@@ -54,23 +49,23 @@ func TestNewLVM(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
 	type args struct {
-		client    client.Client
-		podName   string
-		nodeName  string
-		namespace string
-		probe     probe.Interface
-		manager   lvmMgr.Manager
-		tracer    trace.TracerProvider
+		podName       string
+		nodeName      string
+		namespace     string
+		enableCleanup bool
+		probe         probe.Interface
+		manager       lvmMgr.Manager
+		tracer        trace.TracerProvider
 	}
 
 	valid := args{
-		client:    fake.NewClientBuilder().WithScheme(runtime.NewScheme()).Build(),
-		podName:   testPodName,
-		nodeName:  testNodeName,
-		namespace: testPodNamespace,
-		probe:     probe.NewMock(ctrl),
-		manager:   lvmMgr.NewMockManager(ctrl),
-		tracer:    telemetry.NewNoopTracerProvider(),
+		podName:       testPodName,
+		nodeName:      testNodeName,
+		namespace:     testPodNamespace,
+		enableCleanup: testEnableCleanup,
+		probe:         probe.NewMock(ctrl),
+		manager:       lvmMgr.NewMockManager(ctrl),
+		tracer:        telemetry.NewNoopTracerProvider(),
 	}
 
 	testCases := []struct {
@@ -106,7 +101,7 @@ func TestNewLVM(t *testing.T) {
 			if tc.mutate != nil {
 				tc.mutate(&test)
 			}
-			got, err := lvm.New(test.client, test.podName, test.nodeName, test.namespace, test.probe, test.manager, test.tracer)
+			got, err := lvm.New(test.podName, test.nodeName, test.namespace, test.enableCleanup, test.probe, test.manager, test.tracer)
 			if (err != nil) != tc.expectErr {
 				t.Errorf("New(%q) error = %v, expectErr %v", tc.name, err, tc.expectErr)
 			}
@@ -654,6 +649,131 @@ func TestEnsureVolume(t *testing.T) {
 		})
 	}
 
+}
+
+func TestCleanup(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name        string
+		expectLvm   func(*lvmMgr.MockManager)
+		expectedErr error
+	}{
+		{
+			name: "list volume groups error",
+			expectLvm: func(m *lvmMgr.MockManager) {
+				m.EXPECT().ListVolumeGroups(gomock.Any(), &lvmMgr.ListVGOptions{Select: "vg_tags=local-csi"}).Return(nil, errTestInternal)
+			},
+			expectedErr: errTestInternal,
+		},
+		{
+			name: "no volume groups found",
+			expectLvm: func(m *lvmMgr.MockManager) {
+				m.EXPECT().ListVolumeGroups(gomock.Any(), &lvmMgr.ListVGOptions{Select: "vg_tags=local-csi"}).Return([]lvmMgr.VolumeGroup{}, nil)
+				m.EXPECT().ListPhysicalVolumes(gomock.Any(), gomock.Nil()).Return([]lvmMgr.PhysicalVolume{}, nil).Times(2)
+			},
+			expectedErr: nil,
+		},
+		{
+			name: "existing logical volumes found - skip cleanup",
+			expectLvm: func(m *lvmMgr.MockManager) {
+				vgs := []lvmMgr.VolumeGroup{{Name: "vg1", LVCount: 2}}
+				m.EXPECT().ListVolumeGroups(gomock.Any(), &lvmMgr.ListVGOptions{Select: "vg_tags=local-csi"}).Return(vgs, nil)
+			},
+			expectedErr: nil,
+		},
+		{
+			name: "multiple volume groups with logical volumes - skip cleanup",
+			expectLvm: func(m *lvmMgr.MockManager) {
+				vgs := []lvmMgr.VolumeGroup{
+					{Name: "vg1", LVCount: 1},
+					{Name: "vg2", LVCount: 2},
+				}
+				m.EXPECT().ListVolumeGroups(gomock.Any(), &lvmMgr.ListVGOptions{Select: "vg_tags=local-csi"}).Return(vgs, nil)
+			},
+			expectedErr: nil,
+		},
+		{
+			name: "remove volume group error",
+			expectLvm: func(m *lvmMgr.MockManager) {
+				vgs := []lvmMgr.VolumeGroup{{Name: "vg1", LVCount: 0}}
+				m.EXPECT().ListVolumeGroups(gomock.Any(), &lvmMgr.ListVGOptions{Select: "vg_tags=local-csi"}).Return(vgs, nil)
+				m.EXPECT().GetVolumeGroup(gomock.Any(), "vg1").Return(&vgs[0], nil)
+				m.EXPECT().RemoveVolumeGroup(gomock.Any(), lvmMgr.RemoveVGOptions{Name: "vg1"}).Return(errTestInternal)
+			},
+			expectedErr: errTestInternal,
+		},
+		{
+			name: "list physical volumes error",
+			expectLvm: func(m *lvmMgr.MockManager) {
+				vgs := []lvmMgr.VolumeGroup{{Name: "vg1", LVCount: 0}}
+				m.EXPECT().ListVolumeGroups(gomock.Any(), &lvmMgr.ListVGOptions{Select: "vg_tags=local-csi"}).Return(vgs, nil)
+				m.EXPECT().GetVolumeGroup(gomock.Any(), "vg1").Return(&vgs[0], nil)
+				m.EXPECT().RemoveVolumeGroup(gomock.Any(), lvmMgr.RemoveVGOptions{Name: "vg1"}).Return(nil)
+				m.EXPECT().ListPhysicalVolumes(gomock.Any(), gomock.Nil()).Return(nil, errTestInternal)
+			},
+			expectedErr: errTestInternal,
+		},
+		{
+			name: "remove physical volumes error",
+			expectLvm: func(m *lvmMgr.MockManager) {
+				vgs := []lvmMgr.VolumeGroup{{Name: "vg1", LVCount: 0}}
+				pvs := []lvmMgr.PhysicalVolume{{Name: "/dev/pv1"}}
+				m.EXPECT().ListVolumeGroups(gomock.Any(), &lvmMgr.ListVGOptions{Select: "vg_tags=local-csi"}).Return(vgs, nil)
+				m.EXPECT().GetVolumeGroup(gomock.Any(), "vg1").Return(&vgs[0], nil)
+				m.EXPECT().RemoveVolumeGroup(gomock.Any(), lvmMgr.RemoveVGOptions{Name: "vg1"}).Return(nil)
+				m.EXPECT().ListPhysicalVolumes(gomock.Any(), gomock.Nil()).Return(pvs, nil).Times(2)
+				m.EXPECT().RemovePhysicalVolume(gomock.Any(), lvmMgr.RemovePVOptions{Name: "/dev/pv1"}).Return(errTestInternal)
+			},
+			expectedErr: errTestInternal,
+		},
+		{
+			name: "successful cleanup with volume groups",
+			expectLvm: func(m *lvmMgr.MockManager) {
+				vgs := []lvmMgr.VolumeGroup{
+					{Name: "vg1", LVCount: 0},
+					{Name: "vg2", LVCount: 0},
+				}
+				pvs := []lvmMgr.PhysicalVolume{{Name: "/dev/pv1"}, {Name: "/dev/pv2"}}
+				m.EXPECT().ListVolumeGroups(gomock.Any(), &lvmMgr.ListVGOptions{Select: "vg_tags=local-csi"}).Return(vgs, nil)
+				m.EXPECT().GetVolumeGroup(gomock.Any(), "vg1").Return(&vgs[0], nil)
+				m.EXPECT().RemoveVolumeGroup(gomock.Any(), lvmMgr.RemoveVGOptions{Name: "vg1"}).Return(nil)
+				m.EXPECT().GetVolumeGroup(gomock.Any(), "vg2").Return(&vgs[1], nil)
+				m.EXPECT().RemoveVolumeGroup(gomock.Any(), lvmMgr.RemoveVGOptions{Name: "vg2"}).Return(nil)
+				m.EXPECT().ListPhysicalVolumes(gomock.Any(), gomock.Nil()).Return(pvs, nil).Times(2)
+				m.EXPECT().RemovePhysicalVolume(gomock.Any(), lvmMgr.RemovePVOptions{Name: "/dev/pv1"}).Return(nil)
+				m.EXPECT().RemovePhysicalVolume(gomock.Any(), lvmMgr.RemovePVOptions{Name: "/dev/pv2"}).Return(nil)
+			},
+			expectedErr: nil,
+		},
+		{
+			name: "successful cleanup no volume groups",
+			expectLvm: func(m *lvmMgr.MockManager) {
+				pvs := []lvmMgr.PhysicalVolume{{Name: "/dev/pv1"}}
+				m.EXPECT().ListVolumeGroups(gomock.Any(), &lvmMgr.ListVGOptions{Select: "vg_tags=local-csi"}).Return([]lvmMgr.VolumeGroup{}, nil)
+				m.EXPECT().ListPhysicalVolumes(gomock.Any(), gomock.Nil()).Return(pvs, nil).Times(2)
+				m.EXPECT().RemovePhysicalVolume(gomock.Any(), lvmMgr.RemovePVOptions{Name: "/dev/pv1"}).Return(nil)
+			},
+			expectedErr: nil,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			l, _, m, err := initTestLVM(gomock.NewController(t))
+			if err != nil {
+				t.Fatalf("failed to initialize LVM: %v", err)
+			}
+			if tc.expectLvm != nil {
+				tc.expectLvm(m)
+			}
+			err = l.Cleanup(context.Background())
+			if !errors.Is(err, tc.expectedErr) {
+				t.Errorf("Cleanup() error = %v, expectErr %v", err, tc.expectedErr)
+			}
+		})
+	}
 }
 
 func createPvs(paths ...string) []lvmMgr.PhysicalVolume {
