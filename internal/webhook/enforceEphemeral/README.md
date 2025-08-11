@@ -56,4 +56,3 @@ pvc_duration_seconds_count 0
 
 [generic ephemeral volumes]:
 https://kubernetes.io/docs/concepts/storage/ephemeral-volumes/#generic-ephemeral-volumes
-
