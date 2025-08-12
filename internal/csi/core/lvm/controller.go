@@ -29,6 +29,9 @@ const (
 	deletingLogicalVolume       = "DeletingLogicalVolume"
 	deletedLogicalVolume        = "DeletedLogicalVolume"
 	deletingLogicalVolumeFailed = "DeletingLogicalVolumeFailed"
+
+	defaultPeSize        = 4 * 1024 * 1024 // 4 MiB
+	defaultDataAlignment = 1024 * 1024     // 1 MiB
 )
 
 // GetControllerDriverCapabilities returns the controller service.
@@ -320,12 +323,13 @@ func (l *LVM) AvailableCapacity(ctx context.Context, vgName string) (int64, erro
 			continue
 		}
 
-		// Get the size of the device that is not not allocated to a volume
-		// group.
-		availableCapacity += device.Size
+		usableCapacity := max(device.Size-defaultDataAlignment, 0)
+		usableCapacity = (usableCapacity / defaultPeSize) * defaultPeSize
+		availableCapacity += usableCapacity
 		span.AddEvent("device size", trace.WithAttributes(
 			attribute.String("device", device.Path),
 			attribute.Int64("size", device.Size),
+			attribute.Int64("usableCapacity", usableCapacity),
 		))
 	}
 

@@ -15,6 +15,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	"local-csi-driver/internal/csi/core/lvm"
+	"local-csi-driver/internal/pkg/block"
 	lvmMgr "local-csi-driver/internal/pkg/lvm"
 	"local-csi-driver/internal/pkg/probe"
 	"local-csi-driver/internal/pkg/telemetry"
@@ -345,6 +346,81 @@ func TestAvailableCapacity(t *testing.T) {
 			},
 			expectProbe: func(p *probe.Mock) {
 				p.EXPECT().ScanAvailableDevices(gomock.Any(), gomock.Any()).Return(nil, probe.ErrNoDevicesFound)
+			},
+			expectedCap: 0,
+		},
+		{
+			name:   "existing volume group",
+			vgName: testVolumeGroup,
+			expectLvm: func(m *lvmMgr.MockManager) {
+				m.EXPECT().GetVolumeGroup(gomock.Any(), testVolumeGroup).Return(&lvmMgr.VolumeGroup{
+					Name: testVolumeGroup,
+					Free: 1024 * 1024 * 1024, // 1 GiB
+				}, nil)
+			},
+			expectedCap: 1024 * 1024 * 1024,
+		},
+		{
+			name:   "single device with enough capacity",
+			vgName: testVolumeGroup,
+			expectLvm: func(m *lvmMgr.MockManager) {
+				m.EXPECT().GetVolumeGroup(gomock.Any(), testVolumeGroup).Return(nil, lvmMgr.ErrNotFound)
+				m.EXPECT().ListPhysicalVolumes(gomock.Any(), gomock.Any()).Return([]lvmMgr.PhysicalVolume{}, nil)
+			},
+			expectProbe: func(p *probe.Mock) {
+				devices := &block.DeviceList{
+					Devices: []block.Device{
+						{
+							Path: "/dev/sdb",
+							Size: 10 * 1024 * 1024, // 10 MiB - will become 9 MiB, rounded down to 8 MiB
+						},
+					},
+				}
+				p.EXPECT().ScanAvailableDevices(gomock.Any(), gomock.Any()).Return(devices, nil)
+			},
+			expectedCap: 8 * 1024 * 1024,
+		},
+		{
+			name:   "two device with enough capacity",
+			vgName: testVolumeGroup,
+			expectLvm: func(m *lvmMgr.MockManager) {
+				m.EXPECT().GetVolumeGroup(gomock.Any(), testVolumeGroup).Return(nil, lvmMgr.ErrNotFound)
+				m.EXPECT().ListPhysicalVolumes(gomock.Any(), gomock.Any()).Return([]lvmMgr.PhysicalVolume{}, nil)
+			},
+			expectProbe: func(p *probe.Mock) {
+				devices := &block.DeviceList{
+					Devices: []block.Device{
+						{
+							Path: "/dev/sdb",
+							Size: 10 * 1024 * 1024, // 10 MiB - will become 9 MiB, rounded down to 8 MiB
+						},
+						{
+							Path: "/dev/sda",
+							Size: 10 * 1024 * 1024, // 10 MiB - will become 9 MiB, rounded down to 8 MiB
+						},
+					},
+				}
+				p.EXPECT().ScanAvailableDevices(gomock.Any(), gomock.Any()).Return(devices, nil)
+			},
+			expectedCap: 16 * 1024 * 1024,
+		},
+		{
+			name:   "small device with enough not enough capacity for any PE",
+			vgName: testVolumeGroup,
+			expectLvm: func(m *lvmMgr.MockManager) {
+				m.EXPECT().GetVolumeGroup(gomock.Any(), testVolumeGroup).Return(nil, lvmMgr.ErrNotFound)
+				m.EXPECT().ListPhysicalVolumes(gomock.Any(), gomock.Any()).Return([]lvmMgr.PhysicalVolume{}, nil)
+			},
+			expectProbe: func(p *probe.Mock) {
+				devices := &block.DeviceList{
+					Devices: []block.Device{
+						{
+							Path: "/dev/sdb",
+							Size: 5 * 1024, // 5 KiB - not enough for even one PE (4 MiB)
+						},
+					},
+				}
+				p.EXPECT().ScanAvailableDevices(gomock.Any(), gomock.Any()).Return(devices, nil)
 			},
 			expectedCap: 0,
 		},
