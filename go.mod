@@ -1,6 +1,6 @@
 module local-csi-driver
 
-go 1.24.6
+go 1.25.0
 
 require (
 	github.com/container-storage-interface/spec v1.11.0
