@@ -82,7 +82,7 @@ func (l *LVM) Create(ctx context.Context, req *csi.CreateVolumeRequest) (*csi.Vo
 		return nil, fmt.Errorf("failed to create volume id: %w", err)
 	}
 
-	allocatedSize, err := l.EnsureVolume(ctx, id.String(), capacity, limit, true)
+	allocatedSize, err := l.EnsureVolume(ctx, id.String(), capacity, limit, false)
 	if err != nil {
 		// Check for existing volume on the node.
 		log.Error(err, "failed to ensure volume", "name", id.String())
