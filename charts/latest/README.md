@@ -69,6 +69,11 @@ and their default values.
 | `observability.csiResizer.http.port`          | csi-resizer health and metrics port.                                               | `8091`                                                                                                                   |
 | `observability.nodeDriverRegistrar.log.level` | csi-node-driver-registrar log level.                                               | `2`                                                                                                                      |
 | `observability.nodeDriverRegistrar.http.port` | csi-node-driver-registrar health and metrics port.                                 | `8092`                                                                                                                   |
+| `securityContext.pod`                         | Pod-level security context.                                                        | <code>seccompProfile:<br>&nbsp;&nbsp;type: RuntimeDefault</code>                                                         |
+| `securityContext.driver`                      | Driver container security context.                                                 | <code>privileged: true<br>allowPrivilegeEscalation: true<br>capabilities:<br>&nbsp;&nbsp;drop: ["ALL"]<br>&nbsp;&nbsp;add: ["SYS_ADMIN"]</code> |
+| `securityContext.csiProvisioner`              | CSI provisioner security context.                                                  | <code>readOnlyRootFilesystem: true<br>allowPrivilegeEscalation: false<br>capabilities:<br>&nbsp;&nbsp;drop: ["ALL"]</code> |
+| `securityContext.csiResizer`                  | CSI resizer security context.                                                      | <code>readOnlyRootFilesystem: true<br>allowPrivilegeEscalation: false<br>capabilities:<br>&nbsp;&nbsp;drop: ["ALL"]</code> |
+| `securityContext.nodeDriverRegistrar`         | Node driver registrar security context.                                            | <code>readOnlyRootFilesystem: true<br>allowPrivilegeEscalation: false<br>capabilities:<br>&nbsp;&nbsp;drop: ["ALL"]</code> |
 <!-- markdownlint-enable MD033 -->
 
 ## Troubleshooting

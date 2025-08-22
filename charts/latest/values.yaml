@@ -139,3 +139,31 @@ scalability:
     kubeApi:
       qps: 100
       burst: 200
+
+securityContext:
+  pod:
+    seccompProfile:
+      type: RuntimeDefault
+  driver:
+    privileged: true
+    capabilities:
+      drop:
+        - ALL
+  csiProvisioner:
+    readOnlyRootFilesystem: true
+    allowPrivilegeEscalation: false
+    capabilities:
+      drop:
+        - ALL
+  csiResizer:
+    readOnlyRootFilesystem: true
+    allowPrivilegeEscalation: false
+    capabilities:
+      drop:
+        - ALL
+  nodeDriverRegistrar:
+    readOnlyRootFilesystem: true
+    allowPrivilegeEscalation: false
+    capabilities:
+      drop:
+        - ALL
