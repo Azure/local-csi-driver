@@ -113,11 +113,10 @@ spec:
           periodSeconds: 10
         resources: {{- toYaml .Values.resources.driver | nindent 10 }}
         securityContext:
-          allowPrivilegeEscalation: true
-          capabilities:
-            add:
-            - SYS_ADMIN
           privileged: true
+          capabilities:
+            drop:
+              - ALL
         terminationMessagePath: /tmp/termination-log
         terminationMessagePolicy: FallbackToLogsOnError
         volumeMounts:
@@ -184,6 +183,12 @@ spec:
           name: provisioner
           protocol: TCP
         resources: {{- toYaml .Values.resources.csiProvisioner | nindent 10 }}
+        securityContext:
+          readOnlyRootFilesystem: true
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+              - ALL
         volumeMounts:
         - mountPath: /csi
           name: csi-socket-dir
@@ -211,6 +216,12 @@ spec:
           name: resizer
           protocol: TCP
         resources: {{- toYaml .Values.resources.csiResizer | nindent 10 }}
+        securityContext:
+          readOnlyRootFilesystem: true
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+              - ALL
         volumeMounts:
         - mountPath: /csi
           name: csi-socket-dir
@@ -241,6 +252,12 @@ spec:
           name: registrar
           protocol: TCP
         resources: {{- toYaml .Values.resources.nodeDriverRegistrar | nindent 10 }}
+        securityContext:
+          readOnlyRootFilesystem: true
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+              - ALL
         volumeMounts:
         - mountPath: /csi
           name: csi-socket-dir
@@ -252,7 +269,7 @@ spec:
       priorityClassName: system-node-critical
       securityContext:
         seccompProfile:
-          type: Unconfined
+          type: RuntimeDefault
       serviceAccountName: {{ .Values.name }}-node
       terminationGracePeriodSeconds: 60
       tolerations: {{- toYaml .Values.daemonset.tolerations | nindent 8 }}
