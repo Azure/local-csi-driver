@@ -6,8 +6,6 @@ package probe
 import (
 	"context"
 
-	logr "github.com/go-logr/logr"
-
 	"local-csi-driver/internal/pkg/block"
 )
 
@@ -25,7 +23,7 @@ func NewFake(devices []string, err error) *Fake {
 }
 
 // ScanAvailableDevices simulates scanning for available devices.
-func (f *Fake) ScanAvailableDevices(ctx context.Context, log logr.Logger) (*block.DeviceList, error) {
+func (f *Fake) ScanAvailableDevices(ctx context.Context) (*block.DeviceList, error) {
 	if f.Err != nil {
 		return nil, f.Err
 	}

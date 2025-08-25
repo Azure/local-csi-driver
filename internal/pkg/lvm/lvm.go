@@ -190,9 +190,14 @@ func (c *Client) CreatePhysicalVolume(ctx context.Context, opts CreatePVOptions)
 	))
 	defer span.End()
 
-	formatted, err := c.block.IsFormatted(opts.Name)
+	fsType, formatted, err := c.block.IsFormatted(opts.Name)
 	if err != nil {
 		return getErrorType(err)
+	}
+
+	if fsType == block.Lvm2Type {
+		span.SetStatus(codes.Ok, "device is already an LVM physical volume")
+		return nil
 	}
 
 	if formatted {
@@ -709,7 +714,7 @@ func (c *Client) ExtendLogicalVolume(ctx context.Context, opts ExtendLVOptions) 
 	defer span.End()
 
 	lvPath := "/dev/" + opts.Name
-	formatted, err := c.block.IsFormatted(lvPath)
+	_, formatted, err := c.block.IsFormatted(lvPath)
 	if err != nil {
 		return err
 	}
@@ -813,7 +818,7 @@ func getErrorType(err error) error {
 		return fmt.Errorf("%w: %s", ErrNotFound, err.Error())
 	case containsIgnoreCase(err.Error(), "contains a filesystem in use"):
 		return fmt.Errorf("%w: %s", ErrInUse, err.Error())
-	case containsIgnoreCase(err.Error(), "already exists"):
+	case containsIgnoreCase(err.Error(), "already exists") || (containsIgnoreCase(err.Error(), "of volume group") && containsIgnoreCase(err.Error(), "Can't initialize physical volume")):
 		return fmt.Errorf("%w: %s", ErrAlreadyExists, err.Error())
 	case containsIgnoreCase(err.Error(), "insufficient free space"):
 		return fmt.Errorf("%w: %s", ErrResourceExhausted, err.Error())
