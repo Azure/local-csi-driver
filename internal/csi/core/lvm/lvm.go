@@ -315,7 +315,7 @@ func (l *LVM) EnsurePhysicalVolumes(ctx context.Context) ([]string, error) {
 	defer span.End()
 
 	// Get list of physical disks matching the device filter.
-	devices, err := l.probe.ScanAvailableDevices(ctx, log)
+	devices, err := l.probe.ScanAvailableDevices(ctx)
 	if err != nil {
 		if errors.Is(err, probe.ErrNoDevicesFound) {
 			log.Error(err, "no devices found")
@@ -354,13 +354,14 @@ func (l *LVM) EnsurePhysicalVolumes(ctx context.Context) ([]string, error) {
 			Name: device.Path,
 		}
 		if err := l.lvm.CreatePhysicalVolume(ctx, pvCreateOptions); err != nil {
-			span.SetStatus(codes.Error, "failed to create physical volume")
-			span.RecordError(err)
-			recorder.Eventf(corev1.EventTypeWarning, provisioningPhysicalVolumeFailed, "Provisioning physical volume %s failed: %s", device, err)
-			if !errors.Is(err, lvm.ErrInUse) {
+			// If PV already exists, we can ignore the error and continue to try to create the volume group.
+			if !errors.Is(err, lvm.ErrAlreadyExists) {
+				span.SetStatus(codes.Error, "failed to create physical volume")
+				span.RecordError(err)
+				recorder.Eventf(corev1.EventTypeWarning, provisioningPhysicalVolumeFailed, "Provisioning physical volume %s failed: %s", device, err)
 				return nil, fmt.Errorf("failed to create physical volume %s: %w", device.Path, err)
 			}
-			continue
+			log.V(2).Info("physical volume already exists", "device", device)
 		}
 		finalPvs = append(finalPvs, device.Path)
 		recorder.Eventf(corev1.EventTypeNormal, provisionedPhysicalVolume, "Successfully provisioned physical volume %s", device)
