@@ -328,7 +328,7 @@ func TestAvailableCapacity(t *testing.T) {
 				m.EXPECT().GetVolumeGroup(gomock.Any(), testVolumeGroup).Return(nil, lvmMgr.ErrNotFound)
 			},
 			expectProbe: func(p *probe.Mock) {
-				p.EXPECT().ScanAvailableDevices(gomock.Any(), gomock.Any()).Return(nil, probe.ErrNoDevicesFound)
+				p.EXPECT().ScanAvailableDevices(gomock.Any()).Return(nil, probe.ErrNoDevicesFound)
 			},
 			expectedCap: 0,
 		},
@@ -339,7 +339,7 @@ func TestAvailableCapacity(t *testing.T) {
 				m.EXPECT().GetVolumeGroup(gomock.Any(), testVolumeGroup).Return(nil, lvmMgr.ErrNotFound)
 			},
 			expectProbe: func(p *probe.Mock) {
-				p.EXPECT().ScanAvailableDevices(gomock.Any(), gomock.Any()).Return(nil, probe.ErrNoDevicesFound)
+				p.EXPECT().ScanAvailableDevices(gomock.Any()).Return(nil, probe.ErrNoDevicesFound)
 			},
 			expectedCap: 0,
 		},
@@ -370,7 +370,7 @@ func TestAvailableCapacity(t *testing.T) {
 						},
 					},
 				}
-				p.EXPECT().ScanAvailableDevices(gomock.Any(), gomock.Any()).Return(devices, nil)
+				p.EXPECT().ScanAvailableDevices(gomock.Any()).Return(devices, nil)
 			},
 			expectedCap: 8 * 1024 * 1024,
 		},
@@ -394,7 +394,7 @@ func TestAvailableCapacity(t *testing.T) {
 						},
 					},
 				}
-				p.EXPECT().ScanAvailableDevices(gomock.Any(), gomock.Any()).Return(devices, nil)
+				p.EXPECT().ScanAvailableDevices(gomock.Any()).Return(devices, nil)
 			},
 			expectedCap: 16 * 1024 * 1024,
 		},
@@ -414,7 +414,7 @@ func TestAvailableCapacity(t *testing.T) {
 						},
 					},
 				}
-				p.EXPECT().ScanAvailableDevices(gomock.Any(), gomock.Any()).Return(devices, nil)
+				p.EXPECT().ScanAvailableDevices(gomock.Any()).Return(devices, nil)
 			},
 			expectedCap: 0,
 		},

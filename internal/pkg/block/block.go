@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"regexp"
 	"syscall"
 
 	utilexec "k8s.io/utils/exec"
@@ -17,6 +18,11 @@ const (
 	// lsblkCommand is the command to list block devices.
 	lsblkCommand = "lsblk"
 	blkidCmd     = "blkid"
+	Lvm2Type     = "LVM2_member"
+)
+
+var (
+	blkidTypeRe = regexp.MustCompile(`\bTYPE="([^"]+)"`)
 )
 
 // Interface defines the methods that block should implement
@@ -26,6 +32,7 @@ type Interface interface {
 	GetDevices(ctx context.Context) (*DeviceList, error)
 	IsBlockDevice(path string) (bool, error)
 	IsFormatted(device string) (bool, error)
+	IsLVM2(device string) (bool, error)
 }
 
 // block implements the Interface.
@@ -79,6 +86,27 @@ func (s *block) IsBlockDevice(path string) (bool, error) {
 }
 
 // IsFormatted reports whether the given block device is formatted.
+func (s *block) IsFormatted(blockDev string) (bool, error) {
+	_, isFormatted, err := s.blkid(blockDev)
+	if err != nil {
+		return false, err
+	}
+	return isFormatted, nil
+}
+
+// IsLVM2 reports whether the given block device is an LVM2 physical volume.
+func (s *block) IsLVM2(blockDev string) (bool, error) {
+	fsType, isFormatted, err := s.blkid(blockDev)
+	if err != nil {
+		return false, err
+	}
+	if !isFormatted {
+		return false, nil
+	}
+	return fsType == Lvm2Type, nil
+}
+
+// blkid reports whether the given block device is formatted and returns its filesystem type if present.
 // blockDev is the path to the block device e.g. /dev/nvme0n1.
 // Uses system utility blkid to get information about the device.
 // blkid exit status is:
@@ -87,29 +115,41 @@ func (s *block) IsBlockDevice(path string) (bool, error) {
 //   - 4, usage or other errors.
 //   - 8, ambivalent probing result was detected by low-level probing mode (-p).
 //
-// Returns true if the device is formatted, false otherwise.
-func (s *block) IsFormatted(blockDev string) (bool, error) {
+// Returns: fsType (string), formatted (bool), error.
+func (s *block) blkid(blockDev string) (string, bool, error) {
 	devPresent, err := s.IsBlockDevice(blockDev)
 	if err != nil {
-		return false, err
+		return "", false, err
 	}
 	if !devPresent {
-		return false, fmt.Errorf("device %s not present", blockDev)
+		return "", false, fmt.Errorf("device %s not present", blockDev)
 	}
 
 	args := []string{"-p", blockDev}
-	_, err = s.exec.Command(blkidCmd, args...).CombinedOutput()
+	out, err := s.exec.Command(blkidCmd, args...).CombinedOutput()
 	if err == nil {
 		// Exit code 0: device is formatted
-		return true, nil
+		fsType := parseFsTypeFromBlkid(string(out))
+		return fsType, true, nil
 	}
 	if exit, ok := err.(utilexec.ExitError); ok {
 		if exit.ExitStatus() == 2 {
 			// Exit code 2: device is unformatted
-			return false, nil
+			return "", false, nil
 		}
+
 	}
-	return false, fmt.Errorf("could not determine if device %s is formatted: %w", blockDev, err)
+	return "", false, fmt.Errorf("could not determine if device %s is formatted: %w", blockDev, err)
+}
+
+// parseFsTypeFromBlkid extracts TYPE="<fstype>" from blkid output.
+// It ignores PTTYPE and other attributes.
+func parseFsTypeFromBlkid(out string) string {
+	m := blkidTypeRe.FindStringSubmatch(out)
+	if len(m) == 2 {
+		return m[1]
+	}
+	return ""
 }
 
 // parseLsblkOutput parses the JSON output of the lsblk command.

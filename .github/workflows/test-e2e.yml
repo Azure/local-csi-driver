@@ -112,6 +112,11 @@ jobs:
             cluster_type: "aks"
             aks_template: "nvme-ubuntu"
 
+          - name: "Integration Test Lsv4"
+            command: "test-e2e-aks"
+            cluster_type: "aks"
+            aks_template: "nvme-v4"
+
           - name: "External E2E Test"
             command: "test-external-e2e"
             cluster_type: "aks"

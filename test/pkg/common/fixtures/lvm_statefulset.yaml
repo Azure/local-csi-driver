@@ -5,6 +5,7 @@ metadata:
   name: statefulset-lcd-lvm
   labels:
     app: busybox
+    part-of: e2e-test
 spec:
   podManagementPolicy: Parallel
   replicas: 10
@@ -12,6 +13,7 @@ spec:
     metadata:
       labels:
         app: busybox
+        part-of: e2e-test
     spec:
       nodeSelector:
         "kubernetes.io/os": linux

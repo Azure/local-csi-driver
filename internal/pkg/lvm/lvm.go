@@ -78,6 +78,13 @@ func IgnoreNotFound(err error) error {
 	return err
 }
 
+func IgnoreAlreadyExists(err error) error {
+	if errors.Is(err, ErrAlreadyExists) {
+		return nil
+	}
+	return err
+}
+
 type Client struct {
 	block   block.Interface
 	lvmPath string
@@ -193,6 +200,15 @@ func (c *Client) CreatePhysicalVolume(ctx context.Context, opts CreatePVOptions)
 	formatted, err := c.block.IsFormatted(opts.Name)
 	if err != nil {
 		return getErrorType(err)
+	}
+
+	isLVM, err := c.block.IsLVM2(opts.Name)
+	if err != nil {
+		return getErrorType(err)
+	}
+
+	if isLVM {
+		return nil
 	}
 
 	if formatted {
@@ -813,7 +829,7 @@ func getErrorType(err error) error {
 		return fmt.Errorf("%w: %s", ErrNotFound, err.Error())
 	case containsIgnoreCase(err.Error(), "contains a filesystem in use"):
 		return fmt.Errorf("%w: %s", ErrInUse, err.Error())
-	case containsIgnoreCase(err.Error(), "already exists"):
+	case containsIgnoreCase(err.Error(), "already exists") || (containsIgnoreCase(err.Error(), "of volume group") && containsIgnoreCase(err.Error(), "Can't initialize physical volume")):
 		return fmt.Errorf("%w: %s", ErrAlreadyExists, err.Error())
 	case containsIgnoreCase(err.Error(), "insufficient free space"):
 		return fmt.Errorf("%w: %s", ErrResourceExhausted, err.Error())

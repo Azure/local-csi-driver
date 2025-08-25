@@ -273,16 +273,6 @@ func (l *LVM) EnsureVolumeGroup(ctx context.Context, name string, devices []stri
 		// Multiple workers may try to create the same volume group at the same time,
 		// so ignore the already exists error and return the existing volume group.
 		if !errors.Is(err, lvm.ErrAlreadyExists) {
-			// If one of the PVs is already in a volume group, we return resource exhausted
-			// error. This will help schedule the volume on a different node where PVs may
-			// be available.
-			if errors.Is(err, lvm.ErrPVAlreadyInVolumeGroup) {
-				span.SetStatus(codes.Error, "pv already in volume group")
-				span.RecordError(err)
-				recorder.Eventf(corev1.EventTypeWarning, provisioningVolumeGroupFailed, "Provisioning volume group %s failed: %s", name, err)
-				return nil, fmt.Errorf("%w: failed to create volume group: %v", core.ErrResourceExhausted, err)
-			}
-			// If the error is not already exists, return it.
 			log.Error(err, "failed to create volume group")
 			span.SetStatus(codes.Error, "failed to create volume group")
 			span.RecordError(err)
@@ -308,14 +298,14 @@ func (l *LVM) EnsureVolumeGroup(ctx context.Context, name string, devices []stri
 //
 // If all physical volumes exist or were created successfully, it returns them
 // as a list of device paths, otherwise it returns an error and an empty list.
-func (l *LVM) EnsurePhysicalVolumes(ctx context.Context) ([]string, error) {
+func (l *LVM) EnsurePhysicalVolumes(ctx context.Context, vgName string) ([]string, error) {
 	log := log.FromContext(ctx)
 	recorder := events.FromContext(ctx)
 	ctx, span := l.tracer.Start(ctx, "volume.lvm.csi/EnsurePhysicalVolumes")
 	defer span.End()
 
 	// Get list of physical disks matching the device filter.
-	devices, err := l.probe.ScanAvailableDevices(ctx, log)
+	devices, err := l.probe.ScanAvailableDevices(ctx)
 	if err != nil {
 		if errors.Is(err, probe.ErrNoDevicesFound) {
 			log.Error(err, "no devices found")
@@ -327,52 +317,75 @@ func (l *LVM) EnsurePhysicalVolumes(ctx context.Context) ([]string, error) {
 		span.RecordError(err)
 		return nil, fmt.Errorf("failed to scan devices: %w", err)
 	}
-	log.V(2).Info("found devices", "devices", devices)
 
-	// Get list of existing physical volumes.
-	existing := map[string]struct{}{}
-	finalPvs := make([]string, 0, len(devices.Devices))
-	pvs, err := l.lvm.ListPhysicalVolumes(ctx, nil)
-	if err != nil {
-		span.SetStatus(codes.Error, "failed to list physical volumes")
-		span.RecordError(err)
-		return nil, fmt.Errorf("failed to list physical volumes: %w", err)
-	}
-	for _, pv := range pvs {
-		existing[pv.Name] = struct{}{}
-	}
-
-	// Create any missing physical volumes.
-	for _, device := range devices.Devices {
-		if _, ok := existing[device.Path]; ok {
-			finalPvs = append(finalPvs, device.Path)
-			log.V(2).Info("physical volume already exists", "device", device)
-			continue
-		}
-		recorder.Eventf(corev1.EventTypeNormal, provisioningPhysicalVolume, "Provisioning physical volume %s", device)
-		pvCreateOptions := lvm.CreatePVOptions{
-			Name: device.Path,
-		}
-		if err := l.lvm.CreatePhysicalVolume(ctx, pvCreateOptions); err != nil {
-			span.SetStatus(codes.Error, "failed to create physical volume")
+	pvs := make([]string, 0, len(devices.Devices))
+	for _, d := range devices.Devices {
+		pv, err := l.ensurePhysicalVolume(ctx, d.Path)
+		if err != nil {
+			log.Error(err, "failed to ensure physical volume", "device", d.Path)
+			span.SetStatus(codes.Error, "failed to ensure physical volume")
 			span.RecordError(err)
-			recorder.Eventf(corev1.EventTypeWarning, provisioningPhysicalVolumeFailed, "Provisioning physical volume %s failed: %s", device, err)
-			if !errors.Is(err, lvm.ErrInUse) {
-				return nil, fmt.Errorf("failed to create physical volume %s: %w", device.Path, err)
-			}
+			recorder.Eventf(corev1.EventTypeWarning, provisioningPhysicalVolumeFailed, "Provisioning physical volume on device %s failed: %s", d.Path, err.Error())
+			return nil, fmt.Errorf("failed to ensure physical volume on device %s: %w", d.Path, err)
+		}
+		if pv.VGName != "" && pv.VGName != vgName {
+			log.V(1).Info("physical volume already part of a different volume group, skipping", "device", d.Path, "vg", pv.VGName)
 			continue
 		}
-		finalPvs = append(finalPvs, device.Path)
-		recorder.Eventf(corev1.EventTypeNormal, provisionedPhysicalVolume, "Successfully provisioned physical volume %s", device)
-		log.V(1).Info("created physical volume", "device", device)
+		pvs = append(pvs, d.Path)
+	}
+	if len(pvs) == 0 {
+		log.Error(ErrNoDisksFound, "no disks found")
+		span.SetStatus(codes.Error, "no disks found")
+		recorder.Eventf(corev1.EventTypeWarning, provisioningPhysicalVolumeFailed, "Provisioning physical volume failed: %s", ErrNoDisksFound.Error())
+		return nil, fmt.Errorf("%w: no disks found", core.ErrResourceExhausted)
+	}
+	return pvs, nil
+}
+
+func (l *LVM) ensurePhysicalVolume(ctx context.Context, device string) (*lvm.PhysicalVolume, error) {
+	log := log.FromContext(ctx).WithValues("pv", device)
+	recorder := events.FromContext(ctx)
+	ctx, span := l.tracer.Start(ctx, "volume.lvm.csi/ensurePhysicalVolume", trace.WithAttributes(
+		attribute.String("vol.pv", device),
+	))
+	defer span.End()
+	if device == "" {
+		log.Error(fmt.Errorf("device path is required"), "device", device)
+		span.SetStatus(codes.Error, "device path is required")
+		return nil, fmt.Errorf("device path is required")
 	}
 
-	if len(finalPvs) == 0 {
-		// Return as resource exhausted to prompt scheduler to move the workload to another node
-		return nil, fmt.Errorf("%w: no disks are available", core.ErrResourceExhausted)
+	pv, err := l.lvm.GetPhysicalVolume(ctx, device)
+	if lvm.IgnoreNotFound(err) != nil {
+		span.SetStatus(codes.Error, "failed to get physical volume")
+		span.RecordError(err)
+		return nil, fmt.Errorf("failed to get physical volume %s: %w", device, err)
+	}
+	if pv != nil {
+		log.V(1).Info("physical volume already exists")
+		return pv, nil
+	}
+	pvCreateOptions := lvm.CreatePVOptions{
+		Name: device,
+	}
+	if err := l.lvm.CreatePhysicalVolume(ctx, pvCreateOptions); lvm.IgnoreAlreadyExists(err) != nil {
+		log.Error(err, "failed to create physical volume")
+		span.SetStatus(codes.Error, "failed to create physical volume")
+		span.RecordError(err)
+		return nil, fmt.Errorf("failed to create physical volume on device %s: %w", device, err)
 	}
 
-	return finalPvs, nil
+	if !errors.Is(err, lvm.ErrAlreadyExists) {
+		recorder.Eventf(corev1.EventTypeNormal, provisionedPhysicalVolume, "Successfully provisioned physical volume on device %s", device)
+	}
+
+	if pv, err = l.lvm.GetPhysicalVolume(ctx, device); err != nil {
+		span.SetStatus(codes.Error, "failed to get physical volume after creation")
+		span.RecordError(err)
+		return nil, fmt.Errorf("failed to get physical volume %s after creation: %w", device, err)
+	}
+	return pv, nil
 }
 
 // EnsureVolume ensures that the volume exists with the given name and size.
@@ -444,7 +457,7 @@ func (l *LVM) EnsureVolume(ctx context.Context, volumeId string, capacity int64,
 	}
 	if vg == nil {
 		log.V(2).Info("no existing volume group found, creating new one")
-		devices, err := l.EnsurePhysicalVolumes(ctx)
+		devices, err := l.EnsurePhysicalVolumes(ctx, id.VolumeGroup)
 		if err != nil {
 			log.Error(err, "failed to ensure physical volumes")
 			span.SetStatus(codes.Error, "failed to ensure physical volumes")
