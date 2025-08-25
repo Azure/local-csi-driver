@@ -112,12 +112,7 @@ spec:
           initialDelaySeconds: 5
           periodSeconds: 10
         resources: {{- toYaml .Values.resources.driver | nindent 10 }}
-        securityContext:
-          allowPrivilegeEscalation: true
-          capabilities:
-            add:
-            - SYS_ADMIN
-          privileged: true
+        securityContext: {{- toYaml .Values.securityContext.driver | nindent 10 }}
         terminationMessagePath: /tmp/termination-log
         terminationMessagePolicy: FallbackToLogsOnError
         volumeMounts:
@@ -184,6 +179,7 @@ spec:
           name: provisioner
           protocol: TCP
         resources: {{- toYaml .Values.resources.csiProvisioner | nindent 10 }}
+        securityContext: {{- toYaml .Values.securityContext.csiProvisioner | nindent 10 }}
         volumeMounts:
         - mountPath: /csi
           name: csi-socket-dir
@@ -211,6 +207,7 @@ spec:
           name: resizer
           protocol: TCP
         resources: {{- toYaml .Values.resources.csiResizer | nindent 10 }}
+        securityContext: {{- toYaml .Values.securityContext.csiResizer | nindent 10 }}
         volumeMounts:
         - mountPath: /csi
           name: csi-socket-dir
@@ -241,6 +238,7 @@ spec:
           name: registrar
           protocol: TCP
         resources: {{- toYaml .Values.resources.nodeDriverRegistrar | nindent 10 }}
+        securityContext: {{- toYaml .Values.securityContext.nodeDriverRegistrar | nindent 10 }}
         volumeMounts:
         - mountPath: /csi
           name: csi-socket-dir
@@ -250,9 +248,7 @@ spec:
       hostPID: true
       nodeSelector: {{- toYaml .Values.daemonset.nodeSelector | nindent 8 }}
       priorityClassName: system-node-critical
-      securityContext:
-        seccompProfile:
-          type: Unconfined
+      securityContext: {{- toYaml .Values.securityContext.pod | nindent 8 }}
       serviceAccountName: {{ .Values.name }}-node
       terminationGracePeriodSeconds: 60
       tolerations: {{- toYaml .Values.daemonset.tolerations | nindent 8 }}
