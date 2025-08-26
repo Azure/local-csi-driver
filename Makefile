@@ -421,14 +421,14 @@ BICEP ?= $(LOCALBIN)/bicep
 HELM ?= $(LOCALBIN)/helm
 
 ## Tool Versions
-GOMOCK_VERSION ?= v0.6.0
+GOMOCK_VERSION ?= $(shell go list -m -f '{{.Version}}' go.uber.org/mock)
 ENVTEST_VERSION ?= release-0.21
 KIND_VERSION ?= v0.29.0
 GOLANGCI_LINT_VERSION ?= v2.4.0
 GO_JUNIT_REPORT_VERSION ?= v2.1.0
 PROMETHEUS_VERSION ?= v0.77.1
 JAEGER_VERSION ?= v1.62.0
-GINKGO_VERSION ?= v2.25.0
+GINKGO_VERSION ?= $(shell go list -m -f '{{.Version}}' github.com/onsi/ginkgo/v2)
 HADOLINT_VERSION ?= v2.12.0
 CONTAINER_STRUCTURE_TEST_VERSION ?= v1.19.3
 GIT_SEMVER_VERSION ?= v6.11.0
