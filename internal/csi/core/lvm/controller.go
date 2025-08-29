@@ -310,16 +310,22 @@ func (l *LVM) AvailableCapacity(ctx context.Context, vgName string) (int64, erro
 		span.RecordError(err)
 		return 0, fmt.Errorf("failed to list physical volumes: %w", err)
 	}
-	isPhysicalVolume := map[string]struct{}{}
+	diskToPV := map[string]*lvm.PhysicalVolume{}
 	for _, pv := range pvs {
-		isPhysicalVolume[pv.Name] = struct{}{}
+		diskToPV[pv.Name] = &pv
 	}
 
 	// Calculate the available capacity from unallocated disks.
 	var availableCapacity int64
 	for _, device := range filtered.Devices {
-		if _, ok := isPhysicalVolume[device.Path]; ok {
-			log.V(2).Info("physical volume already allocated to a volume group", "device", device)
+		pv, exists := diskToPV[device.Path]
+		// it's possible VG was created during our request, so only skip those that aren't set to VG
+		if exists && pv.VGName != "" && pv.VGName != vgName {
+			log.V(3).Info("skipping device already allocated to another volume group", "device", device.Path, "vg", pv.VGName)
+			span.AddEvent("skipping device allocated to another volume group", trace.WithAttributes(
+				attribute.String("device", device.Path),
+				attribute.String("vg", pv.VGName),
+			))
 			continue
 		}
 

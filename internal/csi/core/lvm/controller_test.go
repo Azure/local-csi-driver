@@ -399,6 +399,72 @@ func TestAvailableCapacity(t *testing.T) {
 			expectedCap: 16 * 1024 * 1024,
 		},
 		{
+			name:   "two device with enough capacity with one allocated to another VG",
+			vgName: testVolumeGroup,
+			expectLvm: func(m *lvmMgr.MockManager) {
+				m.EXPECT().GetVolumeGroup(gomock.Any(), testVolumeGroup).Return(nil, lvmMgr.ErrNotFound)
+				m.EXPECT().ListPhysicalVolumes(gomock.Any(), gomock.Any()).Return([]lvmMgr.PhysicalVolume{
+					{
+						Name:   "/dev/sda",
+						VGName: "other-vg",
+					},
+					{
+						Name:   "/dev/sdb",
+						VGName: "", // unallocated
+					},
+				}, nil)
+			},
+			expectProbe: func(p *probe.Mock) {
+				devices := &block.DeviceList{
+					Devices: []block.Device{
+						{
+							Path: "/dev/sda",
+							Size: 10 * 1024 * 1024, // 10 MiB - will become 9 MiB, rounded down to 8 MiB
+						},
+						{
+							Path: "/dev/sdb",
+							Size: 20 * 1024 * 1024, // 10 MiB - will become 9 MiB, rounded down to 8 MiB
+						},
+					},
+				}
+				p.EXPECT().ScanAvailableDevices(gomock.Any()).Return(devices, nil)
+			},
+			expectedCap: 16 * 1024 * 1024,
+		},
+		{
+			name:   "two device with enough capacity with one allocated to the VG (could happen if VG created during request)",
+			vgName: testVolumeGroup,
+			expectLvm: func(m *lvmMgr.MockManager) {
+				m.EXPECT().GetVolumeGroup(gomock.Any(), testVolumeGroup).Return(nil, lvmMgr.ErrNotFound)
+				m.EXPECT().ListPhysicalVolumes(gomock.Any(), gomock.Any()).Return([]lvmMgr.PhysicalVolume{
+					{
+						Name:   "/dev/sda",
+						VGName: testVolumeGroup,
+					},
+					{
+						Name:   "/dev/sdb",
+						VGName: testVolumeGroup,
+					},
+				}, nil)
+			},
+			expectProbe: func(p *probe.Mock) {
+				devices := &block.DeviceList{
+					Devices: []block.Device{
+						{
+							Path: "/dev/sdb",
+							Size: 20 * 1024 * 1024, // 20 MiB - will become 19 MiB, rounded down to 16 MiB
+						},
+						{
+							Path: "/dev/sda",
+							Size: 10 * 1024 * 1024, // 10 MiB - will become 9 MiB, rounded down to 8 MiB
+						},
+					},
+				}
+				p.EXPECT().ScanAvailableDevices(gomock.Any()).Return(devices, nil)
+			},
+			expectedCap: 24 * 1024 * 1024,
+		},
+		{
 			name:   "small device with enough not enough capacity for any PE",
 			vgName: testVolumeGroup,
 			expectLvm: func(m *lvmMgr.MockManager) {
