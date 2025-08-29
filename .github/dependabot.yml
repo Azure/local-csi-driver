@@ -35,11 +35,6 @@ updates:
         update-types:
           - "minor"
           - "patch"
-    ignore:
-      # Incompatibility with Kubernetes, we can remove this once Kubernetes upgrades package. Some
-      # The deprecated UnaryServerInterceptor and UnaryClientInterceptor function was removed in v0.61.0.
-      - dependency-name: "go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc"
-        versions: [">=0.61.0"]
     open-pull-requests-limit: 5
     commit-message:
       prefix: "build"

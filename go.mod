@@ -15,7 +15,7 @@ require (
 	github.com/open-policy-agent/cert-controller v0.14.0
 	github.com/prometheus/client_golang v1.23.0
 	go.opentelemetry.io/contrib/bridges/prometheus v0.62.0
-	go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc v0.60.0
+	go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc v0.62.0
 	go.opentelemetry.io/otel v1.37.0
 	go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetricgrpc v1.37.0
 	go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc v1.37.0
@@ -141,25 +141,21 @@ require (
 
 // Override for kubernetes to find the staging repos.
 replace (
-	k8s.io/cloud-provider v0.0.0 => k8s.io/cloud-provider v0.33.4
-	k8s.io/cluster-bootstrap v0.0.0 => k8s.io/cluster-bootstrap v0.33.4
-	k8s.io/component-helpers v0.0.0 => k8s.io/component-helpers v0.33.4
-	k8s.io/cri-client v0.0.0 => k8s.io/cri-client v0.33.4
-	k8s.io/csi-translation-lib v0.0.0 => k8s.io/csi-translation-lib v0.33.4
-	k8s.io/dynamic-resource-allocation v0.0.0 => k8s.io/dynamic-resource-allocation v0.33.4
-	k8s.io/endpointslice v0.0.0 => k8s.io/endpointslice v0.33.4
-	k8s.io/externaljwt v0.0.0 => k8s.io/externaljwt v0.33.4
-	k8s.io/kube-aggregator v0.0.0 => k8s.io/kube-aggregator v0.33.4
-	k8s.io/kube-controller-manager v0.0.0 => k8s.io/kube-controller-manager v0.33.4
-	k8s.io/kube-proxy v0.0.0 => k8s.io/kube-proxy v0.33.4
-	k8s.io/kube-scheduler v0.0.0 => k8s.io/kube-scheduler v0.33.4
-	k8s.io/kubectl v0.0.0 => k8s.io/kubectl v0.33.4
-	k8s.io/kubelet v0.0.0 => k8s.io/kubelet v0.33.4
-	k8s.io/mount-utils v0.0.0 => k8s.io/mount-utils v0.33.4
-	k8s.io/pod-security-admission v0.0.0 => k8s.io/pod-security-admission v0.33.4
-	k8s.io/sample-apiserver v0.0.0 => k8s.io/sample-apiserver v0.33.4
+	k8s.io/cloud-provider v0.0.0 => k8s.io/cloud-provider v0.34.0
+	k8s.io/cluster-bootstrap v0.0.0 => k8s.io/cluster-bootstrap v0.34.0
+	k8s.io/component-helpers v0.0.0 => k8s.io/component-helpers v0.34.0
+	k8s.io/cri-client v0.0.0 => k8s.io/cri-client v0.34.0
+	k8s.io/csi-translation-lib v0.0.0 => k8s.io/csi-translation-lib v0.34.0
+	k8s.io/dynamic-resource-allocation v0.0.0 => k8s.io/dynamic-resource-allocation v0.34.0
+	k8s.io/endpointslice v0.0.0 => k8s.io/endpointslice v0.34.0
+	k8s.io/externaljwt v0.0.0 => k8s.io/externaljwt v0.34.0
+	k8s.io/kube-aggregator v0.0.0 => k8s.io/kube-aggregator v0.34.0
+	k8s.io/kube-controller-manager v0.0.0 => k8s.io/kube-controller-manager v0.34.0
+	k8s.io/kube-proxy v0.0.0 => k8s.io/kube-proxy v0.34.0
+	k8s.io/kube-scheduler v0.0.0 => k8s.io/kube-scheduler v0.34.0
+	k8s.io/kubectl v0.0.0 => k8s.io/kubectl v0.34.0
+	k8s.io/kubelet v0.0.0 => k8s.io/kubelet v0.34.0
+	k8s.io/mount-utils v0.0.0 => k8s.io/mount-utils v0.34.0
+	k8s.io/pod-security-admission v0.0.0 => k8s.io/pod-security-admission v0.34.0
+	k8s.io/sample-apiserver v0.0.0 => k8s.io/sample-apiserver v0.34.0
 )
-
-// Patched CVE-2024-41110 by replacing github.com/docker/docker with v23.0.15+incompatible to address vulnerabilities in docker.
-// k8s.io/kubernetes@v1.33.3 => github.com/google/cadvisor@v0.52.1 => github.com/docker/docker@v26.1.4+incompatible
-replace github.com/docker/docker v26.1.4+incompatible => github.com/docker/docker v26.1.5+incompatible
