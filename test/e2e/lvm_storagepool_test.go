@@ -55,6 +55,19 @@ func lvmStatefulsetTest(name, statefulsetFixture string) {
 
 			cmd = exec.CommandContext(ctx, "kubectl", "delete", "--wait", "--ignore-not-found", "pvc", "-l", "part-of=e2e-test")
 			_, err = utils.Run(cmd)
+
+			Eventually(func(g Gomega, ctx context.Context) {
+				cmd := exec.CommandContext(ctx, "kubectl", "get", "pods", "-n", "kube-system", "-l", "app.kubernetes.io/component=csi-local-node", "-o", "jsonpath={.items[*].metadata.name}")
+				out, err := utils.Run(cmd)
+				g.Expect(err).NotTo(HaveOccurred(), "Failed to list csi-local-node pods")
+				names := strings.FieldsSeq(out)
+				for pod := range names {
+					lvs, err := getLvs(ctx, pod)
+					g.Expect(err).NotTo(HaveOccurred(), "Failed to get lvs for pod "+pod)
+					_, _ = fmt.Fprintf(GinkgoWriter, "After statefulset deletion, pod %s has lv=%v\n", pod, lvs)
+					g.Expect(lvs).To(BeEmpty(), "LVs should be deleted for pod "+pod)
+				}
+			}).WithContext(ctx).Should(Succeed(), "LVs were not deleted after PVC deletion")
 			Expect(err).NotTo(HaveOccurred(), "Failed to delete pvc")
 		})
 
@@ -266,7 +279,6 @@ type lv struct {
 	Stripes int
 }
 
-// getLvs= returns the number of LVs in the default VG for this csi driver pod.
 // getLvs returns the logical volumes in the default VG for this csi driver pod.
 func getLvs(ctx context.Context, podName string) ([]lv, error) {
 	cmd := exec.CommandContext(ctx, "kubectl", "exec", "-n", "kube-system", podName, "--", "lvs", "--no-headings", "--options", "vg_name,lv_name,stripes")
