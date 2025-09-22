@@ -88,3 +88,18 @@ func (mr *MockMockRecorder) IsFormatted(device any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "IsFormatted", reflect.TypeOf((*Mock)(nil).IsFormatted), device)
 }
+
+// IsLVM2 mocks base method.
+func (m *Mock) IsLVM2(device string) (bool, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "IsLVM2", device)
+	ret0, _ := ret[0].(bool)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// IsLVM2 indicates an expected call of IsLVM2.
+func (mr *MockMockRecorder) IsLVM2(device any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "IsLVM2", reflect.TypeOf((*Mock)(nil).IsLVM2), device)
+}

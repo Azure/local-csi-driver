@@ -63,6 +63,8 @@ const (
 	provisioningLogicalVolumeFailed      = "ProvisioningLogicalVolumeFailed"
 	provisionedLogicalVolumeSizeMismatch = "ProvisionedLogicalVolumeSizeMismatch"
 	provisionedEmptyVolume               = "ProvisionedEmptyVolume"
+	removedCorruptedLogicalVolume        = "RemovedCorruptedLogicalVolume"
+	failedToRemoveCorruptedLogicalVolume = "FailedToRemoveCorruptedLogicalVolume"
 )
 
 // Volume context parameters.
@@ -429,6 +431,42 @@ func (l *LVM) EnsureVolume(ctx context.Context, volumeId string, capacity int64,
 		log.Error(err, "failed to check if volume exists")
 		return 0, err
 	}
+
+	// Check if the logical volume is corrupted
+	if lv != nil {
+		corrupted, err := l.lvm.IsLogicalVolumeCorrupted(ctx, id.VolumeGroup, id.LogicalVolume)
+		if err != nil {
+			log.Error(err, "failed to check if logical volume is corrupted")
+			span.SetStatus(codes.Error, "failed to check if logical volume is corrupted")
+			span.RecordError(err)
+			return 0, fmt.Errorf("failed to check if logical volume is corrupted: %w", err)
+		}
+
+		if corrupted {
+			log.V(1).Info("found corrupted logical volume, removing it", "vg", id.VolumeGroup, "lv", id.LogicalVolume) // Remove the corrupted LV
+			opts := lvm.RemoveLVOptions{
+				Name: fmt.Sprintf("%s/%s", id.VolumeGroup, id.LogicalVolume),
+			}
+			if err := l.lvm.RemoveLogicalVolume(ctx, opts); err != nil {
+				log.Error(err, "failed to remove corrupted logical volume", "vg", id.VolumeGroup, "lv", id.LogicalVolume)
+				span.SetStatus(codes.Error, "failed to remove corrupted logical volume")
+				span.RecordError(err)
+				recorder.Eventf(corev1.EventTypeWarning, failedToRemoveCorruptedLogicalVolume,
+					"Failed to remove corrupted logical volume %s/%s: %s",
+					id.VolumeGroup, id.LogicalVolume, err.Error())
+				return 0, fmt.Errorf("failed to remove corrupted logical volume %s/%s: %w", id.VolumeGroup, id.LogicalVolume, err)
+			}
+
+			log.V(1).Info("removed corrupted logical volume", "vg", id.VolumeGroup, "lv", id.LogicalVolume)
+			recorder.Eventf(corev1.EventTypeNormal, removedCorruptedLogicalVolume,
+				"Successfully removed corrupted logical volume %s/%s",
+				id.VolumeGroup, id.LogicalVolume)
+
+			// Set lv to nil so it will be recreated below
+			lv = nil
+		}
+	}
+
 	if err == nil && lv != nil {
 		log.V(2).Info("found existing volume", "bytes", lv.Size)
 		span.AddEvent("found existing volume", trace.WithAttributes(attribute.Int64("bytes", int64(lv.Size))))
