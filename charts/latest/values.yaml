@@ -139,3 +139,7 @@ scalability:
     kubeApi:
       qps: 100
       burst: 200
+
+# label configurations
+labelsOverride: {}
+selectorLabelsOverride: {}
