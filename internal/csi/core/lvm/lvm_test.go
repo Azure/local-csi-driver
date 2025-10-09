@@ -533,6 +533,7 @@ func TestEnsureVolume(t *testing.T) {
 			request:  convert.MiBToBytes(1024),
 			expectLvm: func(m *lvmMgr.MockManager) {
 				m.EXPECT().GetLogicalVolume(gomock.Any(), gomock.Any(), gomock.Any()).Return(testLv1GiB, nil)
+				m.EXPECT().IsLogicalVolumeCorrupted(gomock.Any(), "vg", "lv").Return(false, nil)
 			},
 			expectedErr: nil,
 		},
@@ -542,6 +543,7 @@ func TestEnsureVolume(t *testing.T) {
 			request:  convert.MiBToBytes(2024),
 			expectLvm: func(m *lvmMgr.MockManager) {
 				m.EXPECT().GetLogicalVolume(gomock.Any(), gomock.Any(), gomock.Any()).Return(testLv2GiB, nil)
+				m.EXPECT().IsLogicalVolumeCorrupted(gomock.Any(), "vg", "lv").Return(false, nil)
 			},
 			expectedErr: nil,
 		},
@@ -551,6 +553,7 @@ func TestEnsureVolume(t *testing.T) {
 			request:  convert.MiBToBytes(2024),
 			expectLvm: func(m *lvmMgr.MockManager) {
 				m.EXPECT().GetLogicalVolume(gomock.Any(), gomock.Any(), gomock.Any()).Return(testLv1GiB, nil)
+				m.EXPECT().IsLogicalVolumeCorrupted(gomock.Any(), "vg", "lv").Return(false, nil)
 			},
 			expectedErr: core.ErrVolumeSizeMismatch,
 		},
@@ -625,6 +628,53 @@ func TestEnsureVolume(t *testing.T) {
 			},
 			expectProbe: func(p *probe.Mock) {
 				p.EXPECT().ScanAvailableDevices(gomock.Any()).Return(devices, nil)
+			},
+			expectedErr: errTestInternal,
+		},
+		{
+			name:     "corrupted lv detected and removed successfully",
+			volumeId: "vg#lv",
+			request:  convert.MiBToBytes(1024),
+			expectLvm: func(m *lvmMgr.MockManager) {
+				// First, GetLogicalVolume returns existing LV
+				m.EXPECT().GetLogicalVolume(gomock.Any(), "vg", "lv").Return(testLv1GiB, nil)
+				// IsLogicalVolumeCorrupted detects corruption
+				m.EXPECT().IsLogicalVolumeCorrupted(gomock.Any(), "vg", "lv").Return(true, nil)
+				// Remove the corrupted LV
+				m.EXPECT().RemoveLogicalVolume(gomock.Any(), lvmMgr.RemoveLVOptions{
+					Name: "vg/lv",
+				}).Return(nil)
+				// After removal, proceed with creating new volume
+				m.EXPECT().GetVolumeGroup(gomock.Any(), "vg").Return(testVg, nil)
+				m.EXPECT().CreateLogicalVolume(gomock.Any(), gomock.Any()).Return(convert.MiBToBytes(1024), nil)
+			},
+			expectedErr: nil,
+		},
+		{
+			name:     "corrupted lv detection fails",
+			volumeId: "vg#lv",
+			request:  convert.MiBToBytes(1024),
+			expectLvm: func(m *lvmMgr.MockManager) {
+				// GetLogicalVolume returns existing LV
+				m.EXPECT().GetLogicalVolume(gomock.Any(), "vg", "lv").Return(testLv1GiB, nil)
+				// IsLogicalVolumeCorrupted fails
+				m.EXPECT().IsLogicalVolumeCorrupted(gomock.Any(), "vg", "lv").Return(false, errTestInternal)
+			},
+			expectedErr: errTestInternal,
+		},
+		{
+			name:     "corrupted lv removal fails",
+			volumeId: "vg#lv",
+			request:  convert.MiBToBytes(1024),
+			expectLvm: func(m *lvmMgr.MockManager) {
+				// GetLogicalVolume returns existing LV
+				m.EXPECT().GetLogicalVolume(gomock.Any(), "vg", "lv").Return(testLv1GiB, nil)
+				// IsLogicalVolumeCorrupted detects corruption
+				m.EXPECT().IsLogicalVolumeCorrupted(gomock.Any(), "vg", "lv").Return(true, nil)
+				// Remove the corrupted LV fails
+				m.EXPECT().RemoveLogicalVolume(gomock.Any(), lvmMgr.RemoveLVOptions{
+					Name: "vg/lv",
+				}).Return(errTestInternal)
 			},
 			expectedErr: errTestInternal,
 		},

@@ -93,3 +93,8 @@ func (l *Noop) RemoveVolumeGroup(ctx context.Context, opts RemoveVGOptions) erro
 func (l *Noop) ExtendLogicalVolume(ctx context.Context, opts ExtendLVOptions) error {
 	return ErrUnsupported
 }
+
+// IsLogicalVolumeCorrupted implements Manager.
+func (l *Noop) IsLogicalVolumeCorrupted(ctx context.Context, vgName string, lvName string) (bool, error) {
+	return false, ErrUnsupported
+}

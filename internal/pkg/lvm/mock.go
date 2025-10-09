@@ -146,6 +146,21 @@ func (mr *MockManagerMockRecorder) GetVolumeGroup(ctx, vgName any) *gomock.Call 
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetVolumeGroup", reflect.TypeOf((*MockManager)(nil).GetVolumeGroup), ctx, vgName)
 }
 
+// IsLogicalVolumeCorrupted mocks base method.
+func (m *MockManager) IsLogicalVolumeCorrupted(ctx context.Context, vgName, lvName string) (bool, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "IsLogicalVolumeCorrupted", ctx, vgName, lvName)
+	ret0, _ := ret[0].(bool)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// IsLogicalVolumeCorrupted indicates an expected call of IsLogicalVolumeCorrupted.
+func (mr *MockManagerMockRecorder) IsLogicalVolumeCorrupted(ctx, vgName, lvName any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "IsLogicalVolumeCorrupted", reflect.TypeOf((*MockManager)(nil).IsLogicalVolumeCorrupted), ctx, vgName, lvName)
+}
+
 // IsSupported mocks base method.
 func (m *MockManager) IsSupported() bool {
 	m.ctrl.T.Helper()

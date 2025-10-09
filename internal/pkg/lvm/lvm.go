@@ -26,7 +26,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-
+	"os"
 	"os/exec"
 	"strings"
 
@@ -845,4 +845,57 @@ func getErrorType(err error) error {
 // containsIgnoreCase checks if a string contains a substring ignoring case.
 func containsIgnoreCase(s, substr string) bool {
 	return strings.Contains(strings.ToLower(s), strings.ToLower(substr))
+}
+
+// ConstructLogicalVolumePath constructs the device path for a logical volume.
+// This is a shared utility that matches the CSI driver's ReconstructLogicalVolumePath.
+func ConstructLogicalVolumePath(vgName, lvName string) string {
+	return fmt.Sprintf("/dev/%s/%s", vgName, lvName)
+}
+
+// IsLogicalVolumeCorrupted checks if a logical volume is corrupted.
+// A logical volume is considered corrupted if it exists in LVM metadata
+// but the device file (/dev/<vg>/<lv>) does not exist.
+func (c *Client) IsLogicalVolumeCorrupted(ctx context.Context, vgName string, lvName string) (bool, error) {
+	ctx, span := c.tracer.Start(ctx, "lvm/IsLogicalVolumeCorrupted", trace.WithAttributes(
+		attribute.String("vg.name", vgName),
+		attribute.String("lv.name", lvName),
+	))
+	defer span.End()
+
+	if vgName == "" || lvName == "" {
+		return false, fmt.Errorf("volume group and logical volume names cannot be empty")
+	}
+
+	// First check if the logical volume exists in LVM metadata
+	lv, err := c.GetLogicalVolume(ctx, vgName, lvName)
+	if err != nil {
+		if errors.Is(err, ErrNotFound) {
+			// If LV doesn't exist in metadata, it's not corrupted, just missing
+			return false, nil
+		}
+		return false, fmt.Errorf("failed to get logical volume: %w", err)
+	}
+
+	if lv == nil {
+		// LV doesn't exist in metadata - not corrupted
+		return false, nil
+	}
+
+	// Check if the device file exists
+	devicePath := ConstructLogicalVolumePath(vgName, lvName)
+	if _, err := os.Stat(devicePath); err != nil {
+		if os.IsNotExist(err) {
+			// LV exists in metadata but device file is missing - this is corruption
+			span.SetAttributes(
+				attribute.Bool("lv.corrupted", true),
+				attribute.String("lv.missing_device_path", devicePath),
+			)
+			return true, nil
+		}
+		return false, fmt.Errorf("failed to check device file %s: %w", devicePath, err)
+	}
+
+	// LV exists in metadata and device file exists - not corrupted
+	return false, nil
 }

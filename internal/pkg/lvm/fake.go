@@ -160,3 +160,12 @@ func (f *Fake) ExtendLogicalVolume(ctx context.Context, opts ExtendLVOptions) er
 	f.LVs[opts.Name] = lv
 	return nil
 }
+
+// IsLogicalVolumeCorrupted always returns false for the fake implementation.
+func (f *Fake) IsLogicalVolumeCorrupted(ctx context.Context, vgName string, lvName string) (bool, error) {
+	if f.Err != nil {
+		return false, f.Err
+	}
+	// For fake implementation, we never simulate corruption by default
+	return false, nil
+}

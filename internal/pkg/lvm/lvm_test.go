@@ -26,6 +26,7 @@ import (
 	"errors"
 	"fmt"
 	"math/big"
+	"os/exec"
 	"os/user"
 	"strings"
 	"testing"
@@ -554,4 +555,129 @@ func randString(n int) string {
 		b[i] = alphabet[bigIndex.Int64()]
 	}
 	return string(b)
+}
+
+func TestIsLogicalVolumeCorrupted(t *testing.T) {
+	// Can run only as root
+	if !isRoot() {
+		t.Skip("Skipping TestIsLogicalVolumeCorrupted as it requires root permissions.")
+	}
+
+	c := lvm.NewClient()
+	ctx := context.Background()
+
+	// Test with non-existent VG/LV
+	t.Run("NonExistentLogicalVolume", func(t *testing.T) {
+		corrupted, err := c.IsLogicalVolumeCorrupted(ctx, "nonexistent-vg", "nonexistent-lv")
+		if err != nil {
+			t.Fatalf("Expected no error for non-existent LV, got: %v", err)
+		}
+		if corrupted {
+			t.Fatalf("Expected non-existent LV to not be corrupted")
+		}
+	})
+
+	// Test with empty VG/LV names
+	t.Run("EmptyNames", func(t *testing.T) {
+		_, err := c.IsLogicalVolumeCorrupted(ctx, "", "")
+		if err == nil {
+			t.Fatalf("Expected error for empty VG/LV names")
+		}
+	})
+
+	// Create test devices and VG for actual corruption testing
+	device1, cleanup1, err := testUtils.CreateLoopDevWithSize(int64(GiB))
+	if err != nil {
+		t.Fatalf("Failed to create first test device: %v", err)
+	}
+	defer cleanup1()
+
+	device2, cleanup2, err := testUtils.CreateLoopDevWithSize(int64(GiB))
+	if err != nil {
+		t.Fatalf("Failed to create second test device: %v", err)
+	}
+	defer cleanup2()
+
+	devices := []string{device1, device2}
+
+	vgName := fmt.Sprintf("test-vg-%d", mustRandomInt(1000))
+	lvName := fmt.Sprintf("test-lv-%d", mustRandomInt(1000))
+
+	// Create PVs
+	for _, device := range devices {
+		err := c.CreatePhysicalVolume(ctx, lvm.CreatePVOptions{
+			Name: device,
+		})
+		if err != nil {
+			t.Fatalf("Failed to create PV on %s: %v", device, err)
+		}
+		defer func(device string) {
+			_ = c.RemovePhysicalVolume(ctx, lvm.RemovePVOptions{Name: device})
+		}(device)
+	}
+
+	// Create VG
+	err = c.CreateVolumeGroup(ctx, lvm.CreateVGOptions{
+		Name:    vgName,
+		PVNames: devices,
+	})
+	if err != nil {
+		t.Fatalf("Failed to create VG: %v", err)
+	}
+	defer func() {
+		_ = c.RemoveVolumeGroup(ctx, lvm.RemoveVGOptions{Name: vgName})
+	}()
+
+	// Create LV
+	_, err = c.CreateLogicalVolume(ctx, lvm.CreateLVOptions{
+		Name:   lvName,
+		VGName: vgName,
+		Size:   "100M",
+	})
+	if err != nil {
+		t.Fatalf("Failed to create LV: %v", err)
+	}
+	defer func() {
+		_ = c.RemoveLogicalVolume(ctx, lvm.RemoveLVOptions{
+			Name: fmt.Sprintf("%s/%s", vgName, lvName),
+		})
+	}()
+
+	// Test with healthy LV
+	t.Run("HealthyLogicalVolume", func(t *testing.T) {
+		corrupted, err := c.IsLogicalVolumeCorrupted(ctx, vgName, lvName)
+		if err != nil {
+			t.Fatalf("Failed to check LV corruption: %v", err)
+		}
+		if corrupted {
+			t.Fatalf("Expected healthy LV to not be corrupted")
+		}
+	})
+
+	// Simulate corruption by removing device symlink
+	t.Run("CorruptedLogicalVolume", func(t *testing.T) {
+		devicePath := lvm.ConstructLogicalVolumePath(vgName, lvName)
+		// Remove the device symlink to simulate corruption
+		err := exec.Command("rm", devicePath).Run()
+		if err != nil {
+			t.Fatalf("Failed to remove devicePath: %v", err)
+		}
+
+		// Now check if it's detected as corrupted
+		corrupted, err := c.IsLogicalVolumeCorrupted(ctx, vgName, lvName)
+		if err != nil {
+			t.Fatalf("Failed to check LV corruption: %v", err)
+		}
+		if !corrupted {
+			t.Fatalf("Expected LV with missing device symlink to be corrupted")
+		}
+	})
+}
+
+func mustRandomInt(max int) int {
+	n, err := rand.Int(rand.Reader, big.NewInt(int64(max)))
+	if err != nil {
+		panic(err)
+	}
+	return int(n.Int64())
 }

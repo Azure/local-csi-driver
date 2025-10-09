@@ -53,4 +53,8 @@ type Manager interface {
 	GetLogicalVolume(ctx context.Context, vgName string, lvName string) (*LogicalVolume, error)
 	// ExtendLogicalVolume extends the LV to the specified size.
 	ExtendLogicalVolume(ctx context.Context, opts ExtendLVOptions) error
+	// IsLogicalVolumeCorrupted checks if a logical volume is corrupted.
+	// A logical volume is considered corrupted if it exists in LVM metadata
+	// but the device file (/dev/<vg>/<lv>) does not exist.
+	IsLogicalVolumeCorrupted(ctx context.Context, vgName string, lvName string) (bool, error)
 }
