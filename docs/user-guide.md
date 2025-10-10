@@ -54,6 +54,13 @@ Save this YAML to a file (e.g., `storageclass.yaml`) and apply it:
 kubectl apply -f storageclass.yaml
 ```
 
+> [!TIP]
+> To maximize performance, local-csi-driver automatically stripes data
+> across all available local NVMe disks on a per-VM basis. Striping is a
+> technique where data is divided into small chunks and evenly written across
+> multiple disks simultaneously, which increases throughput and improves overall
+> I/O performance. This behavior is enabled by default and cannot be disabled.
+
 ## Creating a StatefulSet
 
 To create a StatefulSet using the StorageClass, apply the following YAML:
