@@ -56,6 +56,8 @@ spec:
         - --trace-service-id=$(POD_NAME)
         - --v={{ .Values.observability.driver.log.level }}
         - --enable-cleanup={{ .Values.cleanup.enabled }}
+        - --enable-raid={{ .Values.raid.enabled }}
+        - --raid-volume-group={{ .Values.raid.volumeGroup }}
         {{- if or .Values.webhook.enforceEphemeral.enabled .Values.webhook.hyperconverged.enabled }}
         - --webhook-service-name={{ .Values.name }}-webhook-service
         {{- end }}

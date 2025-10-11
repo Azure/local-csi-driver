@@ -37,6 +37,9 @@ const (
 	// volume groups created by the driver.
 	DefaultVolumeGroupTag = "local-csi"
 
+	// DefaultRaidVolumeGroup is the default volume group name for consolidated RAID devices.
+	DefaultRaidVolumeGroup = "nvme-raid"
+
 	// TopologyKey is the expected key used in the volume request to specify the
 	// node where the volume should be placed.
 	TopologyKey = "topology.localdisk.csi.acstor.io/node"
@@ -155,13 +158,15 @@ type LVM struct {
 	podName          string
 	nodeName         string
 	enableCleanup    bool
+	enableRaid       bool
+	raidVolumeGroup  string
 	probe            probe.Interface
 	lvm              lvm.Manager
 	tracer           trace.Tracer
 }
 
 // New creates a new LVM volume manager.
-func New(podName, nodeName, releaseNamespace string, enableCleanup bool, probe probe.Interface, lvmMgr lvm.Manager, tp trace.TracerProvider) (*LVM, error) {
+func New(podName, nodeName, releaseNamespace string, enableCleanup bool, probe probe.Interface, lvmMgr lvm.Manager, tp trace.TracerProvider, enableRaid bool, raidVolumeGroup string) (*LVM, error) {
 	if podName == "" {
 		return nil, fmt.Errorf("podName must not be empty")
 	}
@@ -171,11 +176,16 @@ func New(podName, nodeName, releaseNamespace string, enableCleanup bool, probe p
 	if releaseNamespace == "" {
 		return nil, fmt.Errorf("releaseNamespace must not be empty")
 	}
+	if raidVolumeGroup == "" {
+		raidVolumeGroup = DefaultRaidVolumeGroup
+	}
 	return &LVM{
 		podName:          podName,
 		nodeName:         nodeName,
 		releaseNamespace: releaseNamespace,
 		enableCleanup:    enableCleanup,
+		enableRaid:       enableRaid,
+		raidVolumeGroup:  raidVolumeGroup,
 		probe:            probe,
 		lvm:              lvmMgr,
 		tracer:           tp.Tracer("localdisk.csi.acstor.io/internal/csi/api/volume/lvm"),
@@ -425,8 +435,15 @@ func (l *LVM) EnsureVolume(ctx context.Context, volumeId string, capacity int64,
 		return 0, fmt.Errorf("%w: invalid capacity %d or limit %d", core.ErrInvalidArgument, capacity, limit)
 	}
 
+	// Determine the effective volume group name
+	effectiveVGName := id.VolumeGroup
+	if l.enableRaid {
+		effectiveVGName = l.raidVolumeGroup
+		log.V(2).Info("RAID mode enabled, using consolidated volume group", "raidVG", effectiveVGName)
+	}
+
 	// Check for existing volume on the node.
-	lv, err := l.lvm.GetLogicalVolume(ctx, id.VolumeGroup, id.LogicalVolume)
+	lv, err := l.lvm.GetLogicalVolume(ctx, effectiveVGName, id.LogicalVolume)
 	if lvm.IgnoreNotFound(err) != nil {
 		log.Error(err, "failed to check if volume exists")
 		return 0, err
@@ -434,7 +451,7 @@ func (l *LVM) EnsureVolume(ctx context.Context, volumeId string, capacity int64,
 
 	// Check if the logical volume is corrupted
 	if lv != nil {
-		corrupted, err := l.lvm.IsLogicalVolumeCorrupted(ctx, id.VolumeGroup, id.LogicalVolume)
+		corrupted, err := l.lvm.IsLogicalVolumeCorrupted(ctx, effectiveVGName, id.LogicalVolume)
 		if err != nil {
 			log.Error(err, "failed to check if logical volume is corrupted")
 			span.SetStatus(codes.Error, "failed to check if logical volume is corrupted")
@@ -443,24 +460,24 @@ func (l *LVM) EnsureVolume(ctx context.Context, volumeId string, capacity int64,
 		}
 
 		if corrupted {
-			log.V(1).Info("found corrupted logical volume, removing it", "vg", id.VolumeGroup, "lv", id.LogicalVolume) // Remove the corrupted LV
+			log.V(1).Info("found corrupted logical volume, removing it", "vg", effectiveVGName, "lv", id.LogicalVolume) // Remove the corrupted LV
 			opts := lvm.RemoveLVOptions{
-				Name: fmt.Sprintf("%s/%s", id.VolumeGroup, id.LogicalVolume),
+				Name: fmt.Sprintf("%s/%s", effectiveVGName, id.LogicalVolume),
 			}
 			if err := l.lvm.RemoveLogicalVolume(ctx, opts); err != nil {
-				log.Error(err, "failed to remove corrupted logical volume", "vg", id.VolumeGroup, "lv", id.LogicalVolume)
+				log.Error(err, "failed to remove corrupted logical volume", "vg", effectiveVGName, "lv", id.LogicalVolume)
 				span.SetStatus(codes.Error, "failed to remove corrupted logical volume")
 				span.RecordError(err)
 				recorder.Eventf(corev1.EventTypeWarning, failedToRemoveCorruptedLogicalVolume,
 					"Failed to remove corrupted logical volume %s/%s: %s",
-					id.VolumeGroup, id.LogicalVolume, err.Error())
-				return 0, fmt.Errorf("failed to remove corrupted logical volume %s/%s: %w", id.VolumeGroup, id.LogicalVolume, err)
+					effectiveVGName, id.LogicalVolume, err.Error())
+				return 0, fmt.Errorf("failed to remove corrupted logical volume %s/%s: %w", effectiveVGName, id.LogicalVolume, err)
 			}
 
-			log.V(1).Info("removed corrupted logical volume", "vg", id.VolumeGroup, "lv", id.LogicalVolume)
+			log.V(1).Info("removed corrupted logical volume", "vg", effectiveVGName, "lv", id.LogicalVolume)
 			recorder.Eventf(corev1.EventTypeNormal, removedCorruptedLogicalVolume,
 				"Successfully removed corrupted logical volume %s/%s",
-				id.VolumeGroup, id.LogicalVolume)
+				effectiveVGName, id.LogicalVolume)
 
 			// Set lv to nil so it will be recreated below
 			lv = nil
@@ -482,32 +499,33 @@ func (l *LVM) EnsureVolume(ctx context.Context, volumeId string, capacity int64,
 		return lvSize, nil
 	}
 
-	recorder.Eventf(corev1.EventTypeNormal, provisioningLogicalVolume, "Provisioning logical volume %s/%s", id.VolumeGroup, id.LogicalVolume)
+	recorder.Eventf(corev1.EventTypeNormal, provisioningLogicalVolume, "Provisioning logical volume %s/%s", effectiveVGName, id.LogicalVolume)
 	log.V(2).Info("no existing volume found, creating new one")
+
 	// Check if the volume group already exists and create if needed.
-	vg, err := l.lvm.GetVolumeGroup(ctx, id.VolumeGroup)
+	vg, err := l.lvm.GetVolumeGroup(ctx, effectiveVGName)
 	if lvm.IgnoreNotFound(err) != nil {
-		log.Error(err, "failed to check if volume group exists", "vg", id.VolumeGroup)
+		log.Error(err, "failed to check if volume group exists", "vg", effectiveVGName)
 		span.SetStatus(codes.Error, "failed to check if volume group exists")
 		span.RecordError(err)
-		recorder.Eventf(corev1.EventTypeWarning, provisioningLogicalVolumeFailed, "Failed to check if volume group exists for %s/%s: %s", id.VolumeGroup, id.LogicalVolume, err.Error())
+		recorder.Eventf(corev1.EventTypeWarning, provisioningLogicalVolumeFailed, "Failed to check if volume group exists for %s/%s: %s", effectiveVGName, id.LogicalVolume, err.Error())
 		return 0, fmt.Errorf("failed to check if volume group exists: %w", err)
 	}
 	if vg == nil {
 		log.V(2).Info("no existing volume group found, creating new one")
-		devices, err := l.EnsurePhysicalVolumes(ctx, id.VolumeGroup)
+		devices, err := l.EnsurePhysicalVolumes(ctx, effectiveVGName)
 		if err != nil {
 			log.Error(err, "failed to ensure physical volumes")
 			span.SetStatus(codes.Error, "failed to ensure physical volumes")
 			span.RecordError(err)
-			recorder.Eventf(corev1.EventTypeWarning, provisioningLogicalVolumeFailed, "Failed to ensure physical volumes created for %s/%s: %s", id.VolumeGroup, id.LogicalVolume, err.Error())
+			recorder.Eventf(corev1.EventTypeWarning, provisioningLogicalVolumeFailed, "Failed to ensure physical volumes created for %s/%s: %s", effectiveVGName, id.LogicalVolume, err.Error())
 			return 0, err
 		}
-		if vg, err = l.EnsureVolumeGroup(ctx, id.VolumeGroup, devices); err != nil {
+		if vg, err = l.EnsureVolumeGroup(ctx, effectiveVGName, devices); err != nil {
 			log.Error(err, "failed to ensure volume group")
 			span.SetStatus(codes.Error, "failed to ensure volume group")
 			span.RecordError(err)
-			recorder.Eventf(corev1.EventTypeWarning, provisioningLogicalVolumeFailed, "Failed to ensure volume group created for %s/%s: %s", id.VolumeGroup, id.LogicalVolume, err.Error())
+			recorder.Eventf(corev1.EventTypeWarning, provisioningLogicalVolumeFailed, "Failed to ensure volume group created for %s/%s: %s", effectiveVGName, id.LogicalVolume, err.Error())
 			return 0, err
 		}
 	}
@@ -530,7 +548,7 @@ func (l *LVM) EnsureVolume(ctx context.Context, volumeId string, capacity int64,
 		log.Error(err, "failed to create logical volume", "capacity", capacity)
 		span.SetStatus(codes.Error, "failed to create logical volume")
 		span.RecordError(err)
-		recorder.Eventf(corev1.EventTypeWarning, provisioningLogicalVolumeFailed, "Provisioning logical volume %s/%s failed: %s", id.VolumeGroup, id.LogicalVolume, err)
+		recorder.Eventf(corev1.EventTypeWarning, provisioningLogicalVolumeFailed, "Provisioning logical volume %s/%s failed: %s", effectiveVGName, id.LogicalVolume, err)
 		if errors.Is(err, lvm.ErrResourceExhausted) {
 			return 0, fmt.Errorf("failed to create logical volume: %w", core.ErrResourceExhausted)
 		}
@@ -543,9 +561,9 @@ func (l *LVM) EnsureVolume(ctx context.Context, volumeId string, capacity int64,
 
 	log.V(1).Info("created logical volume", "capacity", allocatedSize)
 	span.AddEvent("created logical volume", trace.WithAttributes(attribute.Int64("capacity", allocatedSize)))
-	recorder.Eventf(corev1.EventTypeNormal, provisionedLogicalVolume, "Successfully provisioned logical volume %s/%s", id.VolumeGroup, id.LogicalVolume)
+	recorder.Eventf(corev1.EventTypeNormal, provisionedLogicalVolume, "Successfully provisioned logical volume %s/%s", effectiveVGName, id.LogicalVolume)
 	if isMountOperation {
-		recorder.Eventf(corev1.EventTypeNormal, provisionedEmptyVolume, "A new empty volume was created during mount because the logical volume %s/%s was not found on the node. This may indicate the volume was not previously provisioned on this node.", id.VolumeGroup, id.LogicalVolume)
+		recorder.Eventf(corev1.EventTypeNormal, provisionedEmptyVolume, "A new empty volume was created during mount because the logical volume %s/%s was not found on the node. This may indicate the volume was not previously provisioned on this node.", effectiveVGName, id.LogicalVolume)
 	}
 	return allocatedSize, nil
 }

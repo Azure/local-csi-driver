@@ -36,7 +36,7 @@ func initTestLVM(ctrl *gomock.Controller) (*lvm.LVM, *probe.Mock, *lvmMgr.MockMa
 	t := telemetry.NewNoopTracerProvider()
 	p := probe.NewMock(ctrl)
 	lvmMgr := lvmMgr.NewMockManager(ctrl)
-	l, err := lvm.New(testPodName, testNodeName, testPodNamespace, true, p, lvmMgr, t)
+	l, err := lvm.New(testPodName, testNodeName, testPodNamespace, true, p, lvmMgr, t, false, "nvme-raid")
 	if err != nil {
 		return nil, nil, nil, err
 	}
@@ -101,7 +101,7 @@ func TestNewLVM(t *testing.T) {
 			if tc.mutate != nil {
 				tc.mutate(&test)
 			}
-			got, err := lvm.New(test.podName, test.nodeName, test.namespace, test.enableCleanup, test.probe, test.manager, test.tracer)
+			got, err := lvm.New(test.podName, test.nodeName, test.namespace, test.enableCleanup, test.probe, test.manager, test.tracer, false, "nvme-raid")
 			if (err != nil) != tc.expectErr {
 				t.Errorf("New(%q) error = %v, expectErr %v", tc.name, err, tc.expectErr)
 			}
@@ -822,6 +822,139 @@ func TestCleanup(t *testing.T) {
 			err = l.Cleanup(context.Background())
 			if !errors.Is(err, tc.expectedErr) {
 				t.Errorf("Cleanup() error = %v, expectErr %v", err, tc.expectedErr)
+			}
+		})
+	}
+}
+
+func TestEnsureVolumeWithRaid(t *testing.T) {
+	t.Parallel()
+
+	testVg := &lvmMgr.VolumeGroup{Name: "nvme-raid"}
+	testLv := &lvmMgr.LogicalVolume{Name: "lv", Size: lvmMgr.Int64String(convert.MiBToBytes(1024))}
+	devices := &block.DeviceList{Devices: []block.Device{{Path: "/dev/nvme1n1"}, {Path: "/dev/nvme2n1"}}}
+
+	tests := []struct {
+		name         string
+		enableRaid   bool
+		volumeGroup  string
+		volumeId     string
+		request      int64
+		expectLvm    func(*lvmMgr.MockManager)
+		expectProbe  func(*probe.Mock)
+		expectedErr  error
+		expectedVg   string
+	}{
+		{
+			name:        "RAID disabled - uses original volume group from volumeId",
+			enableRaid:  false,
+			volumeGroup: "nvme-raid",
+			volumeId:    "original-vg#lv",
+			request:     convert.MiBToBytes(1024),
+			expectLvm: func(m *lvmMgr.MockManager) {
+				m.EXPECT().GetLogicalVolume(gomock.Any(), "original-vg", "lv").Return(testLv, nil)
+				m.EXPECT().IsLogicalVolumeCorrupted(gomock.Any(), "original-vg", "lv").Return(false, nil)
+			},
+			expectedErr: nil,
+			expectedVg:  "original-vg",
+		},
+		{
+			name:        "RAID enabled - uses configured RAID volume group",
+			enableRaid:  true,
+			volumeGroup: "nvme-raid",
+			volumeId:    "original-vg#lv",
+			request:     convert.MiBToBytes(1024),
+			expectLvm: func(m *lvmMgr.MockManager) {
+				// Should use nvme-raid instead of original-vg
+				m.EXPECT().GetLogicalVolume(gomock.Any(), "nvme-raid", "lv").Return(testLv, nil)
+				m.EXPECT().IsLogicalVolumeCorrupted(gomock.Any(), "nvme-raid", "lv").Return(false, nil)
+			},
+			expectedErr: nil,
+			expectedVg:  "nvme-raid",
+		},
+		{
+			name:        "RAID enabled with custom volume group name",
+			enableRaid:  true,
+			volumeGroup: "custom-raid-vg",
+			volumeId:    "original-vg#lv",
+			request:     convert.MiBToBytes(1024),
+			expectLvm: func(m *lvmMgr.MockManager) {
+				// Should use custom-raid-vg instead of original-vg
+				m.EXPECT().GetLogicalVolume(gomock.Any(), "custom-raid-vg", "lv").Return(testLv, nil)
+				m.EXPECT().IsLogicalVolumeCorrupted(gomock.Any(), "custom-raid-vg", "lv").Return(false, nil)
+			},
+			expectedErr: nil,
+			expectedVg:  "custom-raid-vg",
+		},
+		{
+			name:        "RAID enabled - creates new volume in RAID volume group",
+			enableRaid:  true,
+			volumeGroup: "nvme-raid",
+			volumeId:    "original-vg#lv",
+			request:     convert.MiBToBytes(1024),
+			expectLvm: func(m *lvmMgr.MockManager) {
+				// Logical volume doesn't exist, should create in RAID VG
+				m.EXPECT().GetLogicalVolume(gomock.Any(), "nvme-raid", "lv").Return(nil, nil)
+				m.EXPECT().GetVolumeGroup(gomock.Any(), "nvme-raid").Return(testVg, nil)
+				m.EXPECT().CreateLogicalVolume(gomock.Any(), gomock.Any()).Return(convert.MiBToBytes(1024), nil)
+			},
+			expectedErr: nil,
+			expectedVg:  "nvme-raid",
+		},
+		{
+			name:        "RAID enabled - volume group doesn't exist, creates with available devices",
+			enableRaid:  true,
+			volumeGroup: "nvme-raid",
+			volumeId:    "original-vg#lv",
+			request:     convert.MiBToBytes(1024),
+			expectLvm: func(m *lvmMgr.MockManager) {
+				// Logical volume doesn't exist
+				m.EXPECT().GetLogicalVolume(gomock.Any(), "nvme-raid", "lv").Return(nil, nil)
+				// Volume group doesn't exist
+				m.EXPECT().GetVolumeGroup(gomock.Any(), "nvme-raid").Return(nil, lvmMgr.ErrNotFound)
+				// Should scan for devices and create PVs
+				m.EXPECT().GetPhysicalVolume(gomock.Any(), "/dev/nvme1n1").Return(&lvmMgr.PhysicalVolume{Name: "/dev/nvme1n1"}, nil)
+				m.EXPECT().GetPhysicalVolume(gomock.Any(), "/dev/nvme2n1").Return(&lvmMgr.PhysicalVolume{Name: "/dev/nvme2n1"}, nil)
+				// Create volume group with devices
+				m.EXPECT().GetVolumeGroup(gomock.Any(), "nvme-raid").Return(nil, lvmMgr.ErrNotFound)
+				m.EXPECT().CreateVolumeGroup(gomock.Any(), gomock.Any()).Return(nil)
+				m.EXPECT().GetVolumeGroup(gomock.Any(), "nvme-raid").Return(testVg, nil)
+				// Create logical volume
+				m.EXPECT().CreateLogicalVolume(gomock.Any(), gomock.Any()).Return(convert.MiBToBytes(1024), nil)
+			},
+			expectProbe: func(p *probe.Mock) {
+				p.EXPECT().ScanAvailableDevices(gomock.Any()).Return(devices, nil)
+			},
+			expectedErr: nil,
+			expectedVg:  "nvme-raid",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			// Create LVM instance with specific RAID configuration
+			ctrl := gomock.NewController(t)
+			tp := telemetry.NewNoopTracerProvider()
+			p := probe.NewMock(ctrl)
+			lvmMgr := lvmMgr.NewMockManager(ctrl)
+
+			l, err := lvm.New(testPodName, testNodeName, testPodNamespace, true, p, lvmMgr, tp, tt.enableRaid, tt.volumeGroup)
+			if err != nil {
+				t.Fatalf("failed to create LVM instance: %v", err)
+			}
+
+			if tt.expectLvm != nil {
+				tt.expectLvm(lvmMgr)
+			}
+			if tt.expectProbe != nil {
+				tt.expectProbe(p)
+			}
+
+			_, err = l.EnsureVolume(context.Background(), tt.volumeId, tt.request, 0, true)
+			if !errors.Is(err, tt.expectedErr) {
+				t.Errorf("EnsureVolume() error = %v, expectErr %v", err, tt.expectedErr)
 			}
 		})
 	}

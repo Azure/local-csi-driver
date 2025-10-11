@@ -89,6 +89,8 @@ func main() {
 	var printVersionAndExit bool
 	var eventRecorderEnabled bool
 	var enableCleanup bool
+	var enableRaid bool
+	var raidVolumeGroup string
 	flag.StringVar(&nodeName, "node-name", "",
 		"The name of the node this agent is running on.")
 	flag.StringVar(&podName, "pod-name", "",
@@ -131,6 +133,8 @@ func main() {
 	flag.BoolVar(&eventRecorderEnabled, "event-recorder-enabled", true,
 		"If enabled, the driver will use the event recorder to record events. This is useful for debugging and monitoring purposes.")
 	flag.BoolVar(&enableCleanup, "enable-cleanup", true, "If enabled, the driver will clean up the LVM volume groups and persistent volumes when not in use")
+	flag.BoolVar(&enableRaid, "enable-raid", true, "If enabled, the driver will consolidate multiple NVMe devices into a single RAID0 volume group")
+	flag.StringVar(&raidVolumeGroup, "raid-volume-group", "nvme-raid", "The name of the volume group to use when consolidating multiple NVMe devices with RAID")
 
 	// Initialize logger flagsconfig.
 	logConfig := textlogger.NewConfig(textlogger.VerbosityFlagName("v"))
@@ -308,7 +312,7 @@ func main() {
 	//
 	// Volume client is an abstraction that understands csi requests and
 	// responses and how to implement them for a storage type.
-	volumeClient, err := lvm.New(podName, nodeName, namespace, enableCleanup, deviceProbe, lvmMgr, tp)
+	volumeClient, err := lvm.New(podName, nodeName, namespace, enableCleanup, deviceProbe, lvmMgr, tp, enableRaid, raidVolumeGroup)
 	if err != nil {
 		logAndExit(err, "unable to create lvm volume client")
 	}

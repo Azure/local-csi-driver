@@ -46,6 +46,13 @@ cleanup:
   # Cleanup volume groups and physical volumes on pod termination if logical volume are not in use.
   enabled: true
 
+# RAID configuration for consolidating multiple NVMe devices.
+raid:
+  # Enable RAID consolidation of multiple NVMe devices into a single volume group.
+  enabled: true
+  # Name of the volume group to use when consolidating multiple NVMe devices with RAID.
+  volumeGroup: nvme-raid
+
 # Webhook configuration.
 webhook:
   enforceEphemeral:

@@ -295,7 +295,7 @@ func TestLVM_Create(t *testing.T) {
 			p := probe.NewFake([]string{"device1", "device2"}, nil)
 			lvmMgr := lvmMgr.NewFake()
 
-			l, err := lvm.New("podname", "nodename", "default", true, p, lvmMgr, tp)
+			l, err := lvm.New("podname", "nodename", "default", true, p, lvmMgr, tp, false, "nvme-raid")
 			if err != nil {
 				t.Fatalf("failed to create LVM instance: %v", err)
 			}
