@@ -18,6 +18,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	"local-csi-driver/internal/csi/core/lvm"
+	"local-csi-driver/internal/csi/mounter"
 	lvmMgr "local-csi-driver/internal/pkg/lvm"
 )
 
@@ -33,6 +34,7 @@ type LVMOrphanCleanup struct {
 	nodeID                   string
 	lvmManager               lvmMgr.Manager
 	lvmCore                  *lvm.LVM
+	mounter                  mounter.Interface
 	selectedNodeAnnotation   string
 	selectedInitialNodeParam string
 
@@ -55,6 +57,7 @@ func NewLVMOrphanCleanup(
 	selectedInitialNodeParam string,
 	lvmManager lvmMgr.Manager,
 	lvmCore *lvm.LVM,
+	mounter mounter.Interface,
 	config LVMOrphanCleanupConfig,
 ) *LVMOrphanCleanup {
 	// Set defaults if not specified
@@ -71,6 +74,7 @@ func NewLVMOrphanCleanup(
 		selectedInitialNodeParam: selectedInitialNodeParam,
 		lvmManager:               lvmManager,
 		lvmCore:                  lvmCore,
+		mounter:                  mounter,
 		reconcileInterval:        config.ReconcileInterval,
 	}
 }
@@ -125,34 +129,40 @@ func (r *LVMOrphanCleanup) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 
 // shouldCleanupVolume checks if a volume should be cleaned up using field indexing
 func (r *LVMOrphanCleanup) shouldCleanupVolume(ctx context.Context, volumeID string) (bool, string, error) {
+	log := log.FromContext(ctx).WithName("lvm-orphan-cleanup").WithValues("volumeID", volumeID)
 	// Use field indexing to find PVs with the specific volume handle
 	pvList := &corev1.PersistentVolumeList{}
 
 	// Query using the field index for direct lookup by volume handle
 	listOpts := client.MatchingFields{CSIVolumeHandleIndex: volumeID}
 
+	log.V(2).Info("Querying for PVs with matching volume handle", "volumeHandle", volumeID)
 	if err := r.List(ctx, pvList, listOpts); err != nil {
 		return false, "", fmt.Errorf("failed to list PersistentVolumes: %w", err)
 	}
 
 	// If no PVs found with this volume handle, volume is orphaned
 	if len(pvList.Items) == 0 {
-		return true, "no corresponding PV found", nil
+		log.V(2).Info("No PV found with matching volume handle", "volumeHandle", volumeID)
+		return true, "no PV with matching volume handle found", nil
 	}
 
 	// Check each matching PV (there should typically be only one)
 	for _, pv := range pvList.Items {
 		// Verify this is our CSI driver (additional safety check)
 		if pv.Spec.CSI == nil || pv.Spec.CSI.Driver != lvm.DriverName {
+			log.V(2).Info("Skipping PV from different CSI driver", "volumeHandle", volumeID)
 			continue
 		}
 
 		// Found corresponding PV - check if it has node annotation mismatch
 		if r.hasNodeAnnotationMismatch(&pv) {
+			log.V(2).Info("PV has node annotation mismatch", "pv", pv.Name, "selectedNode", pv.Annotations[r.selectedNodeAnnotation])
 			return true, "node annotation mismatch", nil
 		}
 
 		// Volume has a corresponding PV with correct node annotations
+		log.V(2).Info("Volume has corresponding PV with matching node annotations", "pv", pv.Name)
 		return false, "", nil
 	}
 
@@ -164,17 +174,18 @@ func (r *LVMOrphanCleanup) shouldCleanupVolume(ctx context.Context, volumeID str
 // This is the same logic as in the PV garbage collection controller
 func (r *LVMOrphanCleanup) hasNodeAnnotationMismatch(pv *corev1.PersistentVolume) bool {
 	// Check selected-node annotation
-	if selectedNode, exists := pv.Annotations[r.selectedNodeAnnotation]; exists {
+	selectedNode, exists := pv.Annotations[r.selectedNodeAnnotation]
+	if exists {
 		if !strings.EqualFold(selectedNode, r.nodeID) {
 			return true
 		}
-	}
-
-	// Check initial node parameter in CSI volume attributes
-	if pv.Spec.CSI != nil && pv.Spec.CSI.VolumeAttributes != nil {
-		if initialNode, exists := pv.Spec.CSI.VolumeAttributes[r.selectedInitialNodeParam]; exists {
-			if !strings.EqualFold(initialNode, r.nodeID) {
-				return true
+	} else {
+		// Check initial node parameter in CSI volume attributes
+		if pv.Spec.CSI != nil && pv.Spec.CSI.VolumeAttributes != nil {
+			if initialNode, exists := pv.Spec.CSI.VolumeAttributes[r.selectedInitialNodeParam]; exists {
+				if !strings.EqualFold(initialNode, r.nodeID) {
+					return true
+				}
 			}
 		}
 	}
@@ -219,6 +230,20 @@ func (r *LVMOrphanCleanup) deleteOrphanedVolume(ctx context.Context, volumeID st
 		corev1.EventTypeNormal, "CleaningUpOrphanedLV",
 		"Cleaning up orphaned LVM logical volume %s on node %s (no corresponding PV found)", volumeID, r.nodeID)
 
+	// Get device path and unmount before deletion
+	devicePath, err := r.lvmCore.GetNodeDevicePath(volumeID)
+	if err != nil {
+		log.V(2).Info("Could not get device path, proceeding with deletion", "volumeID", volumeID, "error", err.Error())
+	} else if devicePath != "" && r.mounter != nil {
+		log.V(2).Info("Unmounting volume before deletion", "devicePath", devicePath)
+		if err := r.mounter.CleanupStagingDir(ctx, devicePath); err != nil {
+			log.Error(err, "Failed to unmount device path, proceeding with deletion anyway", "devicePath", devicePath)
+			// Continue with deletion even if unmount fails
+		} else {
+			log.V(2).Info("Successfully unmounted device", "devicePath", devicePath)
+		}
+	}
+
 	// Remove the logical volume
 	removeOpts := lvmMgr.RemoveLVOptions{Name: lvmVolumeID}
 	if err := r.lvmManager.RemoveLogicalVolume(ctx, removeOpts); err != nil {
@@ -245,14 +270,19 @@ func (r *LVMOrphanCleanup) deleteOrphanedVolume(ctx context.Context, volumeID st
 // Start implements the manager.Runnable interface for periodic execution
 func (r *LVMOrphanCleanup) Start(ctx context.Context) error {
 	log := log.FromContext(ctx).WithName("lvm-orphan-cleanup")
-	log.Info("Starting LVM orphan cleanup controller", "interval", r.reconcileInterval)
+	log.Info("Starting LVM orphan cleanup controller", "interval", r.reconcileInterval, "nextPeriodicRun", time.Now().Add(r.reconcileInterval))
 
 	ticker := time.NewTicker(r.reconcileInterval)
 	defer ticker.Stop()
 
+	log.Info("Created periodic ticker", "interval", r.reconcileInterval)
+
 	// Run initial cleanup
+	log.Info("Running initial LVM orphan cleanup")
 	if _, err := r.Reconcile(ctx, ctrl.Request{}); err != nil {
 		log.Error(err, "Initial cleanup failed")
+	} else {
+		log.Info("Initial cleanup completed successfully")
 	}
 
 	// Run periodic cleanup
@@ -262,6 +292,7 @@ func (r *LVMOrphanCleanup) Start(ctx context.Context) error {
 			log.Info("Stopping LVM orphan cleanup controller")
 			return nil
 		case <-ticker.C:
+			log.Info("Running periodic LVM orphan cleanup", "interval", r.reconcileInterval, "nextRun", time.Now().Add(r.reconcileInterval))
 			if _, err := r.Reconcile(ctx, ctrl.Request{}); err != nil {
 				log.Error(err, "Periodic cleanup failed")
 			}
@@ -295,6 +326,8 @@ func (r *LVMOrphanCleanup) setupFieldIndexing(mgr ctrl.Manager) error {
 
 			// Only index PVs that use our CSI driver
 			if pv.Spec.CSI != nil && pv.Spec.CSI.Driver == lvm.DriverName {
+				log := log.FromContext(context.Background()).WithName("lvm-orphan-cleanup")
+				log.V(1).Info("Indexing PV by CSI volume handle", "volumeHandle", pv.Spec.CSI.VolumeHandle)
 				return []string{pv.Spec.CSI.VolumeHandle}
 			}
 

@@ -46,6 +46,11 @@ func (m *mockLVMVolumeManager) GetNodeDevicePath(volumeID string) (string, error
 	return "", nil
 }
 
+func (m *mockLVMVolumeManager) UnmountVolume(ctx context.Context, devicePath string) error {
+	// Mock implementation - just return success
+	return nil
+}
+
 func TestPVGarbageCollector_hasNodeAnnotationMismatch(t *testing.T) {
 	scheme := runtime.NewScheme()
 	_ = corev1.AddToScheme(scheme)

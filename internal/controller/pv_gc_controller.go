@@ -20,6 +20,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
 
 	"local-csi-driver/internal/csi/core/lvm"
+	"local-csi-driver/internal/csi/mounter"
 	"local-csi-driver/internal/pkg/events"
 	lvmMgr "local-csi-driver/internal/pkg/lvm"
 )
@@ -44,12 +45,15 @@ type LVMVolumeManager interface {
 	GetVolumeName(volumeID string) (string, error)
 	// GetNodeDevicePath returns the device path for a volume ID
 	GetNodeDevicePath(volumeID string) (string, error)
+	// UnmountVolume unmounts a volume at the specified device path
+	UnmountVolume(ctx context.Context, devicePath string) error
 }
 
 // lvmVolumeManagerAdapter adapts the LVM core interface to our controller needs
 type lvmVolumeManagerAdapter struct {
 	lvmCore    *lvm.LVM
 	lvmManager lvmMgr.Manager
+	mounter    mounter.Interface
 }
 
 func (a *lvmVolumeManagerAdapter) DeleteVolume(ctx context.Context, volumeID string) error {
@@ -85,6 +89,10 @@ func (a *lvmVolumeManagerAdapter) GetNodeDevicePath(volumeID string) (string, er
 	return a.lvmCore.GetNodeDevicePath(volumeID)
 }
 
+func (a *lvmVolumeManagerAdapter) UnmountVolume(ctx context.Context, devicePath string) error {
+	return a.mounter.CleanupStagingDir(ctx, devicePath)
+}
+
 // NewPVGarbageCollector creates a new PVGarbageCollector
 func NewPVGarbageCollector(
 	client client.Client,
@@ -95,6 +103,7 @@ func NewPVGarbageCollector(
 	selectedInitialNodeParam string,
 	lvmCore *lvm.LVM,
 	lvmManager lvmMgr.Manager,
+	mounter mounter.Interface,
 ) *PVGarbageCollector {
 	return &PVGarbageCollector{
 		Client:                   client,
@@ -103,13 +112,15 @@ func NewPVGarbageCollector(
 		nodeID:                   nodeID,
 		selectedNodeAnnotation:   selectedNodeAnnotation,
 		selectedInitialNodeParam: selectedInitialNodeParam,
-		lvmManager:               &lvmVolumeManagerAdapter{lvmCore: lvmCore, lvmManager: lvmManager},
+		lvmManager:               &lvmVolumeManagerAdapter{lvmCore: lvmCore, lvmManager: lvmManager, mounter: mounter},
 	}
 }
 
 // Reconcile implements the controller-runtime Reconciler interface
 func (r *PVGarbageCollector) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	log := log.FromContext(ctx).WithName("pv-garbage-collector").WithValues("pv", req.NamespacedName.Name)
+
+	log.V(1).Info("PV garbage collector reconcile triggered")
 
 	// Get the PersistentVolume
 	pv := &corev1.PersistentVolume{}
@@ -167,6 +178,17 @@ func (r *PVGarbageCollector) Reconcile(ctx context.Context, req ctrl.Request) (c
 		r.recorder.Eventf(pv, corev1.EventTypeNormal, "CleaningUpOrphanedVolume",
 			"Cleaning up LVM volume %s from node %s due to node annotation mismatch", volumeID, r.nodeID)
 
+		// Unmount the volume before deletion
+		if devicePath != "" {
+			log.V(2).Info("Unmounting volume before deletion", "devicePath", devicePath)
+			if err := r.lvmManager.UnmountVolume(ctx, devicePath); err != nil {
+				log.Error(err, "Failed to unmount device path, proceeding with deletion anyway", "devicePath", devicePath)
+				// Continue with deletion even if unmount fails
+			} else {
+				log.V(2).Info("Successfully unmounted device", "devicePath", devicePath)
+			}
+		}
+
 		// Delete the LVM volume
 		if err := r.lvmManager.DeleteVolume(ctx, volumeID); err != nil {
 			log.Error(err, "Failed to delete orphaned LVM volume", "volumeID", volumeID)
@@ -187,17 +209,18 @@ func (r *PVGarbageCollector) Reconcile(ctx context.Context, req ctrl.Request) (c
 // hasNodeAnnotationMismatch checks if the PV's node annotations don't match the current node
 func (r *PVGarbageCollector) hasNodeAnnotationMismatch(pv *corev1.PersistentVolume) bool {
 	// Check selected-node annotation
-	if selectedNode, exists := pv.Annotations[r.selectedNodeAnnotation]; exists {
+	selectedNode, exists := pv.Annotations[r.selectedNodeAnnotation]
+	if exists {
 		if !strings.EqualFold(selectedNode, r.nodeID) {
 			return true
 		}
-	}
-
-	// Check initial node parameter in CSI volume attributes
-	if pv.Spec.CSI != nil && pv.Spec.CSI.VolumeAttributes != nil {
-		if initialNode, exists := pv.Spec.CSI.VolumeAttributes[r.selectedInitialNodeParam]; exists {
-			if !strings.EqualFold(initialNode, r.nodeID) {
-				return true
+	} else {
+		// Check initial node parameter in CSI volume attributes
+		if pv.Spec.CSI != nil && pv.Spec.CSI.VolumeAttributes != nil {
+			if initialNode, exists := pv.Spec.CSI.VolumeAttributes[r.selectedInitialNodeParam]; exists {
+				if !strings.EqualFold(initialNode, r.nodeID) {
+					return true
+				}
 			}
 		}
 	}
@@ -240,8 +263,34 @@ func (r *PVGarbageCollector) SetupWithManager(mgr ctrl.Manager) error {
 			if !ok {
 				return false
 			}
+
+			// Add debug logging
+			logger := log.Log.WithName("pv-gc-predicate").WithValues("pv", pv.Name)
+
 			// Only process PVs managed by our CSI driver
-			return pv.Spec.CSI != nil && pv.Spec.CSI.Driver == lvm.DriverName
+			isOurDriver := pv.Spec.CSI != nil && pv.Spec.CSI.Driver == lvm.DriverName
+			if isOurDriver {
+				// Also check if this is an annotation change that we care about
+				oldPV, oldOk := e.ObjectOld.(*corev1.PersistentVolume)
+				if oldOk {
+					oldSelectedNode := oldPV.Annotations["localdisk.csi.acstor.io/selected-node"]
+					newSelectedNode := pv.Annotations["localdisk.csi.acstor.io/selected-node"]
+					if oldSelectedNode != newSelectedNode && oldSelectedNode == r.nodeID {
+						logger.V(1).Info("Detected selected-node annotation change",
+							"old", oldSelectedNode, "new", newSelectedNode)
+						return true
+					}
+				}
+			} else {
+				logger.V(3).Info("Ignoring update event - not our CSI driver", "driver", func() string {
+					if pv.Spec.CSI != nil {
+						return pv.Spec.CSI.Driver
+					}
+					return "nil"
+				}())
+			}
+
+			return false
 		},
 		DeleteFunc: func(e event.DeleteEvent) bool {
 			// Don't reconcile on delete events - PV is being removed anyway

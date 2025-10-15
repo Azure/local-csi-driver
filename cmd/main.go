@@ -34,6 +34,7 @@ import (
 	"local-csi-driver/internal/controller"
 	driver "local-csi-driver/internal/csi"
 	"local-csi-driver/internal/csi/core/lvm"
+	"local-csi-driver/internal/csi/mounter"
 	"local-csi-driver/internal/csi/server"
 	"local-csi-driver/internal/pkg/block"
 	"local-csi-driver/internal/pkg/events"
@@ -181,6 +182,9 @@ func main() {
 
 	ctx, span := tp.Tracer("main").Start(ctx, "setup")
 	defer span.End()
+
+	// Create mounter for volume operations
+	mounterInstance := mounter.New(tp)
 
 	// if the enable-http2 flag is false (the default), http/2 should be disabled
 	// due to its vulnerabilities. More specifically, disabling http/2 will
@@ -349,6 +353,7 @@ func main() {
 			driver.SelectedInitialNodeParam,
 			volumeClient,
 			lvmMgr,
+			mounterInstance,
 		)
 
 		if err = pvGCController.SetupWithManager(mgr); err != nil {
@@ -370,6 +375,7 @@ func main() {
 			driver.SelectedInitialNodeParam,
 			lvmMgr,
 			volumeClient,
+			mounterInstance,
 			controller.LVMOrphanCleanupConfig{
 				ReconcileInterval: lvmOrphanCleanupInterval,
 			},

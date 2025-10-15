@@ -18,6 +18,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	"local-csi-driver/internal/csi/core/lvm"
+	"local-csi-driver/internal/csi/mounter"
 	lvmMgr "local-csi-driver/internal/pkg/lvm"
 )
 
@@ -106,7 +107,7 @@ func TestLVMOrphanCleanup_shouldCleanupVolume(t *testing.T) {
 			},
 			nodeID:                "node1",
 			expectedShouldCleanup: true,
-			expectedReason:        "no corresponding PV found",
+			expectedReason:        "no PV with matching volume handle found",
 		},
 		{
 			name:     "volume with matching PV and correct node",
@@ -302,6 +303,9 @@ func TestLVMOrphanCleanup_Reconcile(t *testing.T) {
 		t.Fatalf("Failed to create LV: %v", err)
 	}
 
+	// Create a mock mounter for the test - we'll set it to nil and handle the nil check in the code
+	var mockMounter mounter.Interface
+
 	cleanup := &LVMOrphanCleanup{
 		Client:                   client,
 		scheme:                   scheme,
@@ -311,6 +315,7 @@ func TestLVMOrphanCleanup_Reconcile(t *testing.T) {
 		selectedInitialNodeParam: "localdisk.csi.acstor.io/selected-initial-node",
 		lvmManager:               testLVM,
 		lvmCore:                  nil, // Not needed for this test
+		mounter:                  mockMounter,
 		reconcileInterval:        time.Minute,
 	}
 
