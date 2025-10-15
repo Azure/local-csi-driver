@@ -197,7 +197,7 @@ spec:
         args:
         - --csi-address=/csi/csi.sock
         - --timeout=240s
-        - --handle-volume-inuse-error=true
+        - --handle-volume-inuse-error=false
         - --http-endpoint=:{{ .Values.observability.csiResizer.http.port }}
         - --v={{ .Values.observability.csiResizer.log.level }}
         env:
