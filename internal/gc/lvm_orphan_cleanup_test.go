@@ -1,11 +1,10 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-package controller
+package gc
 
 import (
 	"context"
-	"strings"
 	"testing"
 	"time"
 
@@ -18,66 +17,10 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	"local-csi-driver/internal/csi/core/lvm"
-	"local-csi-driver/internal/csi/mounter"
 	lvmMgr "local-csi-driver/internal/pkg/lvm"
 )
 
-// testLVMManager wraps the existing fake LVM manager to track deletions and add filtering for testing
-type testLVMManager struct {
-	*lvmMgr.Fake
-	deletedLVs []string
-	vgToLVs    map[string][]string // Track which LVs belong to which VGs
-}
-
-func (m *testLVMManager) RemoveLogicalVolume(ctx context.Context, opts lvmMgr.RemoveLVOptions) error {
-	m.deletedLVs = append(m.deletedLVs, opts.Name)
-	return m.Fake.RemoveLogicalVolume(ctx, opts)
-}
-
-func (m *testLVMManager) CreateLogicalVolume(ctx context.Context, opts lvmMgr.CreateLVOptions) (int64, error) {
-	size, err := m.Fake.CreateLogicalVolume(ctx, opts)
-	if err != nil {
-		return 0, err
-	}
-
-	// Track the relationship between VG and LV
-	vgName := opts.VGName
-	if m.vgToLVs == nil {
-		m.vgToLVs = make(map[string][]string)
-	}
-	m.vgToLVs[vgName] = append(m.vgToLVs[vgName], opts.Name)
-
-	return size, nil
-}
-
-func (m *testLVMManager) ListLogicalVolumes(ctx context.Context, opts *lvmMgr.ListLVOptions) ([]lvmMgr.LogicalVolume, error) {
-	// If there's a select option for VG filtering, handle it
-	if opts != nil && opts.Select != "" {
-		// Parse "vg_name=<name>" from select
-		if strings.HasPrefix(opts.Select, "vg_name=") {
-			vgName := strings.TrimPrefix(opts.Select, "vg_name=")
-
-			// Get LVs for this VG
-			lvNames, exists := m.vgToLVs[vgName]
-			if !exists {
-				return []lvmMgr.LogicalVolume{}, nil
-			}
-
-			var filteredLVs []lvmMgr.LogicalVolume
-			for _, lvName := range lvNames {
-				if lv, ok := m.Fake.LVs[lvName]; ok {
-					filteredLVs = append(filteredLVs, lv)
-				}
-			}
-			return filteredLVs, nil
-		}
-	}
-
-	// Default behavior - return all LVs
-	return m.Fake.ListLogicalVolumes(ctx, opts)
-}
-
-func TestLVMOrphanCleanup_shouldCleanupVolume(t *testing.T) {
+func TestLVMOrphanScanner_shouldCleanupVolume(t *testing.T) {
 	scheme := runtime.NewScheme()
 	_ = corev1.AddToScheme(scheme)
 
@@ -207,7 +150,7 @@ func TestLVMOrphanCleanup_shouldCleanupVolume(t *testing.T) {
 				Build()
 			recorder := record.NewFakeRecorder(10)
 
-			cleanup := &LVMOrphanCleanup{
+			cleanup := &LVMOrphanScanner{
 				Client:                   client,
 				scheme:                   scheme,
 				recorder:                 recorder,
@@ -234,14 +177,14 @@ func TestLVMOrphanCleanup_shouldCleanupVolume(t *testing.T) {
 	}
 }
 
-func TestLVMOrphanCleanup_Reconcile(t *testing.T) {
+func TestLVMOrphanScanner_Reconcile(t *testing.T) {
 	scheme := runtime.NewScheme()
 	_ = corev1.AddToScheme(scheme)
 
 	// Create test PV that exists but has node mismatch
 	testPV := &corev1.PersistentVolume{
 		ObjectMeta: metav1.ObjectMeta{
-			Name: "test-pv",
+			Name: "test-volume",
 			Annotations: map[string]string{
 				"localdisk.csi.acstor.io/selected-node": "node2", // Different from controller's nodeID
 			},
@@ -278,12 +221,9 @@ func TestLVMOrphanCleanup_Reconcile(t *testing.T) {
 		t.Fatalf("Failed to create VG: %v", err)
 	}
 
-	// Wrap it to track deletions and add VG filtering
-	testLVM := &testLVMManager{
-		Fake:       fakeLVM,
-		deletedLVs: make([]string, 0),
-		vgToLVs:    make(map[string][]string),
-	}
+	// Create and configure the mock LVM manager
+	testLVM := NewMockLVMVolumeManager()
+	testLVM.Fake = fakeLVM
 
 	// Create logical volumes through the wrapper to track VG associations
 	_, err = testLVM.CreateLogicalVolume(context.Background(), lvmMgr.CreateLVOptions{
@@ -303,10 +243,7 @@ func TestLVMOrphanCleanup_Reconcile(t *testing.T) {
 		t.Fatalf("Failed to create LV: %v", err)
 	}
 
-	// Create a mock mounter for the test - we'll set it to nil and handle the nil check in the code
-	var mockMounter mounter.Interface
-
-	cleanup := &LVMOrphanCleanup{
+	cleanup := &LVMOrphanScanner{
 		Client:                   client,
 		scheme:                   scheme,
 		recorder:                 recorder,
@@ -314,8 +251,6 @@ func TestLVMOrphanCleanup_Reconcile(t *testing.T) {
 		selectedNodeAnnotation:   "localdisk.csi.acstor.io/selected-node",
 		selectedInitialNodeParam: "localdisk.csi.acstor.io/selected-initial-node",
 		lvmManager:               testLVM,
-		lvmCore:                  nil, // Not needed for this test
-		mounter:                  mockMounter,
 		reconcileInterval:        time.Minute,
 	}
 
@@ -332,17 +267,17 @@ func TestLVMOrphanCleanup_Reconcile(t *testing.T) {
 
 	// Verify that both volumes were deleted
 	expectedDeleted := []string{
-		"containerstorage/test-volume",     // Node mismatch
-		"containerstorage/orphaned-volume", // No corresponding PV
+		"containerstorage#test-volume",     // Node mismatch
+		"containerstorage#orphaned-volume", // No corresponding PV
 	}
 
-	if len(testLVM.deletedLVs) != 2 {
-		t.Errorf("Expected 2 volumes to be deleted, got %d", len(testLVM.deletedLVs))
+	if len(testLVM.DeletedLVs) != 2 {
+		t.Errorf("Expected 2 volumes to be deleted, got %v", testLVM.DeletedLVs)
 	}
 
 	for _, expected := range expectedDeleted {
 		found := false
-		for _, deleted := range testLVM.deletedLVs {
+		for _, deleted := range testLVM.DeletedLVs {
 			if deleted == expected {
 				found = true
 				break

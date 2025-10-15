@@ -31,11 +31,11 @@ import (
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
 
-	"local-csi-driver/internal/controller"
 	driver "local-csi-driver/internal/csi"
 	"local-csi-driver/internal/csi/core/lvm"
 	"local-csi-driver/internal/csi/mounter"
 	"local-csi-driver/internal/csi/server"
+	"local-csi-driver/internal/gc"
 	"local-csi-driver/internal/pkg/block"
 	"local-csi-driver/internal/pkg/events"
 	lvmMgr "local-csi-driver/internal/pkg/lvm"
@@ -344,7 +344,7 @@ func main() {
 	// Setup PV garbage collection controller to clean up orphaned LVM volumes
 	// when PV node annotations don't match the current node
 	if enablePVGarbageCollection {
-		pvGCController := controller.NewPVGarbageCollector(
+		pvGCController := gc.NewPVFailoverReconciler(
 			mgr.GetClient(),
 			mgr.GetScheme(),
 			recorder,
@@ -366,7 +366,7 @@ func main() {
 
 	// Setup LVM orphan cleanup controller for periodic scanning and cleanup
 	if enableLVMOrphanCleanup {
-		lvmOrphanCleanup := controller.NewLVMOrphanCleanup(
+		lvmOrphanCleanup := gc.NewLVMOrphanScanner(
 			mgr.GetClient(),
 			mgr.GetScheme(),
 			recorder,
@@ -376,7 +376,7 @@ func main() {
 			lvmMgr,
 			volumeClient,
 			mounterInstance,
-			controller.LVMOrphanCleanupConfig{
+			gc.LVMOrphanScannerConfig{
 				ReconcileInterval: lvmOrphanCleanupInterval,
 			},
 		)

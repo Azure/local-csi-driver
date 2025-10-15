@@ -1,12 +1,10 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-package controller
+package gc
 
 import (
 	"context"
-	"fmt"
-	"strings"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
@@ -25,9 +23,9 @@ import (
 	lvmMgr "local-csi-driver/internal/pkg/lvm"
 )
 
-// PVGarbageCollector monitors PersistentVolumes for node annotation mismatches
+// PVFailoverReconciler monitors PersistentVolumes for node annotation mismatches
 // and cleans up associated LVM volumes when the volume is no longer on the correct node.
-type PVGarbageCollector struct {
+type PVFailoverReconciler struct {
 	client.Client
 	scheme                   *runtime.Scheme
 	recorder                 record.EventRecorder
@@ -37,64 +35,8 @@ type PVGarbageCollector struct {
 	lvmManager               LVMVolumeManager
 }
 
-// LVMVolumeManager provides an interface for LVM volume operations
-type LVMVolumeManager interface {
-	// DeleteVolume deletes an LVM logical volume by volume ID
-	DeleteVolume(ctx context.Context, volumeID string) error
-	// GetVolumeName extracts the volume name from a volume ID
-	GetVolumeName(volumeID string) (string, error)
-	// GetNodeDevicePath returns the device path for a volume ID
-	GetNodeDevicePath(volumeID string) (string, error)
-	// UnmountVolume unmounts a volume at the specified device path
-	UnmountVolume(ctx context.Context, devicePath string) error
-}
-
-// lvmVolumeManagerAdapter adapts the LVM core interface to our controller needs
-type lvmVolumeManagerAdapter struct {
-	lvmCore    *lvm.LVM
-	lvmManager lvmMgr.Manager
-	mounter    mounter.Interface
-}
-
-func (a *lvmVolumeManagerAdapter) DeleteVolume(ctx context.Context, volumeID string) error {
-	// Parse the volume ID to get volume group and logical volume names
-	// Volume ID format is: <volume-group>#<logical-volume>
-	vgName, lvName, err := parseVolumeID(volumeID)
-	if err != nil {
-		return fmt.Errorf("failed to parse volume ID %s: %w", volumeID, err)
-	}
-
-	// Format volume ID for LVM operations (vg/lv format)
-	lvmVolumeID := fmt.Sprintf("%s/%s", vgName, lvName)
-
-	// Use the LVM manager to remove the logical volume directly
-	removeOpts := lvmMgr.RemoveLVOptions{Name: lvmVolumeID}
-
-	if err := a.lvmManager.RemoveLogicalVolume(ctx, removeOpts); err != nil {
-		// If the volume doesn't exist, consider it a success
-		if lvmMgr.IgnoreNotFound(err) == nil {
-			return nil
-		}
-		return fmt.Errorf("failed to remove logical volume %s: %w", lvmVolumeID, err)
-	}
-
-	return nil
-}
-
-func (a *lvmVolumeManagerAdapter) GetVolumeName(volumeID string) (string, error) {
-	return a.lvmCore.GetVolumeName(volumeID)
-}
-
-func (a *lvmVolumeManagerAdapter) GetNodeDevicePath(volumeID string) (string, error) {
-	return a.lvmCore.GetNodeDevicePath(volumeID)
-}
-
-func (a *lvmVolumeManagerAdapter) UnmountVolume(ctx context.Context, devicePath string) error {
-	return a.mounter.CleanupStagingDir(ctx, devicePath)
-}
-
-// NewPVGarbageCollector creates a new PVGarbageCollector
-func NewPVGarbageCollector(
+// NewPVFailoverReconciler creates a new PVFailoverReconciler
+func NewPVFailoverReconciler(
 	client client.Client,
 	scheme *runtime.Scheme,
 	recorder record.EventRecorder,
@@ -104,8 +46,8 @@ func NewPVGarbageCollector(
 	lvmCore *lvm.LVM,
 	lvmManager lvmMgr.Manager,
 	mounter mounter.Interface,
-) *PVGarbageCollector {
-	return &PVGarbageCollector{
+) *PVFailoverReconciler {
+	return &PVFailoverReconciler{
 		Client:                   client,
 		scheme:                   scheme,
 		recorder:                 recorder,
@@ -117,16 +59,16 @@ func NewPVGarbageCollector(
 }
 
 // Reconcile implements the controller-runtime Reconciler interface
-func (r *PVGarbageCollector) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
-	log := log.FromContext(ctx).WithName("pv-garbage-collector").WithValues("pv", req.NamespacedName.Name)
+func (r *PVFailoverReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
+	log := log.FromContext(ctx).WithName("pv-failover-reconciler").WithValues("pv", req.NamespacedName.Name)
 
-	log.V(1).Info("PV garbage collector reconcile triggered")
+	log.V(4).Info("PV failover reconciler triggered")
 
 	// Get the PersistentVolume
 	pv := &corev1.PersistentVolume{}
 	if err := r.Get(ctx, req.NamespacedName, pv); err != nil {
 		if errors.IsNotFound(err) {
-			log.V(2).Info("PV not found, likely deleted")
+			log.V(4).Info("PV not found, likely deleted")
 			return ctrl.Result{}, nil
 		}
 		log.Error(err, "Failed to get PersistentVolume")
@@ -135,19 +77,19 @@ func (r *PVGarbageCollector) Reconcile(ctx context.Context, req ctrl.Request) (c
 
 	// Only process our CSI driver's volumes
 	if pv.Spec.CSI == nil || pv.Spec.CSI.Driver != lvm.DriverName {
-		log.V(2).Info("PV is not managed by our CSI driver, skipping", "driver", pv.Spec.CSI.Driver)
+		log.V(4).Info("PV is not managed by our CSI driver, skipping", "driver", pv.Spec.CSI.Driver)
 		return ctrl.Result{}, nil
 	}
 
 	// Skip if PV is not bound or is being deleted
 	if pv.Status.Phase != corev1.VolumeAvailable && pv.Status.Phase != corev1.VolumeBound {
-		log.V(2).Info("PV is not in available or bound state, skipping", "phase", pv.Status.Phase)
+		log.V(4).Info("PV is not in available or bound state, skipping", "phase", pv.Status.Phase)
 		return ctrl.Result{}, nil
 	}
 
 	// Skip if PV has a deletion timestamp (being deleted)
 	if pv.DeletionTimestamp != nil {
-		log.V(2).Info("PV is being deleted, skipping")
+		log.V(4).Info("PV is being deleted, skipping")
 		return ctrl.Result{}, nil
 	}
 
@@ -155,19 +97,19 @@ func (r *PVGarbageCollector) Reconcile(ctx context.Context, req ctrl.Request) (c
 	ctx = events.WithObjectIntoContext(ctx, r.recorder, pv)
 
 	// Check for node annotation mismatch
-	if r.hasNodeAnnotationMismatch(pv) {
+	if hasNodeAnnotationMismatch(pv, r.nodeID, r.selectedNodeAnnotation, r.selectedInitialNodeParam) {
 		log.Info("Detected node annotation mismatch, checking if LVM volume should be cleaned up")
 
 		// Check if the LVM volume actually exists on this node
 		volumeID := pv.Spec.CSI.VolumeHandle
 		devicePath, err := r.lvmManager.GetNodeDevicePath(volumeID)
 		if err != nil {
-			log.V(2).Info("Volume not found on this node, no cleanup needed", "error", err.Error())
+			log.V(4).Info("Volume not found on this node, no cleanup needed", "error", err.Error())
 			return ctrl.Result{}, nil
 		}
 
 		if devicePath == "" {
-			log.V(2).Info("Volume device path is empty, volume likely not on this node")
+			log.V(4).Info("Volume device path is empty, volume likely not on this node")
 			return ctrl.Result{}, nil
 		}
 
@@ -206,52 +148,8 @@ func (r *PVGarbageCollector) Reconcile(ctx context.Context, req ctrl.Request) (c
 	return ctrl.Result{}, nil
 }
 
-// hasNodeAnnotationMismatch checks if the PV's node annotations don't match the current node
-func (r *PVGarbageCollector) hasNodeAnnotationMismatch(pv *corev1.PersistentVolume) bool {
-	// Check selected-node annotation
-	selectedNode, exists := pv.Annotations[r.selectedNodeAnnotation]
-	if exists {
-		if !strings.EqualFold(selectedNode, r.nodeID) {
-			return true
-		}
-	} else {
-		// Check initial node parameter in CSI volume attributes
-		if pv.Spec.CSI != nil && pv.Spec.CSI.VolumeAttributes != nil {
-			if initialNode, exists := pv.Spec.CSI.VolumeAttributes[r.selectedInitialNodeParam]; exists {
-				if !strings.EqualFold(initialNode, r.nodeID) {
-					return true
-				}
-			}
-		}
-	}
-
-	return false
-}
-
-// parseVolumeID parses a volume ID in the format <volume-group>#<logical-volume>
-// and returns the volume group name and logical volume name
-func parseVolumeID(volumeID string) (vgName, lvName string, err error) {
-	const separator = "#"
-	segments := strings.Split(volumeID, separator)
-	if len(segments) != 2 {
-		return "", "", fmt.Errorf("error parsing volume id: %q, expected 2 segments, got %d", volumeID, len(segments))
-	}
-
-	vgName = segments[0]
-	lvName = segments[1]
-
-	if len(vgName) == 0 {
-		return "", "", fmt.Errorf("error parsing volume id: %q, volume group name is empty", volumeID)
-	}
-	if len(lvName) == 0 {
-		return "", "", fmt.Errorf("error parsing volume id: %q, logical volume name is empty", volumeID)
-	}
-
-	return vgName, lvName, nil
-}
-
 // SetupWithManager sets up the controller with the Manager
-func (r *PVGarbageCollector) SetupWithManager(mgr ctrl.Manager) error {
+func (r *PVFailoverReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	// Create a predicate to only watch PVs managed by our CSI driver and only on update events
 	driverPredicate := predicate.Funcs{
 		CreateFunc: func(e event.CreateEvent) bool {
@@ -273,16 +171,24 @@ func (r *PVGarbageCollector) SetupWithManager(mgr ctrl.Manager) error {
 				// Also check if this is an annotation change that we care about
 				oldPV, oldOk := e.ObjectOld.(*corev1.PersistentVolume)
 				if oldOk {
-					oldSelectedNode := oldPV.Annotations["localdisk.csi.acstor.io/selected-node"]
-					newSelectedNode := pv.Annotations["localdisk.csi.acstor.io/selected-node"]
+					oldSelectedNode, oldSelectedNodeAnnotationExists := oldPV.Annotations[r.selectedNodeAnnotation]
+					newSelectedNode, newSelectedNodeAnnotationExists := pv.Annotations[r.selectedNodeAnnotation]
+					if !newSelectedNodeAnnotationExists {
+						// No new annotation - nothing to do
+						return false
+					}
+					// If old annotation doesn't exist, check initial annotation
+					if !oldSelectedNodeAnnotationExists {
+						oldSelectedNode = oldPV.Spec.CSI.VolumeAttributes[r.selectedInitialNodeParam]
+					}
 					if oldSelectedNode != newSelectedNode && oldSelectedNode == r.nodeID {
-						logger.V(1).Info("Detected selected-node annotation change",
+						logger.V(1).Info("PV moved to a new node",
 							"old", oldSelectedNode, "new", newSelectedNode)
 						return true
 					}
 				}
 			} else {
-				logger.V(3).Info("Ignoring update event - not our CSI driver", "driver", func() string {
+				logger.V(4).Info("Ignoring update event - not our CSI driver", "driver", func() string {
 					if pv.Spec.CSI != nil {
 						return pv.Spec.CSI.Driver
 					}
