@@ -83,7 +83,6 @@ spec:
                   if mdadm --examine "$device" | grep -q 'RAID superblock'; then
                           continue
                   fi
-
                   if findmnt -S "$device" -n &> /dev/null; then
                           continue
                   fi
@@ -103,14 +102,13 @@ spec:
                   exit 0
           fi
 
-          if [ "${#UNUSED_DEVICES[@]}" -lt 2 ]; then
-                  echo "Error: Found fewer than 2 unused NVMe devices.  Cannot create a RAID0 array."
-                  exit 1
-          fi
-
           if [ -e ${RAID_DEVICE} ]; then
                   echo "RAID device already exists"
           else
+                  if [ "${#UNUSED_DEVICES[@]}" -lt 2 ]; then
+                          echo "Error: Found fewer than 2 unused NVMe devices.  Cannot create a RAID0 array."
+                          exit 1
+                  fi
                   echo ""
                   echo "${#UNUSED_DEVICES[@]} devices will be combined into a RAID0 array:"
                   for device in "${UNUSED_DEVICES[@]}"; do
@@ -119,6 +117,7 @@ spec:
                   echo ""
 
                   mdadm --create "$RAID_DEVICE" \
+                          --name="local-csi" \
                           --level=0 \
                           --raid-devices="${#UNUSED_DEVICES[@]}" \
                           "${UNUSED_DEVICES[@]}" \
@@ -127,7 +126,6 @@ spec:
 
                   if [ $? -ne 0 ]; then
                           echo "Error: Failed to create RAID array."
-                          sleep 30
                           exit 1
                   fi
 
@@ -143,6 +141,10 @@ spec:
                   echo "Error: RAID device ${RAID_DEVICE} not found after creation."
                   exit 1
           fi
+          if ! mdadm -D /dev/md0 | grep -q "Name : local-csi"; then
+                  echo "Error: RAID device ${RAID_DEVICE} was not created by us, aborting."
+                  exit 1
+          fi
 
           if vgdisplay "${VOLUME_GROUP}" &> /dev/null; then
                   echo "Volume group ${VOLUME_GROUP} already exists."
@@ -151,7 +153,7 @@ spec:
 
           echo "Creating LVM volume group ${VOLUME_GROUP} on ${RAID_DEVICE}"
           pvcreate "${RAID_DEVICE}"
-          vgcreate "${VOLUME_GROUP}" "${RAID_DEVICE}"
+          vgcreate --addtag "local-csi" "${VOLUME_GROUP}" "${RAID_DEVICE}"
           echo "LVM volume group ${VOLUME_GROUP} created successfully."
           exit 0
 
