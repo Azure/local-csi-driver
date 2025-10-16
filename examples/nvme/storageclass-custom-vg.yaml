@@ -1,0 +1,13 @@
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: local-custom-vg
+provisioner: localdisk.csi.acstor.io
+reclaimPolicy: Delete
+volumeBindingMode: WaitForFirstConsumer
+allowVolumeExpansion: true
+parameters:
+  # Specify a custom LVM volume group name
+  # If not specified, defaults to "containerstorage"
+  # When using raid.enabled=true, this must match raid.volumeGroup
+  volumeGroup: "my-custom-vg"
