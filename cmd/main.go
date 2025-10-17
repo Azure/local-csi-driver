@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"time"
 
 	// Import all Kubernetes client auth plugins (e.g. Azure, GCP, OIDC, etc.)
 	// to ensure that exec-entrypoint and run can make use of them.
@@ -32,7 +33,9 @@ import (
 
 	driver "local-csi-driver/internal/csi"
 	"local-csi-driver/internal/csi/core/lvm"
+	"local-csi-driver/internal/csi/mounter"
 	"local-csi-driver/internal/csi/server"
+	"local-csi-driver/internal/gc"
 	"local-csi-driver/internal/pkg/block"
 	"local-csi-driver/internal/pkg/events"
 	lvmMgr "local-csi-driver/internal/pkg/lvm"
@@ -89,6 +92,9 @@ func main() {
 	var printVersionAndExit bool
 	var eventRecorderEnabled bool
 	var enableCleanup bool
+	var enablePVGarbageCollection bool
+	var enableLVMOrphanCleanup bool
+	var lvmOrphanCleanupInterval time.Duration
 	flag.StringVar(&nodeName, "node-name", "",
 		"The name of the node this agent is running on.")
 	flag.StringVar(&podName, "pod-name", "",
@@ -131,6 +137,12 @@ func main() {
 	flag.BoolVar(&eventRecorderEnabled, "event-recorder-enabled", true,
 		"If enabled, the driver will use the event recorder to record events. This is useful for debugging and monitoring purposes.")
 	flag.BoolVar(&enableCleanup, "enable-cleanup", true, "If enabled, the driver will clean up the LVM volume groups and persistent volumes when not in use")
+	flag.BoolVar(&enablePVGarbageCollection, "enable-pv-garbage-collection", true,
+		"If enabled, the PV garbage collection controller will monitor PersistentVolumes for node annotation mismatches and clean up orphaned LVM volumes.")
+	flag.BoolVar(&enableLVMOrphanCleanup, "enable-lvm-orphan-cleanup", true,
+		"If enabled, the LVM orphan cleanup controller will periodically scan and clean up orphaned LVM volumes on the node.")
+	flag.DurationVar(&lvmOrphanCleanupInterval, "lvm-orphan-cleanup-interval", 30*time.Minute,
+		"Interval for the LVM orphan cleanup controller to scan and clean up orphaned volumes.")
 
 	// Initialize logger flagsconfig.
 	logConfig := textlogger.NewConfig(textlogger.VerbosityFlagName("v"))
@@ -170,6 +182,9 @@ func main() {
 
 	ctx, span := tp.Tracer("main").Start(ctx, "setup")
 	defer span.End()
+
+	// Create mounter for volume operations
+	mounterInstance := mounter.New(tp)
 
 	// if the enable-http2 flag is false (the default), http/2 should be disabled
 	// due to its vulnerabilities. More specifically, disabling http/2 will
@@ -324,6 +339,54 @@ func main() {
 	if eventRecorderEnabled {
 		log.Info("event recorder enabled")
 		recorder = mgr.GetEventRecorderFor("local-csi-driver")
+	}
+
+	// Setup PV garbage collection controller to clean up orphaned LVM volumes
+	// when PV node annotations don't match the current node
+	if enablePVGarbageCollection {
+		pvGCController := gc.NewPVFailoverReconciler(
+			mgr.GetClient(),
+			mgr.GetScheme(),
+			recorder,
+			nodeName,
+			driver.SelectedNodeAnnotation,
+			driver.SelectedInitialNodeParam,
+			volumeClient,
+			lvmMgr,
+			mounterInstance,
+		)
+
+		if err = pvGCController.SetupWithManager(mgr); err != nil {
+			logAndExit(err, "unable to create PV garbage collection controller")
+		}
+		log.Info("PV garbage collection controller configured")
+	} else {
+		log.Info("PV garbage collection controller disabled")
+	}
+
+	// Setup LVM orphan cleanup controller for periodic scanning and cleanup
+	if enableLVMOrphanCleanup {
+		lvmOrphanCleanup := gc.NewLVMOrphanScanner(
+			mgr.GetClient(),
+			mgr.GetScheme(),
+			recorder,
+			nodeName,
+			driver.SelectedNodeAnnotation,
+			driver.SelectedInitialNodeParam,
+			lvmMgr,
+			volumeClient,
+			mounterInstance,
+			gc.LVMOrphanScannerConfig{
+				ReconcileInterval: lvmOrphanCleanupInterval,
+			},
+		)
+
+		if err = lvmOrphanCleanup.SetupWithManager(mgr); err != nil {
+			logAndExit(err, "unable to setup LVM orphan cleanup controller with manager")
+		}
+		log.Info("LVM orphan cleanup controller configured")
+	} else {
+		log.Info("LVM orphan cleanup controller disabled")
 	}
 
 	// Create the CSI server.
