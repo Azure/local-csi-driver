@@ -41,13 +41,17 @@ jobs:
       - name: Set tag
         id: set-tag
         run: |
-          # Get short commit SHA (7 characters)
+          # Get short commit SHA (7 characters) from the checked out code
+          # For pull_request_target: this is the PR's head SHA
+          # For push: this is the commit SHA
           SHORT_SHA=$(git rev-parse --short HEAD)
+
           # Create tag in format MAJOR.MINOR.PATCH-REF
           TAG="v${{ env.MAJOR }}.${{ env.MINOR }}.${{ env.PATCH }}-${SHORT_SHA}"
           echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
 
-          if [[ "${GITHUB_REF}" == "refs/heads/main" ]]; then
+          # Only set latest tag for push events to main
+          if [[ "${{ github.event_name }}" == "push" && "${GITHUB_REF}" == "refs/heads/main" ]]; then
             LATEST_TAG="v${{ env.MAJOR }}.${{ env.MINOR }}.${{ env.PATCH }}-latest"
           else
             LATEST_TAG=""
