@@ -178,9 +178,11 @@ spec:
 
 To uninstall local-csi-driver, apply the following steps:
 
-1. Clean up storage resources. You must first delete all PersistentVolumeClaims and/or PersistentVolumes.
+1. Clean up storage resources. You must first delete all PersistentVolumeClaims
+   and/or PersistentVolumes.
 
 2. Delete your storage class. Run the following command:
+
    ```sh
    kubectl delete storageclass $storageClassName
    ```
