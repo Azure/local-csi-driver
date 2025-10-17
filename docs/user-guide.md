@@ -186,7 +186,7 @@ To uninstall local-csi-driver, apply the following steps:
    kubectl delete storageclass $storageClassName
    ```
 
-4. Uninstall local-csi-driver. Run the following command:
+3. Uninstall local-csi-driver. Run the following command:
 
    ```sh
    helm uninstall local-csi-driver -n kube-system
