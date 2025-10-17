@@ -12,11 +12,11 @@ repos:
   - id: check-xml
   - id: check-json
 - repo: https://github.com/golangci/golangci-lint
-  rev: v2.4.0
+  rev: v2.5.0
   hooks:
   - id: golangci-lint-full
 - repo: https://github.com/hadolint/hadolint
-  rev: v2.12.0
+  rev: v2.14.0
   hooks:
     - id: hadolint-docker
 - repo: https://github.com/igorshubovych/markdownlint-cli
@@ -34,11 +34,11 @@ repos:
     args:
     - --config=.codespellrc
 - repo: https://github.com/rhysd/actionlint
-  rev: v1.7.7
+  rev: v1.7.8
   hooks:
   - id: actionlint-docker
 - repo: https://github.com/tcort/markdown-link-check
-  rev: v3.12.2 # Use older version as current version has 0 exit code for broken links
+  rev: v3.14.1 # Use older version as current version has 0 exit code for broken links
   hooks:
     - id: markdown-link-check
       args: [--verbose, --config, .markdown-links-config.json]
