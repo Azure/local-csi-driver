@@ -7,8 +7,9 @@ concurrency:
 on:
   push:
     branches: [main]
-  repository_dispatch:
-    types: [ok-to-test-command]
+  pull_request_target:
+    types: [labeled]
+    branches: [main, release-**]
 
 permissions:
   contents: read
@@ -24,42 +25,9 @@ env:
   REPO_BASE: "acstor"
 
 jobs:
-  get-ref: # Based on https://github.com/Azure/aks-app-routing-operator/blob/main/.github/workflows/test.yaml
-    name: "Get ref"
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-    outputs:
-      checkout_ref: ${{ steps.checkout_ref.outputs.CHECKOUT_REF }}
-      status_ref: ${{ steps.status_ref.outputs.STATUS_REF }}
-    steps:
-      # checkout repo so we can ls-remote. we can use main for this
-      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
-      # get the ref of the merge commit. we want to get the full sha instead of the tag so we can guarantee
-      # it won't change by a user pushing a new change
-      - id: checkout_ref
-        env:
-          MERGE_REF: 'refs/pull/${{ github.event.client_payload.pull_request.number }}/merge'
-        run: |
-          CHECKOUT_REF=$(git ls-remote -q | grep "$MERGE_REF" | awk '{print $1}')
-          echo "Ref is $CHECKOUT_REF"
-          echo "CHECKOUT_REF=$CHECKOUT_REF" >> "$GITHUB_OUTPUT"
-      # guarantee the ref is what we want to use by ensuring the ok-to-test'd sha matches
-      - id: status_ref
-        env:
-          HEAD_REF: 'refs/pull/${{ github.event.client_payload.pull_request.number }}/head'
-          OK_REF_PREFIX:  ${{ github.event.client_payload.slash_command.args.named.sha }}
-        run: |
-         LATEST=$(git ls-remote -q | grep "$HEAD_REF" | awk '{print $1}')
-         echo "STATUS_REF=$LATEST" >> "$GITHUB_OUTPUT"
-         echo "Comparing latest $LATEST with prefix $OK_REF_PREFIX"
-         if [[ $LATEST != $OK_REF_PREFIX* ]]; then
-          echo "latest ref doesn't match what was ok-to-test'd"
-          exit 1
-         fi
   vars:
+    if: github.event_name == 'push' || (github.event_name == 'pull_request_target' && contains(github.event.pull_request.labels.*.name, 'safe to test'))
     runs-on: ubuntu-latest
-    needs: [get-ref]
     outputs:
       TAG: ${{ steps.set-tag.outputs.TAG }}
       LATEST_TAG: ${{ steps.set-tag.outputs.LATEST_TAG }}
@@ -67,7 +35,7 @@ jobs:
       - name: Check out the code
         uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
         with:
-          ref: ${{ needs.get-ref.outputs.checkout_ref }}
+          ref: ${{ github.event_name == 'pull_request_target' && github.event.pull_request.head.sha || github.ref }}
           fetch-depth: 0
 
       - name: Set tag
@@ -86,10 +54,11 @@ jobs:
           fi
           echo "latest_tag=${LATEST_TAG}" >> "$GITHUB_OUTPUT"
   build-docker:
-    needs: [get-ref, vars]
+    if: github.event_name == 'push' || (github.event_name == 'pull_request_target' && contains(github.event.pull_request.labels.*.name, 'safe to test'))
+    needs: [vars]
     uses: ./.github/workflows/docker-build-template.yml
     with:
-      ref: ${{ needs.get-ref.outputs.checkout_ref }}
+      ref: ${{ github.event_name == 'pull_request_target' && github.event.pull_request.head.sha || github.ref }}
       registry: "localcsidriver.azurecr.io"
       repo_base: "acstor"
       version: ${{ needs.vars.outputs.TAG }}
@@ -102,10 +71,11 @@ jobs:
       AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
   build-helm:
-    needs: [get-ref, vars]
+    if: github.event_name == 'push' || (github.event_name == 'pull_request_target' && contains(github.event.pull_request.labels.*.name, 'safe to test'))
+    needs: [vars]
     uses: ./.github/workflows/helm-build-template.yml
     with:
-      ref: ${{ needs.get-ref.outputs.checkout_ref }}
+      ref: ${{ github.event_name == 'pull_request_target' && github.event.pull_request.head.sha || github.ref }}
       registry: "localcsidriver.azurecr.io"
       repo_base: "acstor"
       tags: |
@@ -117,7 +87,8 @@ jobs:
       AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
   e2e-test:
-    needs: [get-ref, build-docker, build-helm, vars]
+    if: github.event_name == 'push' || (github.event_name == 'pull_request_target' && contains(github.event.pull_request.labels.*.name, 'safe to test'))
+    needs: [build-docker, build-helm, vars]
     runs-on: ubuntu-latest
     environment: pull-request
     strategy:
@@ -170,7 +141,7 @@ jobs:
       - name: Check out the code
         uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
         with:
-          ref: ${{ needs.get-ref.outputs.checkout_ref }}
+          ref: ${{ github.event_name == 'pull_request_target' && github.event.pull_request.head.sha || github.ref }}
           fetch-depth: 0
 
       - name: Set up Go
