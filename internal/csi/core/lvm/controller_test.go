@@ -79,14 +79,17 @@ func TestLVM_Create(t *testing.T) {
 						},
 					},
 				},
-				Parameters: map[string]string{},
+				Parameters: map[string]string{
+					"volumeGroup": "custom-vg",
+				},
 			},
 			want: &csi.Volume{
-				VolumeId:      "containerstorage#test-volume",
+				VolumeId:      "custom-vg#test-volume",
 				CapacityBytes: 1024 * 1024 * 1024, // 1 GiB
 				VolumeContext: map[string]string{
 					"localdisk.csi.acstor.io/capacity": "1073741824",
 					"localdisk.csi.acstor.io/limit":    "0",
+					"volumeGroup":                      "custom-vg",
 				},
 				AccessibleTopology: []*csi.Topology{
 					{

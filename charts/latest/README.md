@@ -47,6 +47,8 @@ and their default values.
 | `daemonset.nodeSelector`                      | Node selector for the DaemonSet. If empty, all nodes are selected.                 |                                                                                                                          |
 | `daemonset.tolerations`                       | Tolerations for the DaemonSet. If empty, no tolerations are applied.               | <code>- effect: NoSchedule<br>&nbsp;&nbsp;operator: Exists<br>- effect: NoExecute<br>&nbsp;&nbsp;operator: Exists</code> |
 | `daemonset.serviceAccount.annotations`        | Annotations for the service account. If empty, no annotations are applied.         |                                                                                                                          |
+| `raid.enabled`                                | Enables RAID 0 setup using mdadm. When enabled, an init container will combine unused NVMe devices into a RAID 0 array and create an LVM volume group on it. | `false`                                                                                                                  |
+| `raid.volumeGroup`                            | The volume group name to create on the RAID device. Must match the `volumeGroup` parameter in StorageClass if using a custom name. | `containerstorage`                                                                                                       |
 | `cleanup.enabled`                             | Cleanup volume groups and physical volumes on pod termination if logical volumes are not in use. | `true`                                                                                                                   |
 | `webhook.enforceEphemeral.enabled`            | Enables the enforce ephemeral PVC validation webhook.                                      | `true`                                                                                                                   |
 | `webhook.hyperconverged.enabled`              | Enables the hyperconverged webhook.                                                | `true`                                                                                                                   |
@@ -70,6 +72,82 @@ and their default values.
 | `observability.nodeDriverRegistrar.log.level` | csi-node-driver-registrar log level.                                               | `2`                                                                                                                      |
 | `observability.nodeDriverRegistrar.http.port` | csi-node-driver-registrar health and metrics port.                                 | `8092`                                                                                                                   |
 <!-- markdownlint-enable MD033 -->
+
+## RAID Configuration
+
+The local-csi-driver supports automatic RAID 0 array creation via mdadm for
+improved performance when multiple NVMe devices are available on a node. This
+feature is controlled by the `raid.enabled` parameter.
+
+### Enabling RAID
+
+To enable RAID 0 setup, install the chart with:
+
+```console
+helm install local-csi-driver oci://localcsidriver.azurecr.io/acstor/charts/local-csi-driver \
+  --version <release> \
+  --namespace kube-system \
+  --set raid.enabled=true
+```
+
+### How RAID Works
+
+When `raid.enabled=true`, an init container runs on each node before the CSI
+driver starts:
+
+1. **Device Discovery**: Scans for unused NVMe devices (devices not mounted, not
+   in use by LVM, and without existing RAID metadata)
+2. **Single Device**: If only one unused device is found, it creates an LVM
+   volume group directly on that device
+3. **Multiple Devices**: If two or more unused devices are found:
+   - Installs `mdadm` if not already present (supports tdnf and apt-get package managers)
+   - Creates a RAID 0 array at `/dev/md0` using all unused devices
+   - Saves the RAID configuration to `/etc/mdadm/mdadm.conf`
+   - Creates an LVM physical volume on the RAID device
+   - Creates an LVM volume group on the RAID device
+
+### Custom Volume Group Name
+
+By default, the volume group is named `containerstorage`. To use a custom name:
+
+```console
+helm install local-csi-driver oci://localcsidriver.azurecr.io/acstor/charts/local-csi-driver \
+  --version <release> \
+  --namespace kube-system \
+  --set raid.enabled=true \
+  --set raid.volumeGroup=my-custom-vg
+```
+
+**Important**: If you use a custom volume group name, you must also specify it
+in your StorageClass:
+
+```yaml
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: local-raid
+provisioner: localdisk.csi.acstor.io
+reclaimPolicy: Delete
+volumeBindingMode: WaitForFirstConsumer
+allowVolumeExpansion: true
+parameters:
+  volumeGroup: "my-custom-vg"
+```
+
+### RAID vs LVM Striping
+
+- **RAID disabled** (default): The CSI driver uses LVM's built-in RAID 0
+  striping across multiple devices
+- **RAID enabled**: Creates a mdadm RAID 0 array first, then LVM on top of it
+
+mdadm RAID 0 provides better performance in some scenarios and may be preferred
+for certain workloads.
+
+### Requirements
+
+- Two or more unused NVMe devices on the node (or one device for single-disk setup)
+- Node must support either `tdnf` or `apt-get` package manager for mdadm installation
+- Sufficient privileges for the init container (runs as root with privileged mode)
 
 ## Troubleshooting
 

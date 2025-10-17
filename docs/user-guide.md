@@ -33,6 +33,23 @@ Only one instance of local-csi-driver can be installed per cluster.
 Helm chart values are documented in: [Helm chart
 README](../charts/latest/README.md).
 
+### Installing with RAID Support
+
+For improved performance, you can enable automatic RAID 0 array creation across
+multiple NVMe devices:
+
+```sh
+helm install local-csi-driver oci://localcsidriver.azurecr.io/acstor/charts/local-csi-driver --version <release> --namespace kube-system --set raid.enabled=true
+```
+
+When RAID is enabled, an init container will automatically:
+
+- Detect unused NVMe devices on each node
+- Create a RAID 0 array using mdadm (if 2+ devices are available)
+- Create an LVM volume group on the RAID device
+
+For more details on RAID configuration, see the [Helm chart README](../charts/latest/README.md#raid-configuration).
+
 ## Creating a StorageClass
 
 To create a StorageClass for the local-csi-driver, apply the following YAML:
@@ -46,6 +63,28 @@ provisioner: localdisk.csi.acstor.io
 reclaimPolicy: Delete
 volumeBindingMode: WaitForFirstConsumer
 allowVolumeExpansion: true
+```
+
+### StorageClass Parameters
+
+The StorageClass supports the following optional parameters:
+
+- `volumeGroup`: Specifies a custom LVM volume group name. If not specified,
+  defaults to `containerstorage`.
+
+Example with custom volume group:
+
+```yaml
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: local-custom-vg
+provisioner: localdisk.csi.acstor.io
+reclaimPolicy: Delete
+volumeBindingMode: WaitForFirstConsumer
+allowVolumeExpansion: true
+parameters:
+  volumeGroup: "my-custom-vg"
 ```
 
 Save this YAML to a file (e.g., `storageclass.yaml`) and apply it:

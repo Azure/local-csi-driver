@@ -42,6 +42,20 @@ daemonset:
     # Annotations for the service account. If empty, no annotations are applied.
     annotations: {}
 
+# RAID configuration.
+raid:
+  # Enables mdadm-based software RAID 0 on the nodes. If disabled, the driver
+  # will use the raw NVMe devices with LVM striping.
+  enabled: false
+
+  # The volume group name to create on the nodes. This volume group will be used
+  # for creating logical volumes for the PVCs. Must be unique on the node.
+  # If the volume group already exists, it will be used as is. If this changes
+  # from the default "containerstorage", then it must also be specified in the
+  # StorageClass in the `VolumeGroup` parameter.
+  volumeGroup: containerstorage
+
+# Garbage collection and cleanup configuration.
 cleanup:
   # Cleanup volume groups and physical volumes on pod termination if logical volume are not in use.
   enabled: true
