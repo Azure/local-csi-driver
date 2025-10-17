@@ -1,6 +1,8 @@
-# local-csi-driver Persistent Volume (PV) Cleanup
+# Persistent Volume (PV) Cleanup
 
-## Scenario Definition
+Status: implemented
+
+## Background
 
 PVCs and PVs can get stuck, because they can't be deleted if the node they
 were provisioned on no longer exists. Pods referring to PVs will also be stuck
