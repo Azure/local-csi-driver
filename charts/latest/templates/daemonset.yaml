@@ -97,15 +97,18 @@ spec:
                   DEVICE="${UNUSED_DEVICES[0]}"
                   echo "Creating LVM volume group ${VOLUME_GROUP} on ${DEVICE}"
                   pvcreate "${DEVICE}"
-                  vgcreate "${VOLUME_GROUP}" "${DEVICE}"
+                  vgcreate --addtag "local-csi" "${VOLUME_GROUP}" "${DEVICE}"
                   echo "LVM volume group ${VOLUME_GROUP} created successfully."
                   exit 0
           fi
 
-          if [ -e ${RAID_DEVICE} ]; then
+          if [ -e "${RAID_DEVICE}" ]; then
                   echo "RAID device already exists"
           else
                   if [ "${#UNUSED_DEVICES[@]}" -lt 2 ]; then
+                          # We shouldn't reach here because of the earlier
+                          # checks. The device should have been added to LVM
+                          # directly.
                           echo "Error: Found fewer than 2 unused NVMe devices.  Cannot create a RAID0 array."
                           exit 1
                   fi
@@ -137,11 +140,11 @@ spec:
                   mdadm --detail --scan | tee -a /etc/mdadm/mdadm.conf
           fi
 
-          if [ ! -e ${RAID_DEVICE} ]; then
+          if [ ! -e "${RAID_DEVICE}" ]; then
                   echo "Error: RAID device ${RAID_DEVICE} not found after creation."
                   exit 1
           fi
-          if ! mdadm -D /dev/md0 | grep -q "Name : local-csi"; then
+          if ! mdadm -D "${RAID_DEVICE}" | grep -q "Name : local-csi"; then
                   echo "Error: RAID device ${RAID_DEVICE} was not created by us, aborting."
                   exit 1
           fi
