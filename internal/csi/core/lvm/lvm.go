@@ -29,6 +29,10 @@ const (
 	// DriverName as registered with Kubernetes.
 	DriverName = "localdisk.csi.acstor.io"
 
+	// VolumeGroupNameParam is the StorageClass parameter key for specifying
+	// a custom volume group name. If not specified, DefaultVolumeGroup is used.
+	VolumeGroupNameParam = "volumeGroup"
+
 	// DefaultVolumeGroup is the default volume group name used if no
 	// VolumeGroupNameParam is specified in the volume create request.
 	DefaultVolumeGroup = "containerstorage"
