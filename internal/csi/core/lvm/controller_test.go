@@ -523,7 +523,7 @@ func TestLVM_List(t *testing.T) {
 			name: "no volume group exists",
 			expectLVM: func(m *lvmMgr.MockManager) {
 				m.EXPECT().ListVolumeGroups(gomock.Any(), &lvmMgr.ListVGOptions{
-					Select: "vg_name=" + lvm.DefaultVolumeGroup + " && vg_tags=" + lvm.DefaultVolumeGroupTag,
+					Select: "vg_tags=" + lvm.DefaultVolumeGroupTag,
 				}).Return([]lvmMgr.VolumeGroup{}, nil)
 			},
 			expectedEntries: 0,
@@ -533,7 +533,7 @@ func TestLVM_List(t *testing.T) {
 			name: "volume group exists with logical volumes",
 			expectLVM: func(m *lvmMgr.MockManager) {
 				m.EXPECT().ListVolumeGroups(gomock.Any(), &lvmMgr.ListVGOptions{
-					Select: "vg_name=" + lvm.DefaultVolumeGroup + " && vg_tags=" + lvm.DefaultVolumeGroupTag,
+					Select: "vg_tags=" + lvm.DefaultVolumeGroupTag,
 				}).Return([]lvmMgr.VolumeGroup{
 					{Name: lvm.DefaultVolumeGroup},
 				}, nil)
@@ -551,7 +551,7 @@ func TestLVM_List(t *testing.T) {
 			name: "volume group exists with no logical volumes",
 			expectLVM: func(m *lvmMgr.MockManager) {
 				m.EXPECT().ListVolumeGroups(gomock.Any(), &lvmMgr.ListVGOptions{
-					Select: "vg_name=" + lvm.DefaultVolumeGroup + " && vg_tags=" + lvm.DefaultVolumeGroupTag,
+					Select: "vg_tags=" + lvm.DefaultVolumeGroupTag,
 				}).Return([]lvmMgr.VolumeGroup{
 					{Name: lvm.DefaultVolumeGroup},
 				}, nil)
@@ -566,7 +566,7 @@ func TestLVM_List(t *testing.T) {
 			name: "list volume groups error",
 			expectLVM: func(m *lvmMgr.MockManager) {
 				m.EXPECT().ListVolumeGroups(gomock.Any(), &lvmMgr.ListVGOptions{
-					Select: "vg_name=" + lvm.DefaultVolumeGroup + " && vg_tags=" + lvm.DefaultVolumeGroupTag,
+					Select: "vg_tags=" + lvm.DefaultVolumeGroupTag,
 				}).Return(nil, errors.New("list VG failed"))
 			},
 			expectedEntries: 0,
@@ -576,7 +576,7 @@ func TestLVM_List(t *testing.T) {
 			name: "list logical volumes error",
 			expectLVM: func(m *lvmMgr.MockManager) {
 				m.EXPECT().ListVolumeGroups(gomock.Any(), &lvmMgr.ListVGOptions{
-					Select: "vg_name=" + lvm.DefaultVolumeGroup + " && vg_tags=" + lvm.DefaultVolumeGroupTag,
+					Select: "vg_tags=" + lvm.DefaultVolumeGroupTag,
 				}).Return([]lvmMgr.VolumeGroup{
 					{Name: lvm.DefaultVolumeGroup},
 				}, nil)
@@ -586,6 +586,29 @@ func TestLVM_List(t *testing.T) {
 			},
 			expectedEntries: 0,
 			wantErr:         true,
+		},
+		{
+			name: "multiple volume groups with same tag",
+			expectLVM: func(m *lvmMgr.MockManager) {
+				m.EXPECT().ListVolumeGroups(gomock.Any(), &lvmMgr.ListVGOptions{
+					Select: "vg_tags=" + lvm.DefaultVolumeGroupTag,
+				}).Return([]lvmMgr.VolumeGroup{
+					{Name: lvm.DefaultVolumeGroup},
+					{Name: "another-vg"},
+				}, nil)
+				m.EXPECT().ListLogicalVolumes(gomock.Any(), &lvmMgr.ListLVOptions{
+					Select: "vg_name=" + lvm.DefaultVolumeGroup,
+				}).Return([]lvmMgr.LogicalVolume{
+					{Name: "test-lv-1", Size: lvmMgr.Int64String(1024 * 1024 * 1024)}, // 1 GiB
+				}, nil)
+				m.EXPECT().ListLogicalVolumes(gomock.Any(), &lvmMgr.ListLVOptions{
+					Select: "vg_name=another-vg",
+				}).Return([]lvmMgr.LogicalVolume{
+					{Name: "test-lv-2", Size: lvmMgr.Int64String(2048 * 1024 * 1024)}, // 2 GiB
+				}, nil)
+			},
+			expectedEntries: 2,
+			wantErr:         false,
 		},
 	}
 

@@ -124,7 +124,7 @@ func (m *MockLVMVolumeManager) UnmountVolume(ctx context.Context, devicePath str
 // ListVolumeGroups implements the LVMVolumeManager interface.
 func (m *MockLVMVolumeManager) ListVolumeGroups(ctx context.Context, opts *lvmMgr.ListVGOptions) ([]lvmMgr.VolumeGroup, error) {
 	// For testing, return VGs from our tracked VGToLVs
-	var vgs []lvmMgr.VolumeGroup
+	vgs := make([]lvmMgr.VolumeGroup, 0)
 	for vgName := range m.VGToLVs {
 		vgs = append(vgs, lvmMgr.VolumeGroup{Name: vgName})
 	}

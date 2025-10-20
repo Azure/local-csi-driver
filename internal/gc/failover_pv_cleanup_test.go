@@ -71,7 +71,7 @@ func TestPVFailoverReconciler(t *testing.T) {
 		t.Errorf("Reconcile() unexpected error: %v", err)
 	}
 
-	if result.Requeue {
+	if result.RequeueAfter != 0 {
 		t.Errorf("Reconcile() should not requeue on success")
 	}
 
