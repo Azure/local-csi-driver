@@ -60,3 +60,64 @@ Create the name of the service account to use
 {{- default "default" .Values.serviceAccount.name }}
 {{- end }}
 {{- end }}
+
+{{/*
+Generate nodeAffinity with mandatory OS/arch constraints.
+This ensures the CSI driver only runs on supported platforms while allowing
+users to add their own node selection criteria.
+*/}}
+{{- define "chart.nodeAffinity" -}}
+nodeAffinity:
+  {{- if .Values.daemonset.nodeAffinity }}
+  {{- if .Values.daemonset.nodeAffinity.requiredDuringSchedulingIgnoredDuringExecution }}
+  requiredDuringSchedulingIgnoredDuringExecution:
+    nodeSelectorTerms:
+    {{- range .Values.daemonset.nodeAffinity.requiredDuringSchedulingIgnoredDuringExecution.nodeSelectorTerms }}
+    - matchExpressions:
+      {{- if .matchExpressions }}
+      {{- range .matchExpressions }}
+      - key: {{ .key }}
+        operator: {{ .operator }}
+        values: {{- toYaml .values | nindent 10 }}
+      {{- end }}
+      {{- end }}
+      # Add mandatory OS/arch constraints to each term
+      - key: kubernetes.io/os
+        operator: In
+        values:
+        - linux
+      - key: kubernetes.io/arch
+        operator: In
+        values:
+        - amd64
+        - arm64
+      {{- if .matchFields }}
+      matchFields:
+      {{- range .matchFields }}
+      - key: {{ .key }}
+        operator: {{ .operator }}
+        values: {{- toYaml .values | nindent 10 }}
+      {{- end }}
+      {{- end }}
+    {{- end }}
+  {{- end }}
+  {{- if .Values.daemonset.nodeAffinity.preferredDuringSchedulingIgnoredDuringExecution }}
+  preferredDuringSchedulingIgnoredDuringExecution:
+  {{- toYaml .Values.daemonset.nodeAffinity.preferredDuringSchedulingIgnoredDuringExecution | nindent 4 }}
+  {{- end }}
+  {{- else }}
+  requiredDuringSchedulingIgnoredDuringExecution:
+    nodeSelectorTerms:
+    # Default mandatory constraints when no custom nodeAffinity provided
+    - matchExpressions:
+      - key: kubernetes.io/os
+        operator: In
+        values:
+        - linux
+      - key: kubernetes.io/arch
+        operator: In
+        values:
+        - amd64
+        - arm64
+  {{- end }}
+{{- end }}

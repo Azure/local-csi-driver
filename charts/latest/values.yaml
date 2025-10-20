@@ -30,6 +30,11 @@ daemonset:
   # be used to install the driver on a subset of nodes with local NVMe storage.
   nodeSelector: {}
 
+  # Node affinity for the DaemonSet. If empty, no affinity rules are applied except those
+  # for OS and architecture. This can be used to install the driver on a subset of nodes
+  # with local NVMe storage.
+  nodeAffinity: {}
+
   # Tolerations for the DaemonSet. If empty, no tolerations are applied.
   # This can be used to install the driver on nodes with specific taints.
   tolerations:
