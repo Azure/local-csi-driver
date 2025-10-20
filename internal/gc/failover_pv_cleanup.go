@@ -35,7 +35,7 @@ type PVFailoverReconciler struct {
 	lvmManager               LVMVolumeManager
 }
 
-// NewPVFailoverReconciler creates a new PVFailoverReconciler
+// NewPVFailoverReconciler creates a new PVFailoverReconciler.
 func NewPVFailoverReconciler(
 	client client.Client,
 	scheme *runtime.Scheme,
@@ -58,9 +58,9 @@ func NewPVFailoverReconciler(
 	}
 }
 
-// Reconcile implements the controller-runtime Reconciler interface
+// Reconcile implements the controller-runtime Reconciler interface.
 func (r *PVFailoverReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
-	log := log.FromContext(ctx).WithName("pv-failover-reconciler").WithValues("pv", req.NamespacedName.Name)
+	log := log.FromContext(ctx).WithName("pv-failover-reconciler").WithValues("pv", req.Name)
 
 	log.V(4).Info("PV failover reconciler triggered")
 
@@ -148,7 +148,7 @@ func (r *PVFailoverReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 	return ctrl.Result{}, nil
 }
 
-// SetupWithManager sets up the controller with the Manager
+// SetupWithManager sets up the controller with the Manager.
 func (r *PVFailoverReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	// Create a predicate to only watch PVs managed by our CSI driver and only on update events
 	driverPredicate := predicate.Funcs{

@@ -21,11 +21,11 @@ import (
 	lvmMgr "local-csi-driver/internal/pkg/lvm"
 )
 
-// Field index name for CSI VolumeHandle
+// Field index name for CSI VolumeHandle.
 const CSIVolumeHandleIndex = "spec.csi.volumeHandle"
 
 // LVMOrphanScanner periodically scans LVM volumes on the node and deletes
-// those that don't have corresponding PersistentVolumes in the cluster
+// those that don't have corresponding PersistentVolumes in the cluster.
 type LVMOrphanScanner struct {
 	client.Client
 	scheme                   *runtime.Scheme
@@ -39,12 +39,12 @@ type LVMOrphanScanner struct {
 	reconcileInterval time.Duration
 }
 
-// LVMOrphanScannerConfig holds configuration for the scanner controller
+// LVMOrphanScannerConfig holds configuration for the scanner controller.
 type LVMOrphanScannerConfig struct {
 	ReconcileInterval time.Duration
 }
 
-// NewLVMOrphanScanner creates a new LVMOrphanScanner controller
+// NewLVMOrphanScanner creates a new LVMOrphanScanner controller.
 func NewLVMOrphanScanner(
 	client client.Client,
 	scheme *runtime.Scheme,
@@ -74,7 +74,7 @@ func NewLVMOrphanScanner(
 	}
 }
 
-// Reconcile implements the periodic reconciliation logic
+// Reconcile implements the periodic reconciliation logic.
 func (r *LVMOrphanScanner) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	log := log.FromContext(ctx).WithName("lvm-orphan-scanner").WithValues("node", r.nodeID)
 
@@ -83,30 +83,54 @@ func (r *LVMOrphanScanner) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 	var orphanedVolumes []string
 	totalVolumes := 0
 
-	// Check logical volumes in the default volume group
-	log.V(2).Info("Checking default volume group for orphaned volumes", "vg", lvm.DefaultVolumeGroup)
+	// First, list volume groups with the correct tag
+	log.V(2).Info("Listing volume groups with tag", "tag", lvm.DefaultVolumeGroupTag)
 
-	lvs, err := r.lvmManager.ListLogicalVolumes(ctx, &lvmMgr.ListLVOptions{
-		Select: fmt.Sprintf("vg_name=%s", lvm.DefaultVolumeGroup),
+	vgs, err := r.lvmManager.ListVolumeGroups(ctx, &lvmMgr.ListVGOptions{
+		Select: fmt.Sprintf("vg_tags=%s", lvm.DefaultVolumeGroupTag),
 	})
 	if err != nil {
-		log.Error(err, "Failed to list logical volumes", "vg", lvm.DefaultVolumeGroup)
+		log.Error(err, "Failed to list volume groups with tag", "tag", lvm.DefaultVolumeGroupTag)
 		return ctrl.Result{RequeueAfter: r.reconcileInterval}, err
 	}
 
-	for _, lv := range lvs {
-		totalVolumes++
-		volumeID := fmt.Sprintf("%s#%s", lvm.DefaultVolumeGroup, lv.Name)
+	// If no volume groups found with the tag, also check the default volume group
+	vgNamesToScan := []string{}
+	if len(vgs) == 0 {
+		log.V(2).Info("No volume groups found with tag, checking default volume group",
+			"tag", lvm.DefaultVolumeGroupTag, "defaultVG", lvm.DefaultVolumeGroup)
+		vgNamesToScan = append(vgNamesToScan, lvm.DefaultVolumeGroup)
+	} else {
+		for _, vg := range vgs {
+			vgNamesToScan = append(vgNamesToScan, vg.Name)
+		}
+	}
 
-		log.V(3).Info("Checking logical volume", "volumeID", volumeID)
+	for _, vgName := range vgNamesToScan {
+		log.V(2).Info("Checking volume group for orphaned volumes", "vg", vgName)
 
-		// Check if this volume should be cleaned up using field indexing
-		if shouldCleanup, reason, err := r.shouldCleanupVolume(ctx, volumeID); err != nil {
-			log.Error(err, "Failed to check if volume should be cleaned up", "volumeID", volumeID)
-			continue
-		} else if shouldCleanup {
-			log.Info("Found LVM volume to cleanup", "volumeID", volumeID, "reason", reason)
-			orphanedVolumes = append(orphanedVolumes, volumeID)
+		lvs, err := r.lvmManager.ListLogicalVolumes(ctx, &lvmMgr.ListLVOptions{
+			Select: fmt.Sprintf("vg_name=%s", vgName),
+		})
+		if err != nil {
+			log.Error(err, "Failed to list logical volumes", "vg", vgName)
+			continue // Continue with other VGs if one fails
+		}
+
+		for _, lv := range lvs {
+			totalVolumes++
+			volumeID := fmt.Sprintf("%s#%s", vgName, lv.Name)
+
+			log.V(3).Info("Checking logical volume", "volumeID", volumeID)
+
+			// Check if this volume should be cleaned up using field indexing
+			if shouldCleanup, reason, err := r.shouldCleanupVolume(ctx, volumeID); err != nil {
+				log.Error(err, "Failed to check if volume should be cleaned up", "volumeID", volumeID)
+				continue
+			} else if shouldCleanup {
+				log.Info("Found LVM volume to cleanup", "volumeID", volumeID, "reason", reason)
+				orphanedVolumes = append(orphanedVolumes, volumeID)
+			}
 		}
 	}
 
@@ -122,7 +146,7 @@ func (r *LVMOrphanScanner) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 	return ctrl.Result{RequeueAfter: r.reconcileInterval}, nil
 }
 
-// shouldCleanupVolume checks if a volume should be cleaned up using field indexing
+// shouldCleanupVolume checks if a volume should be cleaned up using field indexing.
 func (r *LVMOrphanScanner) shouldCleanupVolume(ctx context.Context, volumeID string) (bool, string, error) {
 	log := log.FromContext(ctx).WithName("lvm-orphan-scanner").WithValues("volumeID", volumeID)
 	// Use field indexing to find PVs with the specific volume handle
@@ -165,7 +189,7 @@ func (r *LVMOrphanScanner) shouldCleanupVolume(ctx context.Context, volumeID str
 	return true, "no corresponding PV found", nil
 }
 
-// cleanupOrphanedVolumes deletes the list of orphaned volumes
+// cleanupOrphanedVolumes deletes the list of orphaned volumes.
 func (r *LVMOrphanScanner) cleanupOrphanedVolumes(ctx context.Context, volumeIDs []string) (cleaned, failed int) {
 	log := log.FromContext(ctx).WithName("lvm-orphan-scanner")
 
@@ -182,7 +206,7 @@ func (r *LVMOrphanScanner) cleanupOrphanedVolumes(ctx context.Context, volumeIDs
 	return cleaned, failed
 }
 
-// deleteOrphanedVolume deletes a single orphaned volume
+// deleteOrphanedVolume deletes a single orphaned volume.
 func (r *LVMOrphanScanner) deleteOrphanedVolume(ctx context.Context, volumeID string) error {
 	log := log.FromContext(ctx).WithName("lvm-orphan-scanner")
 
@@ -229,7 +253,7 @@ func (r *LVMOrphanScanner) deleteOrphanedVolume(ctx context.Context, volumeID st
 	return nil
 }
 
-// Start implements the manager.Runnable interface for periodic execution
+// Start implements the manager.Runnable interface for periodic execution.
 func (r *LVMOrphanScanner) Start(ctx context.Context) error {
 	log := log.FromContext(ctx).WithName("lvm-orphan-scanner")
 	log.Info("Starting LVM orphan scan controller", "interval", r.reconcileInterval, "nextPeriodicRun", time.Now().Add(r.reconcileInterval))
@@ -262,12 +286,12 @@ func (r *LVMOrphanScanner) Start(ctx context.Context) error {
 	}
 }
 
-// NeedLeaderElection returns true to ensure only one instance runs cleanup
+// NeedLeaderElection returns true to ensure only one instance runs cleanup.
 func (r *LVMOrphanScanner) NeedLeaderElection() bool {
 	return false
 }
 
-// SetupWithManager sets up the controller with the Manager as a runnable
+// SetupWithManager sets up the controller with the Manager as a runnable.
 func (r *LVMOrphanScanner) SetupWithManager(mgr ctrl.Manager) error {
 	// Setup field indexing for CSI VolumeHandle
 	if err := r.setupFieldIndexing(mgr); err != nil {
@@ -277,7 +301,7 @@ func (r *LVMOrphanScanner) SetupWithManager(mgr ctrl.Manager) error {
 	return mgr.Add(r)
 }
 
-// setupFieldIndexing creates a field index for PVs by CSI volume handle
+// setupFieldIndexing creates a field index for PVs by CSI volume handle.
 func (r *LVMOrphanScanner) setupFieldIndexing(mgr ctrl.Manager) error {
 	return mgr.GetFieldIndexer().IndexField(
 		context.Background(),

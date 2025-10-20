@@ -6,12 +6,13 @@ package gc
 import (
 	"context"
 	"fmt"
+
 	"local-csi-driver/internal/csi/core/lvm"
 	"local-csi-driver/internal/csi/mounter"
 	lvmMgr "local-csi-driver/internal/pkg/lvm"
 )
 
-// LVMVolumeManager provides an interface for LVM volume operations
+// LVMVolumeManager provides an interface for LVM volume operations.
 type LVMVolumeManager interface {
 	// DeleteVolume deletes an LVM logical volume by volume ID
 	DeleteVolume(ctx context.Context, volumeID string) error
@@ -23,9 +24,11 @@ type LVMVolumeManager interface {
 	UnmountVolume(ctx context.Context, devicePath string) error
 	// ListLogicalVolumes lists logical volumes for the cleanup controller
 	ListLogicalVolumes(ctx context.Context, opts *lvmMgr.ListLVOptions) ([]lvmMgr.LogicalVolume, error)
+	// ListVolumeGroups lists volume groups
+	ListVolumeGroups(ctx context.Context, opts *lvmMgr.ListVGOptions) ([]lvmMgr.VolumeGroup, error)
 }
 
-// lvmVolumeManagerAdapter adapts the LVM core interface to our controller needs
+// lvmVolumeManagerAdapter adapts the LVM core interface to our controller needs.
 type lvmVolumeManagerAdapter struct {
 	lvmCore    *lvm.LVM
 	lvmManager lvmMgr.Manager
@@ -71,4 +74,8 @@ func (a *lvmVolumeManagerAdapter) UnmountVolume(ctx context.Context, devicePath 
 
 func (a *lvmVolumeManagerAdapter) ListLogicalVolumes(ctx context.Context, opts *lvmMgr.ListLVOptions) ([]lvmMgr.LogicalVolume, error) {
 	return a.lvmManager.ListLogicalVolumes(ctx, opts)
+}
+
+func (a *lvmVolumeManagerAdapter) ListVolumeGroups(ctx context.Context, opts *lvmMgr.ListVGOptions) ([]lvmMgr.VolumeGroup, error) {
+	return a.lvmManager.ListVolumeGroups(ctx, opts)
 }

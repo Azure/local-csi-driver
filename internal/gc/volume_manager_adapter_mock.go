@@ -11,7 +11,7 @@ import (
 )
 
 // MockLVMVolumeManager is a comprehensive mock implementation for testing
-// both PV GC and LVM orphan cleanup controllers
+// both PV GC and LVM orphan cleanup controllers.
 type MockLVMVolumeManager struct {
 	*lvmMgr.Fake
 	DeletedLVs []string
@@ -19,7 +19,7 @@ type MockLVMVolumeManager struct {
 	Volumes    map[string]bool     // Track which volumes exist (for PV GC tests)
 }
 
-// NewMockLVMVolumeManager creates a new mock LVM volume manager
+// NewMockLVMVolumeManager creates a new mock LVM volume manager.
 func NewMockLVMVolumeManager() *MockLVMVolumeManager {
 	return &MockLVMVolumeManager{
 		Fake:       lvmMgr.NewFake(),
@@ -29,7 +29,7 @@ func NewMockLVMVolumeManager() *MockLVMVolumeManager {
 	}
 }
 
-// CreateLogicalVolume wraps the fake implementation to track VG associations
+// CreateLogicalVolume wraps the fake implementation to track VG associations.
 func (m *MockLVMVolumeManager) CreateLogicalVolume(ctx context.Context, opts lvmMgr.CreateLVOptions) (int64, error) {
 	size, err := m.Fake.CreateLogicalVolume(ctx, opts)
 	if err != nil {
@@ -46,7 +46,7 @@ func (m *MockLVMVolumeManager) CreateLogicalVolume(ctx context.Context, opts lvm
 	return size, nil
 }
 
-// ListLogicalVolumes with support for VG filtering
+// ListLogicalVolumes with support for VG filtering.
 func (m *MockLVMVolumeManager) ListLogicalVolumes(ctx context.Context, opts *lvmMgr.ListLVOptions) ([]lvmMgr.LogicalVolume, error) {
 	// If there's a select option for VG filtering, handle it
 	if opts != nil && opts.Select != "" {
@@ -62,7 +62,7 @@ func (m *MockLVMVolumeManager) ListLogicalVolumes(ctx context.Context, opts *lvm
 
 			var filteredLVs []lvmMgr.LogicalVolume
 			for _, lvName := range lvNames {
-				if lv, ok := m.Fake.LVs[lvName]; ok {
+				if lv, ok := m.LVs[lvName]; ok {
 					filteredLVs = append(filteredLVs, lv)
 				}
 			}
@@ -74,7 +74,7 @@ func (m *MockLVMVolumeManager) ListLogicalVolumes(ctx context.Context, opts *lvm
 	return m.Fake.ListLogicalVolumes(ctx, opts)
 }
 
-// DeleteVolume implements the LVMVolumeManager interface
+// DeleteVolume implements the LVMVolumeManager interface.
 func (m *MockLVMVolumeManager) DeleteVolume(ctx context.Context, volumeID string) error {
 	print(volumeID)
 	// Parse volume ID to get LV name
@@ -90,16 +90,16 @@ func (m *MockLVMVolumeManager) DeleteVolume(ctx context.Context, volumeID string
 	opts := lvmMgr.RemoveLVOptions{
 		Name: lvName,
 	}
-	return m.Fake.RemoveLogicalVolume(ctx, opts)
+	return m.RemoveLogicalVolume(ctx, opts)
 }
 
-// GetVolumeName implements the LVMVolumeManager interface
+// GetVolumeName implements the LVMVolumeManager interface.
 func (m *MockLVMVolumeManager) GetVolumeName(volumeID string) (string, error) {
 	_, lvName, err := parseVolumeID(volumeID)
 	return lvName, err
 }
 
-// GetNodeDevicePath implements the LVMVolumeManager interface
+// GetNodeDevicePath implements the LVMVolumeManager interface.
 func (m *MockLVMVolumeManager) GetNodeDevicePath(volumeID string) (string, error) {
 	vgName, lvName, err := parseVolumeID(volumeID)
 	if err != nil {
@@ -115,13 +115,23 @@ func (m *MockLVMVolumeManager) GetNodeDevicePath(volumeID string) (string, error
 	return "/dev/" + vgName + "/" + lvName, nil
 }
 
-// UnmountVolume implements the LVMVolumeManager interface
+// UnmountVolume implements the LVMVolumeManager interface.
 func (m *MockLVMVolumeManager) UnmountVolume(ctx context.Context, devicePath string) error {
 	// Mock implementation - always succeeds
 	return nil
 }
 
-// AddVolume is a test helper to add volumes for PV GC controller tests
+// ListVolumeGroups implements the LVMVolumeManager interface.
+func (m *MockLVMVolumeManager) ListVolumeGroups(ctx context.Context, opts *lvmMgr.ListVGOptions) ([]lvmMgr.VolumeGroup, error) {
+	// For testing, return VGs from our tracked VGToLVs
+	var vgs []lvmMgr.VolumeGroup
+	for vgName := range m.VGToLVs {
+		vgs = append(vgs, lvmMgr.VolumeGroup{Name: vgName})
+	}
+	return vgs, nil
+}
+
+// AddVolume is a test helper to add volumes for PV GC controller tests.
 func (m *MockLVMVolumeManager) AddVolume(volumeID string) {
 	m.Volumes[volumeID] = true
 }

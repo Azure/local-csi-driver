@@ -10,7 +10,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 )
 
-// hasNodeAnnotationMismatch checks if the PV's node annotations don't match the current node
+// hasNodeAnnotationMismatch checks if the PV's node annotations don't match the current node.
 func hasNodeAnnotationMismatch(pv *corev1.PersistentVolume, nodeID, selectedNodeAnnotation, selectedInitialNodeParam string) bool {
 	// Check selected-node annotation
 	selectedNode, exists := pv.Annotations[selectedNodeAnnotation]
@@ -33,7 +33,7 @@ func hasNodeAnnotationMismatch(pv *corev1.PersistentVolume, nodeID, selectedNode
 }
 
 // parseVolumeID parses a volume ID in the format <volume-group>#<logical-volume>
-// and returns the volume group name and logical volume name
+// and returns the volume group name and logical volume name.
 func parseVolumeID(volumeID string) (vgName, lvName string, err error) {
 	const separator = "#"
 	segments := strings.Split(volumeID, separator)
