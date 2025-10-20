@@ -2,22 +2,32 @@
 
 ## Overview
 
-This package contains two complementary garbage collection controllers for managing LVM volumes:
+This package contains two complementary garbage collection controllers for
+managing LVM volumes:
 
-1. **PV Garbage Collection Controller**: Event-driven controller that monitors PersistentVolume updates for node annotation mismatches
-2. **LVM Orphan Scanner**: Periodic controller that scans all LVM volumes on the node for cleanup opportunities
+1. **PV Garbage Collection Controller**: Event-driven controller that monitors
+   PersistentVolume updates for node annotation mismatches
+2. **LVM Orphan Scanner**: Periodic controller that scans all LVM volumes on
+   the node for cleanup opportunities
 
-Both controllers share a unified `LVMVolumeManager` interface and work together to ensure orphaned LVM logical volumes are automatically cleaned up when they exist on nodes where they shouldn't be or when they have no corresponding PersistentVolume in the cluster.
+Both controllers share a unified `LVMVolumeManager` interface and work together
+to ensure orphaned LVM logical volumes are automatically cleaned up when they
+exist on nodes where they shouldn't be or when they have no corresponding
+PersistentVolume in the cluster.
 
 ## Problem Statement
 
-In the local CSI driver, LVM volumes can be leaked on nodes when workloads are moved or rescheduled to different nodes. This happens in various scenarios:
+In the local CSI driver, LVM volumes can be leaked on nodes when workloads
+are moved or rescheduled to different nodes. This happens in various scenarios:
 
 - Pod rescheduling to different nodes
 - Node annotation changes that redirect PVs to new nodes
 - Workload migrations during cluster maintenance
 
-When a workload moves and the PV's node annotations (`selectedNodeAnnotation` or `selectedInitialNodeParam`) are updated to point to a different node, the original LVM logical volume may remain on the previous node, becoming "orphaned" and consuming storage space unnecessarily.
+When a workload moves and the PV's node annotations (`selectedNodeAnnotation`
+or `selectedInitialNodeParam`) are updated to point to a different node, the
+original LVM logical volume may remain on the previous node, becoming
+"orphaned" and consuming storage space unnecessarily.
 
 ## Controllers
 
@@ -36,7 +46,8 @@ When a workload moves and the PV's node annotations (`selectedNodeAnnotation` or
 
 - Scans the default LVM volume group for logical volumes
 - Lists all logical volumes using the shared `LVMVolumeManager` interface
-- For each volume, uses efficient field indexing to check if there's a corresponding PV in the cluster
+- For each volume, uses efficient field indexing to check if there's a
+  corresponding PV in the cluster
 - Deletes volumes that are either:
   - Completely orphaned (no PV exists)
   - Have node annotation mismatches with existing PVs
@@ -45,10 +56,14 @@ When a workload moves and the PV's node annotations (`selectedNodeAnnotation` or
 
 These controllers:
 
-1. **Watches PersistentVolumes** - Monitors all PVs managed by the local CSI driver (`localdisk.csi.acstor.io`)
-2. **Detects Mismatches** - Identifies when PV node annotations don't match the current node
-3. **Verifies Volume Existence** - Checks if the LVM volume actually exists on the current node
-4. **Cleans Up Orphaned Volumes** - Deletes LVM logical volumes that shouldn't be on the current node
+1. **Watches PersistentVolumes** - Monitors all PVs managed by the local CSI
+   driver (`localdisk.csi.acstor.io`)
+2. **Detects Mismatches** - Identifies when PV node annotations don't match
+   the current node
+3. **Verifies Volume Existence** - Checks if the LVM volume actually exists on
+   the current node
+4. **Cleans Up Orphaned Volumes** - Deletes LVM logical volumes that shouldn't
+   be on the current node
 5. **Records Events** - Logs cleanup activities for monitoring and debugging
 
 ## How it Works
@@ -66,10 +81,17 @@ The controller is optimized to only reconcile on meaningful events:
 
 The controller uses a hierarchical approach to check node assignments:
 
-- **Primary**: `selectedNodeAnnotation` (`localdisk.csi.acstor.io/selected-node`) - Current selected node
-- **Fallback**: `selectedInitialNodeParam` (`localdisk.csi.acstor.io/selected-initial-node`) - Initial selected node (only checked if primary annotation doesn't exist)
-
-The controller first checks if the `selectedNodeAnnotation` exists and matches the current node. If this annotation doesn't exist, it falls back to checking the `selectedInitialNodeParam`. A mismatch in the applicable annotation indicates the volume should be cleaned up.
+- **Primary**:
+`selectedNodeAnnotation`  (`localdisk.csi.acstor.io/selected-node`) -
+current selected node
+- **Fallback**:
+`selectedInitialNodeParam` (`localdisk.csi.acstor.io/selected-initial-node`) -
+Initial selected node
+ (only checked if primary annotation doesn't exist)
+ The controller first checks if the `selectedNodeAnnotation` exists and matches
+ the current node. If this annotation doesn't exist, it falls back to checking
+ the `selectedInitialNodeParam`. A mismatch in the applicable annotation
+ indicates the volume should be cleaned up.
 
 ### LVM Volume Detection
 
@@ -106,11 +128,13 @@ type LVMVolumeManager interface {
 }
 ```
 
-This interface is implemented by `lvmVolumeManagerAdapter` which wraps the existing LVM components and provides a clean abstraction for both controllers.
+This interface is implemented by `lvmVolumeManagerAdapter` which wraps the
+existing LVM components and provides a clean abstraction for both controllers.
 
 ## Configuration
 
-The PV Garbage Collection Controller is automatically initialized in the main application with:
+The PV Garbage Collection Controller is automatically initialized in the
+main application with:
 
 ```go
 pvGCController := gc.NewPVGarbageCollector(
@@ -147,7 +171,9 @@ The controller generates Kubernetes events on PVs:
 
 ### Purpose
 
-The `LVMOrphanScanner` controller provides periodic scanning and cleanup of LVM volumes that may have been missed by the event-driven PV controller. This ensures comprehensive cleanup of:
+The `LVMOrphanScanner` controller provides periodic scanning
+and cleanup of LVM volumes that may have been missed by the event-driven PV controller.
+This ensures comprehensive cleanup of:
 
 - Volumes that existed before the controller was deployed
 - Volumes orphaned during controller downtime
@@ -157,10 +183,14 @@ The `LVMOrphanScanner` controller provides periodic scanning and cleanup of LVM 
 
 The controller runs at configurable intervals (default: 10 minutes) and:
 
-1. **Scans Default Volume Group**: Uses the shared `LVMVolumeManager` interface to list logical volumes
-2. **Efficient PV Lookup**: Uses field indexing for O(1) PV lookups by volume handle
-3. **Cross-references with Kubernetes**: Checks each volume against existing PVs in the cluster using indexed queries
-4. **Applies Cleanup Logic**: Uses the same node annotation checking and shared `hasNodeAnnotationMismatch` function
+1. **Scans Default Volume Group**:
+Uses the shared `LVMVolumeManager` interface to list logical volumes
+2. **Efficient PV Lookup**:
+Uses field indexing for O(1) PV lookups by volume handle
+3. **Cross-references with Kubernetes**:
+Checks each volume against existing PVs in the cluster using indexed queries
+4. **Applies Cleanup Logic**:
+Uses the same node annotation checking and shared `hasNodeAnnotationMismatch` function
 
 ### Field Indexing Optimization
 
@@ -177,9 +207,10 @@ The controller identifies volumes for cleanup in two scenarios:
 1. **Completely Orphaned**: No PersistentVolume exists with matching VolumeHandle
 2. **Node Mismatch**: PV exists but node annotations don't match current node
 
-Both scenarios use identical logic to the PV Garbage Collection Controller for consistency through shared functions.
+Both scenarios use identical logic to the PV Garbage Collection Controller for
+consistency through shared functions.
 
-### Configuration
+### LVM Orphan Scanner Configuration
 
 ```go
 lvmOrphanScanner := gc.NewLVMOrphanScanner(
@@ -193,14 +224,15 @@ lvmOrphanScanner := gc.NewLVMOrphanScanner(
     volumeClient,                       // LVM core interface
     mounter,                            // Volume mounter interface
     gc.LVMOrphanScannerConfig{
-        ReconcileInterval: lvmOrphanScanInterval,  // Configurable scan frequency
+        ReconcileInterval: lvmOrphanScanInterval,  // Configurable
     },
 )
 ```
 
 ### Integration with Manager
 
-The scanner implements `manager.Runnable` interface and is added to the controller-runtime manager:
+The scanner implements `manager.Runnable` interface and
+is added to the controller-runtime manager:
 
 ```go
 if err := mgr.Add(lvmOrphanScanner); err != nil {
@@ -217,12 +249,17 @@ This ensures the periodic scanner:
 
 ### Safety Features
 
-- **Shared Volume Management**: Uses the same `LVMVolumeManager` interface as the PV controller for consistency
-- **Unmounting Before Deletion**: Calls `UnmountVolume` before deleting to ensure clean cleanup
-- **Driver Verification**: Only processes volumes that match the local CSI driver format
+- **Shared Volume Management**: Uses the same `LVMVolumeManager` interface as
+  the PV controller for consistency
+- **Unmounting Before Deletion**: Calls `UnmountVolume` before deleting to
+  ensure clean cleanup
+- **Driver Verification**: Only processes volumes that match the local CSI
+  driver format
 - **Field Index Safety**: Only indexes PVs managed by the local CSI driver
-- **Graceful Shutdown**: Respects context cancellation for immediate stop during shutdown
-- **Error Tolerance**: Continues processing other volumes even if individual cleanup operations fail
+- **Graceful Shutdown**: Respects context cancellation for immediate stop
+  during shutdown
+- **Error Tolerance**: Continues processing other volumes even if individual
+  cleanup operations fail
 
 ### Volume Deletion Process
 
@@ -231,15 +268,19 @@ Both controllers follow the same deletion process through the shared interface:
 1. **Get Device Path**: Use `GetNodeDevicePath()` to find the volume's device path
 2. **Unmount Volume**: Call `UnmountVolume()` to cleanly unmount any mounted filesystem
 3. **Delete Volume**: Use `DeleteVolume()` to remove the LVM logical volume
-4. **Handle Errors**: Use `lvmMgr.IgnoreNotFound()` to handle already-deleted volumes gracefully
+4. **Handle Errors**: Use `lvmMgr.IgnoreNotFound()` to handle already-deleted
+   volumes gracefully
 
-The combination of both controllers ensures comprehensive and efficient garbage collection of orphaned LVM volumes through both reactive (event-driven) and proactive (periodic) approaches.
+The combination of both controllers ensures comprehensive and efficient garbage
+collection of orphaned LVM volumes through both reactive (event-driven) and
+proactive (periodic) approaches.
 
 ---
 
 ## Command-Line Configuration
 
-Both controllers can be enabled or disabled independently using command-line flags:
+Both controllers can be enabled or disabled independently using
+command-line flags:
 
 ### Flags
 
@@ -307,7 +348,8 @@ Both controllers include comprehensive unit tests with shared test utilities:
 
 ### Test Coverage
 
-- **Node annotation mismatch detection** using the shared `hasNodeAnnotationMismatch` function
+- **Node annotation mismatch detection**
+using the shared `hasNodeAnnotationMismatch` function
 - **Volume ID parsing** with the shared `parseVolumeID` function
 - **Mock LVM operations** through the unified mock interface
 - **Field indexing** for efficient PV lookups in the scanner
@@ -341,10 +383,17 @@ Monitor both controllers through:
 
 Both controllers integrate seamlessly with the existing local CSI driver:
 
-- **Shared Interface**: Both use the unified `LVMVolumeManager` interface
-- **Shared Components**: Common LVM manager, mounter, and core instances
-- **Shared Utilities**: Common functions for node annotation checking and volume parsing
-- **Consistent Behavior**: Identical cleanup logic ensures predictable behavior
-- **Same Annotations**: Uses the same node annotation constants
-- **CSI Driver Compatibility**: Respects the same CSI driver identification
-- **Non-Conflicting**: Operates alongside existing CSI controllers without conflicts
+- **Shared Interface**:
+Both use the unified `LVMVolumeManager` interface
+- **Shared Components**:
+Common LVM manager, mounter, and core instances
+- **Shared Utilities**:
+Common functions for node annotation checking and volume parsing
+- **Consistent Behavior**:
+Identical cleanup logic ensures predictable behavior
+- **Same Annotations**:
+Uses the same node annotation constants
+- **CSI Driver Compatibility**:
+Respects the same CSI driver identification
+- **Non-Conflicting**:
+Operates alongside existing CSI controllers without conflicts
