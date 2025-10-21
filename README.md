@@ -20,7 +20,7 @@ Before proceeding, ensure you have the following installed:
 To install the latest release:
 
 ```sh
-helm install local-csi-driver oci://localcsidriver.azurecr.io/acstor/charts/local-csi-driver --version 0.2.5 --namespace kube-system
+helm install local-csi-driver oci://localcsidriver.azurecr.io/acstor/charts/local-csi-driver --version 0.2.6 --namespace kube-system
 ```
 
 Only one instance of local-csi-driver can run per cluster.
