@@ -5,7 +5,6 @@ package gc
 
 import (
 	"context"
-	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
@@ -137,7 +136,7 @@ func (r *PVFailoverReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 			r.recorder.Eventf(pv, corev1.EventTypeWarning, "CleanupFailed",
 				"Failed to cleanup orphaned LVM volume %s from node %s: %v", volumeID, r.nodeID, err)
 			// Requeue for retry
-			return ctrl.Result{RequeueAfter: time.Minute * 5}, err
+			return ctrl.Result{}, err
 		}
 
 		log.Info("Successfully cleaned up orphaned LVM volume", "volumeID", volumeID)

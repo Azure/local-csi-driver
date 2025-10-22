@@ -91,7 +91,7 @@ func (r *LVMOrphanScanner) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 	})
 	if err != nil {
 		log.Error(err, "Failed to list volume groups with tag", "tag", lvm.DefaultVolumeGroupTag)
-		return ctrl.Result{RequeueAfter: r.reconcileInterval}, err
+		return ctrl.Result{}, err
 	}
 
 	// If no volume groups found with the tag, also check the default volume group
