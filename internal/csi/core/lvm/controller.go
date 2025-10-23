@@ -195,32 +195,84 @@ func (l *LVM) Delete(ctx context.Context, req *csi.DeleteVolumeRequest) error {
 }
 
 func (l *LVM) List(ctx context.Context, req *csi.ListVolumesRequest) (*csi.ListVolumesResponse, error) {
-	_, span := l.tracer.Start(ctx, "volume.lvm.csi/List")
+	ctx, span := l.tracer.Start(ctx, "volume.lvm.csi/List")
 	defer span.End()
 
-	// TODO(sc): list volumes.
+	log := log.FromContext(ctx)
+	log.V(1).Info("listing volumes")
 
-	// vols := &lvmv1alpha1.VolumeList{}
-	// if err := l.client.List(ctx, vols, &client.ListOptions{}); err != nil {
-	// 	span.SetStatus(codes.Error, "List failed")
-	// 	span.RecordError(err)
-	// 	return nil, err
-	// }
+	span.SetAttributes(attribute.String("vol.group.tag", DefaultVolumeGroupTag))
 
-	// entries := make([]*csi.ListVolumesResponse_Entry, 0, len(vols.Items))
-	// for _, vol := range vols.Items {
-	// 	capacity := vol.Spec.Capacity[corev1.ResourceStorage]
-	// 	entries = append(entries, &csi.ListVolumesResponse_Entry{
-	// 		Volume: &csi.Volume{
-	// 			VolumeId:      vol.GetName(),
-	// 			CapacityBytes: capacity.Value(),
-	// 			VolumeContext: vol.Spec.Parameters,
-	// 		},
-	// 	})
-	// }
+	// First, verify that our volume groups with the correct tag exist
+	vgs, err := l.lvm.ListVolumeGroups(ctx, &lvm.ListVGOptions{
+		Select: "vg_tags=" + DefaultVolumeGroupTag,
+	})
+	if err != nil {
+		log.Error(err, "failed to list volume groups")
+		span.SetStatus(codes.Error, "failed to list volume groups")
+		span.RecordError(err)
+		return nil, fmt.Errorf("failed to list volume groups: %w", err)
+	}
+
+	// If no volume group matches our criteria, return empty list
+	if len(vgs) == 0 {
+		log.V(2).Info("no volume group found with expected tag",
+			"tag", DefaultVolumeGroupTag)
+		return &csi.ListVolumesResponse{
+			Entries: []*csi.ListVolumesResponse_Entry{},
+		}, nil
+	}
+
+	// Convert LVM logical volumes to CSI volume entries
+	entries := make([]*csi.ListVolumesResponse_Entry, 0)
+
+	for _, vg := range vgs {
+		log.V(2).Info("listing logical volumes from volume group", "vg", vg.Name)
+		span.SetAttributes(attribute.String("vol.group", vg.Name))
+
+		// List all logical volumes in this volume group
+		lvs, err := l.lvm.ListLogicalVolumes(ctx, &lvm.ListLVOptions{
+			Select: "vg_name=" + vg.Name,
+		})
+		if err != nil {
+			log.Error(err, "failed to list logical volumes", "vg", vg.Name)
+			span.SetStatus(codes.Error, "failed to list logical volumes")
+			span.RecordError(err)
+			return nil, fmt.Errorf("failed to list logical volumes for VG %s: %w", vg.Name, err)
+		}
+
+		for _, lv := range lvs {
+			// Create the volume ID in the expected format: <volume-group>#<logical-volume>
+			volumeId := fmt.Sprintf("%s%s%s", vg.Name, separator, lv.Name)
+
+			entry := &csi.ListVolumesResponse_Entry{
+				Volume: &csi.Volume{
+					VolumeId:      volumeId,
+					CapacityBytes: int64(lv.Size),
+					AccessibleTopology: []*csi.Topology{
+						{
+							Segments: map[string]string{
+								TopologyKey: l.nodeName,
+							},
+						},
+					},
+				},
+			}
+			entries = append(entries, entry)
+
+			span.AddEvent("listed volume", trace.WithAttributes(
+				attribute.String("vol.id", volumeId),
+				attribute.String("vol.name", lv.Name),
+				attribute.String("vol.group", vg.Name),
+				attribute.Int64("vol.size", int64(lv.Size)),
+			))
+		}
+	}
+
+	log.V(1).Info("successfully listed volumes", "count", len(entries))
 
 	return &csi.ListVolumesResponse{
-		// Entries: entries,
+		Entries: entries,
 	}, nil
 }
 

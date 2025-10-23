@@ -65,6 +65,18 @@ cleanup:
   # Cleanup volume groups and physical volumes on pod termination if logical volume are not in use.
   enabled: true
 
+  # PV garbage collection configuration
+  pvGarbageCollection:
+    # Enable event-driven PV garbage collection for node annotation mismatches
+    enabled: true
+
+  # LVM orphan cleanup configuration
+  lvmOrphanCleanup:
+    # Enable periodic LVM orphan cleanup scanning
+    enabled: true
+    # Interval for scanning and cleaning up orphaned LVM volumes
+    interval: 1m
+
 # Webhook configuration.
 webhook:
   enforceEphemeral:
