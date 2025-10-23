@@ -289,6 +289,42 @@ func TestLVM_Create(t *testing.T) {
 			},
 			wantErr: false,
 		},
+		{
+			name: "failover mode parameter propagation",
+			req: &csi.CreateVolumeRequest{
+				Name: "test-volume",
+				CapacityRange: &csi.CapacityRange{
+					RequiredBytes: 1024 * 1024 * 1024, // 1 GiB
+				},
+				VolumeCapabilities: []*csi.VolumeCapability{
+					{
+						AccessType: &csi.VolumeCapability_Block{
+							Block: &csi.VolumeCapability_BlockVolume{},
+						},
+					},
+				},
+				Parameters: map[string]string{
+					"localdisk.csi.acstor.io/failover-mode": "availability",
+				},
+			},
+			want: &csi.Volume{
+				VolumeId:      "containerstorage#test-volume",
+				CapacityBytes: 1024 * 1024 * 1024, // 1 GiB
+				VolumeContext: map[string]string{
+					"localdisk.csi.acstor.io/capacity":      "1073741824",
+					"localdisk.csi.acstor.io/limit":         "0",
+					"localdisk.csi.acstor.io/failover-mode": "availability",
+				},
+				AccessibleTopology: []*csi.Topology{
+					{
+						Segments: map[string]string{
+							"topology.localdisk.csi.acstor.io/node": "nodename",
+						},
+					},
+				},
+			},
+			wantErr: false,
+		},
 	}
 	for _, tt := range tests {
 		var tt = tt
