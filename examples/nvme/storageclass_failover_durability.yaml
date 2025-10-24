@@ -1,0 +1,12 @@
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: localdisk-nvme-durability
+provisioner: localdisk.csi.acstor.io
+parameters:
+  # Failover mode - controls pod scheduling behavior
+  # "availability" - use preferred node affinity (allows scheduling on any node if preferred nodes unavailable)
+  # "durability" - use required node affinity (only schedule on nodes with storage, may cause pod pending)
+  localdisk.csi.acstor.io/failover-mode: "durability"
+allowVolumeExpansion: true
+volumeBindingMode: WaitForFirstConsumer

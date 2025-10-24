@@ -100,6 +100,44 @@ kubectl apply -f storageclass.yaml
 > multiple disks simultaneously, which increases throughput and improves overall
 > I/O performance. This behavior is enabled by default and cannot be disabled.
 
+### Advanced StorageClass Parameters
+
+The local-csi-driver supports several optional parameters in the StorageClass:
+
+| Parameter | Description | Values | Default |
+|-----------|-------------|---------|---------|
+| `localdisk.csi.acstor.io/failover-mode` | Controls pod scheduling behavior in hyperconverged setups | `availability`, `durability` | Not set (defaults to `availability`) |
+
+#### Failover Modes
+
+When using hyperconverged storage (storage and compute on the same nodes),
+the `failover-mode` parameter controls how pods are scheduled:
+
+- **availability**: Uses preferred node affinity. Pods prefer to be scheduled
+ on nodes with local storage but can be placed elsewhere if storage nodes are
+ unavailable. This prioritizes pod availability over data persistence.
+ New empty volume will be provisioned on the new failover node.
+
+- **durability**: Uses required node affinity.
+Pods must be scheduled on nodes with local storage and will remain pending if
+storage nodes are unavailable. This ensures data persistence when possible but may
+affect pod availability.
+
+Example StorageClass with failover mode:
+
+```yaml
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: local-availability
+provisioner: localdisk.csi.acstor.io
+parameters:
+  localdisk.csi.acstor.io/failover-mode: "availability"
+reclaimPolicy: Delete
+volumeBindingMode: WaitForFirstConsumer
+allowVolumeExpansion: true
+```
+
 ## Creating a StatefulSet
 
 To create a StatefulSet using the StorageClass, apply the following YAML:
