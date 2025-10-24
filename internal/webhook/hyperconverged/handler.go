@@ -46,7 +46,7 @@ const (
 	// Well known label used by Kubernetes to identify the node name.
 	KubernetesNodeHostNameLabel = "kubernetes.io/hostname"
 
-	// Failover mode parameter values
+	// Failover mode parameter values.
 	FailoverModeAvailability = "availability"
 	FailoverModeDurability   = "durability"
 	FailoverModeParam        = "localdisk.csi.acstor.io/failover-mode"
@@ -300,7 +300,7 @@ func isRetriableError(err error) bool {
 func (h *handler) getPvNodesAndFailoverMode(ctx context.Context, pvName string) ([]string, string, *admission.Response) {
 	var response admission.Response
 	var nodeNamesList []string
-	var failoverMode string = FailoverModeAvailability // default to availability mode
+	var failoverMode = FailoverModeAvailability // default to availability mode
 
 	// Get the PV.
 	var pv = &corev1.PersistentVolume{}

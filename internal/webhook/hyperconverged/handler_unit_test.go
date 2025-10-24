@@ -11,130 +11,36 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
-func TestPatchPodWithNodeAffinity(t *testing.T) {
-	tests := []struct {
-		name          string
-		pod           *corev1.Pod
-		nodeNames     []string
-		failoverMode  string
-		wantPreferred bool
-		wantRequired  bool
-		expectedNodes []string
-	}{
-		{
-			name: "availability mode creates preferred affinity",
-			pod: &corev1.Pod{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      "test-pod",
-					Namespace: "test-namespace",
-				},
-				Spec: corev1.PodSpec{},
-			},
-			nodeNames:     []string{"node1", "node2"},
-			failoverMode:  FailoverModeAvailability,
-			wantPreferred: true,
-			wantRequired:  false,
-			expectedNodes: []string{"node1", "node2"},
+// Helper functions for test setup and validation
+
+func createTestPod() *corev1.Pod {
+	return &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-pod",
+			Namespace: "test-namespace",
 		},
-		{
-			name: "durability mode creates required affinity",
-			pod: &corev1.Pod{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      "test-pod",
-					Namespace: "test-namespace",
-				},
-				Spec: corev1.PodSpec{},
-			},
-			nodeNames:     []string{"node3", "node4"},
-			failoverMode:  FailoverModeDurability,
-			wantPreferred: false,
-			wantRequired:  true,
-			expectedNodes: []string{"node3", "node4"},
+		Spec: corev1.PodSpec{},
+	}
+}
+
+func createTestPodWithPreferredAffinity(name, namespace string) *corev1.Pod {
+	return &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      name,
+			Namespace: namespace,
 		},
-		{
-			name: "invalid mode defaults to preferred affinity",
-			pod: &corev1.Pod{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      "test-pod",
-					Namespace: "test-namespace",
-				},
-				Spec: corev1.PodSpec{},
-			},
-			nodeNames:     []string{"node5"},
-			failoverMode:  "invalid-mode",
-			wantPreferred: true,
-			wantRequired:  false,
-			expectedNodes: []string{"node5"},
-		},
-		{
-			name: "empty mode defaults to preferred affinity",
-			pod: &corev1.Pod{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      "test-pod",
-					Namespace: "test-namespace",
-				},
-				Spec: corev1.PodSpec{},
-			},
-			nodeNames:     []string{"node6"},
-			failoverMode:  "",
-			wantPreferred: true,
-			wantRequired:  false,
-			expectedNodes: []string{"node6"},
-		},
-		{
-			name: "pod with existing preferred affinity - availability mode",
-			pod: &corev1.Pod{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      "test-pod",
-					Namespace: "test-namespace",
-				},
-				Spec: corev1.PodSpec{
-					Affinity: &corev1.Affinity{
-						NodeAffinity: &corev1.NodeAffinity{
-							PreferredDuringSchedulingIgnoredDuringExecution: []corev1.PreferredSchedulingTerm{
-								{
-									Weight: 50,
-									Preference: corev1.NodeSelectorTerm{
-										MatchExpressions: []corev1.NodeSelectorRequirement{
-											{
-												Key:      "existing-label",
-												Operator: corev1.NodeSelectorOpIn,
-												Values:   []string{"existing-value"},
-											},
-										},
-									},
-								},
-							},
-						},
-					},
-				},
-			},
-			nodeNames:     []string{"node7"},
-			failoverMode:  FailoverModeAvailability,
-			wantPreferred: true,
-			wantRequired:  false,
-			expectedNodes: []string{"node7"},
-		},
-		{
-			name: "pod with existing required affinity - durability mode",
-			pod: &corev1.Pod{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      "test-pod",
-					Namespace: "test-namespace",
-				},
-				Spec: corev1.PodSpec{
-					Affinity: &corev1.Affinity{
-						NodeAffinity: &corev1.NodeAffinity{
-							RequiredDuringSchedulingIgnoredDuringExecution: &corev1.NodeSelector{
-								NodeSelectorTerms: []corev1.NodeSelectorTerm{
+		Spec: corev1.PodSpec{
+			Affinity: &corev1.Affinity{
+				NodeAffinity: &corev1.NodeAffinity{
+					PreferredDuringSchedulingIgnoredDuringExecution: []corev1.PreferredSchedulingTerm{
+						{
+							Weight: 50,
+							Preference: corev1.NodeSelectorTerm{
+								MatchExpressions: []corev1.NodeSelectorRequirement{
 									{
-										MatchExpressions: []corev1.NodeSelectorRequirement{
-											{
-												Key:      "existing-label",
-												Operator: corev1.NodeSelectorOpIn,
-												Values:   []string{"existing-value"},
-											},
-										},
+										Key:      "existing-label",
+										Operator: corev1.NodeSelectorOpIn,
+										Values:   []string{"existing-value"},
 									},
 								},
 							},
@@ -142,199 +48,285 @@ func TestPatchPodWithNodeAffinity(t *testing.T) {
 					},
 				},
 			},
-			nodeNames:     []string{"node8"},
-			failoverMode:  FailoverModeDurability,
-			wantPreferred: false,
-			wantRequired:  true,
-			expectedNodes: []string{"node8"},
 		},
 	}
+}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			// Create handler with mock dependencies
-			rng := rand.New(rand.NewSource(1)) //nolint:gosec // test code
-			h := &handler{
-				rng: rng,
-			}
-
-			// Call the method under test
-			response := h.patchPodWithNodeAffinity(tt.pod, tt.nodeNames, tt.failoverMode)
-
-			// Verify the response is successful
-			if !response.Allowed {
-				t.Errorf("Expected allowed response, got: %v", response.Result)
-			}
-
-			// Parse the patched pod from the response
-			if len(response.Patches) == 0 {
-				t.Fatalf("Expected patches in response, got none")
-			}
-
-			// For this test, we'll verify the logic by checking the original pod is not modified
-			// and create a new pod to test the affinity logic directly
-			testPod := tt.pod.DeepCopy()
-
-			// Manually apply the same logic to verify correctness
-			affinity := corev1.Affinity{}
-			nodeAffinity := corev1.NodeAffinity{}
-
-			nodeSelectorRequirement := corev1.NodeSelectorRequirement{
-				Key:      KubernetesNodeHostNameLabel,
-				Operator: corev1.NodeSelectorOpIn,
-				Values:   tt.nodeNames,
-			}
-
-			if testPod.Spec.Affinity == nil {
-				testPod.Spec.Affinity = &affinity
-			}
-			if testPod.Spec.Affinity.NodeAffinity == nil {
-				testPod.Spec.Affinity.NodeAffinity = &nodeAffinity
-			}
-
-			switch tt.failoverMode {
-			case FailoverModeDurability:
-				requiredTerm := corev1.NodeSelectorTerm{
-					MatchExpressions: []corev1.NodeSelectorRequirement{nodeSelectorRequirement},
-				}
-				if testPod.Spec.Affinity.NodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution == nil {
-					testPod.Spec.Affinity.NodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution = &corev1.NodeSelector{
-						NodeSelectorTerms: []corev1.NodeSelectorTerm{requiredTerm},
-					}
-				} else {
-					testPod.Spec.Affinity.NodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution.NodeSelectorTerms = append(
-						testPod.Spec.Affinity.NodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution.NodeSelectorTerms,
-						requiredTerm,
-					)
-				}
-			case FailoverModeAvailability:
-				fallthrough
-			default:
-				preferredTerm := corev1.PreferredSchedulingTerm{
-					Weight: 100,
-					Preference: corev1.NodeSelectorTerm{
-						MatchExpressions: []corev1.NodeSelectorRequirement{nodeSelectorRequirement},
+func createTestPodWithRequiredAffinity(name, namespace string) *corev1.Pod {
+	return &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      name,
+			Namespace: namespace,
+		},
+		Spec: corev1.PodSpec{
+			Affinity: &corev1.Affinity{
+				NodeAffinity: &corev1.NodeAffinity{
+					RequiredDuringSchedulingIgnoredDuringExecution: &corev1.NodeSelector{
+						NodeSelectorTerms: []corev1.NodeSelectorTerm{
+							{
+								MatchExpressions: []corev1.NodeSelectorRequirement{
+									{
+										Key:      "existing-label",
+										Operator: corev1.NodeSelectorOpIn,
+										Values:   []string{"existing-value"},
+									},
+								},
+							},
+						},
 					},
-				}
-				preferredTerms := []corev1.PreferredSchedulingTerm{preferredTerm}
-
-				if testPod.Spec.Affinity.NodeAffinity.PreferredDuringSchedulingIgnoredDuringExecution == nil {
-					testPod.Spec.Affinity.NodeAffinity.PreferredDuringSchedulingIgnoredDuringExecution = preferredTerms
-				} else {
-					testPod.Spec.Affinity.NodeAffinity.PreferredDuringSchedulingIgnoredDuringExecution = append(
-						testPod.Spec.Affinity.NodeAffinity.PreferredDuringSchedulingIgnoredDuringExecution,
-						preferredTerms...,
-					)
-				}
-			}
-
-			// Verify the affinity was set correctly
-			if tt.wantPreferred {
-				if testPod.Spec.Affinity.NodeAffinity.PreferredDuringSchedulingIgnoredDuringExecution == nil {
-					t.Error("Expected preferred affinity to be set, but it was nil")
-				} else {
-					// Find the term with our nodes
-					found := false
-					for _, term := range testPod.Spec.Affinity.NodeAffinity.PreferredDuringSchedulingIgnoredDuringExecution {
-						for _, expr := range term.Preference.MatchExpressions {
-							if expr.Key == KubernetesNodeHostNameLabel && expr.Operator == corev1.NodeSelectorOpIn {
-								for _, expectedNode := range tt.expectedNodes {
-									nodeFound := false
-									for _, actualNode := range expr.Values {
-										if actualNode == expectedNode {
-											nodeFound = true
-											break
-										}
-									}
-									if !nodeFound {
-										t.Errorf("Expected node %s not found in preferred affinity", expectedNode)
-									}
-								}
-								found = true
-								break
-							}
-						}
-						if found {
-							break
-						}
-					}
-					if !found {
-						t.Error("Expected preferred affinity term with hostname label not found")
-					}
-				}
-			}
-
-			if tt.wantRequired {
-				if testPod.Spec.Affinity.NodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution == nil {
-					t.Error("Expected required affinity to be set, but it was nil")
-				} else {
-					// Find the term with our nodes
-					found := false
-					for _, term := range testPod.Spec.Affinity.NodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution.NodeSelectorTerms {
-						for _, expr := range term.MatchExpressions {
-							if expr.Key == KubernetesNodeHostNameLabel && expr.Operator == corev1.NodeSelectorOpIn {
-								for _, expectedNode := range tt.expectedNodes {
-									nodeFound := false
-									for _, actualNode := range expr.Values {
-										if actualNode == expectedNode {
-											nodeFound = true
-											break
-										}
-									}
-									if !nodeFound {
-										t.Errorf("Expected node %s not found in required affinity", expectedNode)
-									}
-								}
-								found = true
-								break
-							}
-						}
-						if found {
-							break
-						}
-					}
-					if !found {
-						t.Error("Expected required affinity term with hostname label not found")
-					}
-				}
-			}
-
-			// Verify the opposite affinity type is not set inappropriately
-			if !tt.wantPreferred && testPod.Spec.Affinity.NodeAffinity.PreferredDuringSchedulingIgnoredDuringExecution != nil {
-				// Check if our specific nodes were added to preferred (they shouldn't be for durability mode)
-				for _, term := range testPod.Spec.Affinity.NodeAffinity.PreferredDuringSchedulingIgnoredDuringExecution {
-					for _, expr := range term.Preference.MatchExpressions {
-						if expr.Key == KubernetesNodeHostNameLabel && expr.Operator == corev1.NodeSelectorOpIn {
-							for _, expectedNode := range tt.expectedNodes {
-								for _, actualNode := range expr.Values {
-									if actualNode == expectedNode {
-										t.Errorf("Node %s should not be in preferred affinity for durability mode", expectedNode)
-									}
-								}
-							}
-						}
-					}
-				}
-			}
-
-			if !tt.wantRequired && testPod.Spec.Affinity.NodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution != nil {
-				// Check if our specific nodes were added to required (they shouldn't be for availability mode)
-				for _, term := range testPod.Spec.Affinity.NodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution.NodeSelectorTerms {
-					for _, expr := range term.MatchExpressions {
-						if expr.Key == KubernetesNodeHostNameLabel && expr.Operator == corev1.NodeSelectorOpIn {
-							for _, expectedNode := range tt.expectedNodes {
-								for _, actualNode := range expr.Values {
-									if actualNode == expectedNode {
-										t.Errorf("Node %s should not be in required affinity for availability mode", expectedNode)
-									}
-								}
-							}
-						}
-					}
-				}
-			}
-		})
+				},
+			},
+		},
 	}
+}
+
+func createTestHandler() *handler {
+	rng := rand.New(rand.NewSource(1)) //nolint:gosec // test code
+	return &handler{
+		rng: rng,
+	}
+}
+
+func applyAffinityLogic(pod *corev1.Pod, nodeNames []string, failoverMode string) {
+	affinity := corev1.Affinity{}
+	nodeAffinity := corev1.NodeAffinity{}
+
+	nodeSelectorRequirement := corev1.NodeSelectorRequirement{
+		Key:      KubernetesNodeHostNameLabel,
+		Operator: corev1.NodeSelectorOpIn,
+		Values:   nodeNames,
+	}
+
+	if pod.Spec.Affinity == nil {
+		pod.Spec.Affinity = &affinity
+	}
+	if pod.Spec.Affinity.NodeAffinity == nil {
+		pod.Spec.Affinity.NodeAffinity = &nodeAffinity
+	}
+
+	switch failoverMode {
+	case FailoverModeDurability:
+		applyRequiredAffinity(pod, nodeSelectorRequirement)
+	case FailoverModeAvailability:
+		fallthrough
+	default:
+		applyPreferredAffinity(pod, nodeSelectorRequirement)
+	}
+}
+
+func applyRequiredAffinity(pod *corev1.Pod, requirement corev1.NodeSelectorRequirement) {
+	requiredTerm := corev1.NodeSelectorTerm{
+		MatchExpressions: []corev1.NodeSelectorRequirement{requirement},
+	}
+	if pod.Spec.Affinity.NodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution == nil {
+		pod.Spec.Affinity.NodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution = &corev1.NodeSelector{
+			NodeSelectorTerms: []corev1.NodeSelectorTerm{requiredTerm},
+		}
+	} else {
+		pod.Spec.Affinity.NodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution.NodeSelectorTerms = append(
+			pod.Spec.Affinity.NodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution.NodeSelectorTerms,
+			requiredTerm,
+		)
+	}
+}
+
+func applyPreferredAffinity(pod *corev1.Pod, requirement corev1.NodeSelectorRequirement) {
+	preferredTerm := corev1.PreferredSchedulingTerm{
+		Weight: 100,
+		Preference: corev1.NodeSelectorTerm{
+			MatchExpressions: []corev1.NodeSelectorRequirement{requirement},
+		},
+	}
+	preferredTerms := []corev1.PreferredSchedulingTerm{preferredTerm}
+
+	if pod.Spec.Affinity.NodeAffinity.PreferredDuringSchedulingIgnoredDuringExecution == nil {
+		pod.Spec.Affinity.NodeAffinity.PreferredDuringSchedulingIgnoredDuringExecution = preferredTerms
+	} else {
+		pod.Spec.Affinity.NodeAffinity.PreferredDuringSchedulingIgnoredDuringExecution = append(
+			pod.Spec.Affinity.NodeAffinity.PreferredDuringSchedulingIgnoredDuringExecution,
+			preferredTerms...,
+		)
+	}
+}
+
+func validatePreferredAffinity(t *testing.T, pod *corev1.Pod, expectedNodes []string) {
+	t.Helper()
+	if pod.Spec.Affinity.NodeAffinity.PreferredDuringSchedulingIgnoredDuringExecution == nil {
+		t.Error("Expected preferred affinity to be set, but it was nil")
+		return
+	}
+
+	found := findAffinityNodes(pod.Spec.Affinity.NodeAffinity.PreferredDuringSchedulingIgnoredDuringExecution, expectedNodes)
+	if !found {
+		t.Error("Expected preferred affinity term with hostname label not found")
+	}
+}
+
+func validateRequiredAffinity(t *testing.T, pod *corev1.Pod, expectedNodes []string) {
+	t.Helper()
+	if pod.Spec.Affinity.NodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution == nil {
+		t.Error("Expected required affinity to be set, but it was nil")
+		return
+	}
+
+	found := findRequiredAffinityNodes(pod.Spec.Affinity.NodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution.NodeSelectorTerms, expectedNodes)
+	if !found {
+		t.Error("Expected required affinity term with hostname label not found")
+	}
+}
+
+func findAffinityNodes(preferredTerms []corev1.PreferredSchedulingTerm, expectedNodes []string) bool {
+	for _, term := range preferredTerms {
+		for _, expr := range term.Preference.MatchExpressions {
+			if expr.Key == KubernetesNodeHostNameLabel && expr.Operator == corev1.NodeSelectorOpIn {
+				return validateNodeList(expectedNodes, expr.Values)
+			}
+		}
+	}
+	return false
+}
+
+func findRequiredAffinityNodes(requiredTerms []corev1.NodeSelectorTerm, expectedNodes []string) bool {
+	for _, term := range requiredTerms {
+		for _, expr := range term.MatchExpressions {
+			if expr.Key == KubernetesNodeHostNameLabel && expr.Operator == corev1.NodeSelectorOpIn {
+				return validateNodeList(expectedNodes, expr.Values)
+			}
+		}
+	}
+	return false
+}
+
+func validateNodeList(expectedNodes, actualNodes []string) bool {
+	for _, expectedNode := range expectedNodes {
+		found := false
+		for _, actualNode := range actualNodes {
+			if actualNode == expectedNode {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return false
+		}
+	}
+	return true
+}
+
+// Test functions split by scenario
+
+func TestPatchPodWithNodeAffinity_AvailabilityMode(t *testing.T) {
+	h := createTestHandler()
+	pod := createTestPod()
+	nodeNames := []string{"node1", "node2"}
+
+	response := h.patchPodWithNodeAffinity(pod, nodeNames, FailoverModeAvailability)
+
+	if !response.Allowed {
+		t.Errorf("Expected allowed response, got: %v", response.Result)
+	}
+	if len(response.Patches) == 0 {
+		t.Fatalf("Expected patches in response, got none")
+	}
+
+	testPod := pod.DeepCopy()
+	applyAffinityLogic(testPod, nodeNames, FailoverModeAvailability)
+	validatePreferredAffinity(t, testPod, nodeNames)
+}
+
+func TestPatchPodWithNodeAffinity_DurabilityMode(t *testing.T) {
+	h := createTestHandler()
+	pod := createTestPod()
+	nodeNames := []string{"node3", "node4"}
+
+	response := h.patchPodWithNodeAffinity(pod, nodeNames, FailoverModeDurability)
+
+	if !response.Allowed {
+		t.Errorf("Expected allowed response, got: %v", response.Result)
+	}
+	if len(response.Patches) == 0 {
+		t.Fatalf("Expected patches in response, got none")
+	}
+
+	testPod := pod.DeepCopy()
+	applyAffinityLogic(testPod, nodeNames, FailoverModeDurability)
+	validateRequiredAffinity(t, testPod, nodeNames)
+}
+
+func TestPatchPodWithNodeAffinity_InvalidModeDefaultsToPreferred(t *testing.T) {
+	h := createTestHandler()
+	pod := createTestPod()
+	nodeNames := []string{"node5"}
+
+	response := h.patchPodWithNodeAffinity(pod, nodeNames, "invalid-mode")
+
+	if !response.Allowed {
+		t.Errorf("Expected allowed response, got: %v", response.Result)
+	}
+	if len(response.Patches) == 0 {
+		t.Fatalf("Expected patches in response, got none")
+	}
+
+	testPod := pod.DeepCopy()
+	applyAffinityLogic(testPod, nodeNames, "invalid-mode")
+	validatePreferredAffinity(t, testPod, nodeNames)
+}
+
+func TestPatchPodWithNodeAffinity_EmptyModeDefaultsToPreferred(t *testing.T) {
+	h := createTestHandler()
+	pod := createTestPod()
+	nodeNames := []string{"node6"}
+
+	response := h.patchPodWithNodeAffinity(pod, nodeNames, "")
+
+	if !response.Allowed {
+		t.Errorf("Expected allowed response, got: %v", response.Result)
+	}
+	if len(response.Patches) == 0 {
+		t.Fatalf("Expected patches in response, got none")
+	}
+
+	testPod := pod.DeepCopy()
+	applyAffinityLogic(testPod, nodeNames, "")
+	validatePreferredAffinity(t, testPod, nodeNames)
+}
+
+func TestPatchPodWithNodeAffinity_ExistingPreferredAffinity(t *testing.T) {
+	h := createTestHandler()
+	pod := createTestPodWithPreferredAffinity("test-pod", "test-namespace")
+	nodeNames := []string{"node7"}
+
+	response := h.patchPodWithNodeAffinity(pod, nodeNames, FailoverModeAvailability)
+
+	if !response.Allowed {
+		t.Errorf("Expected allowed response, got: %v", response.Result)
+	}
+	if len(response.Patches) == 0 {
+		t.Fatalf("Expected patches in response, got none")
+	}
+
+	testPod := pod.DeepCopy()
+	applyAffinityLogic(testPod, nodeNames, FailoverModeAvailability)
+	validatePreferredAffinity(t, testPod, nodeNames)
+}
+
+func TestPatchPodWithNodeAffinity_ExistingRequiredAffinity(t *testing.T) {
+	h := createTestHandler()
+	pod := createTestPodWithRequiredAffinity("test-pod", "test-namespace")
+	nodeNames := []string{"node8"}
+
+	response := h.patchPodWithNodeAffinity(pod, nodeNames, FailoverModeDurability)
+
+	if !response.Allowed {
+		t.Errorf("Expected allowed response, got: %v", response.Result)
+	}
+	if len(response.Patches) == 0 {
+		t.Fatalf("Expected patches in response, got none")
+	}
+
+	testPod := pod.DeepCopy()
+	applyAffinityLogic(testPod, nodeNames, FailoverModeDurability)
+	validateRequiredAffinity(t, testPod, nodeNames)
 }
 
 func TestGetPvNodesAndFailoverMode(t *testing.T) {
