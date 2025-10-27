@@ -1,0 +1,176 @@
+# DaemonSet to configure containerd to use NVMe-backed storage for image caching.
+# Prerequisites: Nodes must use VM sizes with local NVMe disks (e.g., Standard_L8s_v3, Standard_L16s_v3).
+# This DaemonSet assembles a RAID 0 array (if multiple NVMe disks are present), mounts it, and updates containerd's config to use the NVMe volume for its root directory.
+
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: containerd-nvme-config
+  namespace: kube-system
+spec:
+  selector:
+    matchLabels:
+      name: containerd-nvme-config
+  template:
+    metadata:
+      labels:
+        name: containerd-nvme-config
+    spec:
+      hostPID: true
+      hostNetwork: true
+      tolerations:
+      - operator: Exists
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+            - matchExpressions:
+              - key: node.kubernetes.io/instance-type
+                operator: In
+                values:             # Change the values with the VM sizes that have local NVMe disks
+                  - Standard_L8s_v3
+                  - Standard_L16s_v3
+      containers:
+      - name: containerd-config
+        image: ubuntu:22.04
+        securityContext:
+          privileged: true
+        command:
+        - /bin/bash
+        - -c
+        - |
+          mkdir -p /host/usr/local/bin
+          cat <<'EOF' > /host/usr/local/bin/setup-raid.sh
+          #!/bin/bash
+          # Create or assemble RAID 0 array from all available NVMe disks for maximum performance
+          nvme_disks=$(lsblk -dn -o NAME | grep '^nvme')
+          
+          if [ $(echo "$nvme_disks" | wc -l) -gt 1 ]; then
+            # Multiple NVMe disks - use RAID 0
+            if [ ! -b /dev/md0 ]; then
+              # RAID array doesn't exist, create it
+              echo "Creating new RAID 0 array with NVMe disks..."
+              mdadm --create /dev/md0 --level=0 --raid-devices=$(echo "$nvme_disks" | wc -l) $(echo "$nvme_disks" | sed 's/^/\/dev\//')
+              
+              # Save RAID configuration for auto-assembly on reboot
+              mkdir -p /etc/mdadm
+              mdadm --detail --scan >> /etc/mdadm/mdadm.conf
+              
+              # Format the new RAID array
+              mkfs.ext4 -F /dev/md0
+            else
+              # RAID array exists, try to assemble it
+              echo "RAID array /dev/md0 exists, checking if it needs assembly..."
+              if ! mdadm --detail /dev/md0 >/dev/null 2>&1; then
+                echo "Assembling existing RAID array..."
+                mdadm --assemble /dev/md0 $(echo "$nvme_disks" | sed 's/^/\/dev\//')
+              fi
+            fi
+            
+            # Mount the RAID array
+            mkdir -p /mnt/nvme-raid/containerd
+            if ! mountpoint -q /mnt/nvme-raid/containerd; then
+              mount /dev/md0 /mnt/nvme-raid/containerd
+            fi
+
+            # Ensure the mount persists after node restart
+            if ! grep -q '/dev/md0.*nvme-raid' /etc/fstab; then
+              echo '/dev/md0 /mnt/nvme-raid/containerd ext4 defaults,nofail 0 2' >> /etc/fstab
+            fi
+          else
+            # Single NVMe disk
+            single_disk="/dev/$(echo "$nvme_disks" | head -1)"
+            mkdir -p /mnt/nvme-raid/containerd
+            
+            # Check if disk is already formatted and mounted
+            if ! mountpoint -q /mnt/nvme-raid/containerd; then
+              # Format if not already formatted with ext4
+              if ! blkid "$single_disk" | grep -q 'TYPE="ext4"'; then
+                mkfs.ext4 -F "$single_disk"
+              fi
+              mount "$single_disk" /mnt/nvme-raid/containerd
+            fi
+            
+            # Update fstab for single disk (fix the incorrect md0 reference)
+            if ! grep -q "$single_disk.*nvme-raid" /etc/fstab; then
+              echo "$single_disk /mnt/nvme-raid/containerd ext4 defaults,nofail 0 2" >> /etc/fstab
+            fi
+          fi
+
+          # Ensure NVMe directory exists with correct permissions
+          NVME_ROOT_PATH="/mnt/nvme-raid/containerd"
+          mkdir -p "$NVME_ROOT_PATH"
+          chown -R root:root "$NVME_ROOT_PATH"
+          chmod 755 "$NVME_ROOT_PATH"
+
+          # Configure containerd image cache path with the NVMe RAID path
+          # Detect containerd config file location
+          CONFIG_FILE=""
+          for path in /etc/containerd/config.toml /var/lib/containerd/config.toml; do
+            if [ -f "$path" ]; then
+              CONFIG_FILE="$path"
+              break
+            fi
+          done
+          if [ -z "$CONFIG_FILE" ]; then
+            echo "containerd config.toml not found in common locations." >&2
+            exit 1
+          fi
+          
+          # Update containerd configuration
+          if grep -q '^\s*root\s*=' "$CONFIG_FILE"; then
+            sed -i 's|^\(\s*root\s*=\s*\).*|\1"'"$NVME_ROOT_PATH"'"|' "$CONFIG_FILE"
+          else
+            # Insert root directive at the top
+            { echo "root = \"$NVME_ROOT_PATH\""; cat "$CONFIG_FILE"; } > "$CONFIG_FILE.tmp" && mv "$CONFIG_FILE.tmp" "$CONFIG_FILE"
+          fi
+          EOF
+
+          chmod +x /host/usr/local/bin/setup-raid.sh
+
+          # Deploy systemd unit to ensure the setup on node restart
+          mkdir -p /host/etc/systemd/system
+          cat <<'EOF' > /host/etc/systemd/system/setup-raid.service
+          [Unit]
+          Description=Assemble RAID for containerd cache
+          Before=containerd.service
+          Requires=local-fs.target
+
+          [Service]
+          Type=oneshot
+          ExecStart=/usr/local/bin/setup-raid.sh
+          RemainAfterExit=yes
+
+          [Install]
+          WantedBy=multi-user.target
+          EOF
+
+          # Enable and reload systemd
+          chroot /host systemctl daemon-reload
+          chroot /host systemctl enable setup-raid.service
+
+          chroot /host /usr/local/bin/setup-raid.sh
+
+          # Start containerd with new configuration
+          chroot /host systemctl restart containerd
+
+          # Keep container running
+          tail -f /dev/null
+        volumeMounts:
+        - name: host-root
+          mountPath: /host
+        - name: dev
+          mountPath: /dev
+        - name: sys
+          mountPath: /sys
+      volumes:
+      - name: host-root
+        hostPath:
+          path: /
+      - name: dev
+        hostPath:
+          path: /dev
+      - name: sys
+        hostPath:
+          path: /sys
+```
