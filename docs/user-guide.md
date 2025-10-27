@@ -33,6 +33,23 @@ Only one instance of local-csi-driver can be installed per cluster.
 Helm chart values are documented in: [Helm chart
 README](../charts/latest/README.md).
 
+### Installing with RAID Support
+
+For improved performance, you can enable automatic RAID 0 array creation across
+multiple NVMe devices:
+
+```sh
+helm install local-csi-driver oci://localcsidriver.azurecr.io/acstor/charts/local-csi-driver --version <release> --namespace kube-system --set raid.enabled=true
+```
+
+When RAID is enabled, an init container will automatically:
+
+- Detect unused NVMe devices on each node
+- Create a RAID 0 array using mdadm (if 2+ devices are available)
+- Create an LVM volume group on the RAID device
+
+For more details on RAID configuration, see the [Helm chart README](../charts/latest/README.md#raid-configuration).
+
 ## Creating a StorageClass
 
 To create a StorageClass for the local-csi-driver, apply the following YAML:
@@ -48,6 +65,28 @@ volumeBindingMode: WaitForFirstConsumer
 allowVolumeExpansion: true
 ```
 
+### StorageClass Parameters
+
+The StorageClass supports the following optional parameters:
+
+- `volumeGroup`: Specifies a custom LVM volume group name. If not specified,
+  defaults to `containerstorage`.
+
+Example with custom volume group:
+
+```yaml
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: local-custom-vg
+provisioner: localdisk.csi.acstor.io
+reclaimPolicy: Delete
+volumeBindingMode: WaitForFirstConsumer
+allowVolumeExpansion: true
+parameters:
+  volumeGroup: "my-custom-vg"
+```
+
 Save this YAML to a file (e.g., `storageclass.yaml`) and apply it:
 
 ```sh
@@ -60,6 +99,44 @@ kubectl apply -f storageclass.yaml
 > technique where data is divided into small chunks and evenly written across
 > multiple disks simultaneously, which increases throughput and improves overall
 > I/O performance. This behavior is enabled by default and cannot be disabled.
+
+### Advanced StorageClass Parameters
+
+The local-csi-driver supports several optional parameters in the StorageClass:
+
+| Parameter | Description | Values | Default |
+|-----------|-------------|---------|---------|
+| `localdisk.csi.acstor.io/failover-mode` | Controls pod scheduling behavior in hyperconverged setups | `availability`, `durability` | Not set (defaults to `availability`) |
+
+#### Failover Modes
+
+When using hyperconverged storage (storage and compute on the same nodes),
+the `failover-mode` parameter controls how pods are scheduled:
+
+- **availability**: Uses preferred node affinity. Pods prefer to be scheduled
+ on nodes with local storage but can be placed elsewhere if storage nodes are
+ unavailable. This prioritizes pod availability over data persistence.
+ New empty volume will be provisioned on the new failover node.
+
+- **durability**: Uses required node affinity.
+Pods must be scheduled on nodes with local storage and will remain pending if
+storage nodes are unavailable. This ensures data persistence when possible but may
+affect pod availability.
+
+Example StorageClass with failover mode:
+
+```yaml
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: local-availability
+provisioner: localdisk.csi.acstor.io
+parameters:
+  localdisk.csi.acstor.io/failover-mode: "availability"
+reclaimPolicy: Delete
+volumeBindingMode: WaitForFirstConsumer
+allowVolumeExpansion: true
+```
 
 ## Creating a StatefulSet
 

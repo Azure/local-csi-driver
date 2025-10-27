@@ -79,14 +79,17 @@ func TestLVM_Create(t *testing.T) {
 						},
 					},
 				},
-				Parameters: map[string]string{},
+				Parameters: map[string]string{
+					"volumeGroup": "custom-vg",
+				},
 			},
 			want: &csi.Volume{
-				VolumeId:      "containerstorage#test-volume",
+				VolumeId:      "custom-vg#test-volume",
 				CapacityBytes: 1024 * 1024 * 1024, // 1 GiB
 				VolumeContext: map[string]string{
 					"localdisk.csi.acstor.io/capacity": "1073741824",
 					"localdisk.csi.acstor.io/limit":    "0",
+					"volumeGroup":                      "custom-vg",
 				},
 				AccessibleTopology: []*csi.Topology{
 					{
@@ -275,6 +278,42 @@ func TestLVM_Create(t *testing.T) {
 					"localdisk.csi.acstor.io/capacity": "1077936128", // actual allocated size
 					// We won't be rounding up the limit. Its a validation and not allocation.
 					"localdisk.csi.acstor.io/limit": "2150629376", // Limit won't be rounded up
+				},
+				AccessibleTopology: []*csi.Topology{
+					{
+						Segments: map[string]string{
+							"topology.localdisk.csi.acstor.io/node": "nodename",
+						},
+					},
+				},
+			},
+			wantErr: false,
+		},
+		{
+			name: "failover mode parameter propagation",
+			req: &csi.CreateVolumeRequest{
+				Name: "test-volume",
+				CapacityRange: &csi.CapacityRange{
+					RequiredBytes: 1024 * 1024 * 1024, // 1 GiB
+				},
+				VolumeCapabilities: []*csi.VolumeCapability{
+					{
+						AccessType: &csi.VolumeCapability_Block{
+							Block: &csi.VolumeCapability_BlockVolume{},
+						},
+					},
+				},
+				Parameters: map[string]string{
+					"localdisk.csi.acstor.io/failover-mode": "availability",
+				},
+			},
+			want: &csi.Volume{
+				VolumeId:      "containerstorage#test-volume",
+				CapacityBytes: 1024 * 1024 * 1024, // 1 GiB
+				VolumeContext: map[string]string{
+					"localdisk.csi.acstor.io/capacity":      "1073741824",
+					"localdisk.csi.acstor.io/limit":         "0",
+					"localdisk.csi.acstor.io/failover-mode": "availability",
 				},
 				AccessibleTopology: []*csi.Topology{
 					{
@@ -508,5 +547,179 @@ func TestAvailableCapacity(t *testing.T) {
 			}
 		})
 	}
+}
 
+func TestLVM_List(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name            string
+		expectLVM       func(*lvmMgr.MockManager)
+		expectedEntries int
+		wantErr         bool
+	}{
+		{
+			name: "no volume group exists",
+			expectLVM: func(m *lvmMgr.MockManager) {
+				m.EXPECT().ListVolumeGroups(gomock.Any(), &lvmMgr.ListVGOptions{
+					Select: "vg_tags=" + lvm.DefaultVolumeGroupTag,
+				}).Return([]lvmMgr.VolumeGroup{}, nil)
+			},
+			expectedEntries: 0,
+			wantErr:         false,
+		},
+		{
+			name: "volume group exists with logical volumes",
+			expectLVM: func(m *lvmMgr.MockManager) {
+				m.EXPECT().ListVolumeGroups(gomock.Any(), &lvmMgr.ListVGOptions{
+					Select: "vg_tags=" + lvm.DefaultVolumeGroupTag,
+				}).Return([]lvmMgr.VolumeGroup{
+					{Name: lvm.DefaultVolumeGroup},
+				}, nil)
+				m.EXPECT().ListLogicalVolumes(gomock.Any(), &lvmMgr.ListLVOptions{
+					Select: "vg_name=" + lvm.DefaultVolumeGroup,
+				}).Return([]lvmMgr.LogicalVolume{
+					{Name: "test-lv-1", Size: lvmMgr.Int64String(1024 * 1024 * 1024)}, // 1 GiB
+					{Name: "test-lv-2", Size: lvmMgr.Int64String(2048 * 1024 * 1024)}, // 2 GiB
+				}, nil)
+			},
+			expectedEntries: 2,
+			wantErr:         false,
+		},
+		{
+			name: "volume group exists with no logical volumes",
+			expectLVM: func(m *lvmMgr.MockManager) {
+				m.EXPECT().ListVolumeGroups(gomock.Any(), &lvmMgr.ListVGOptions{
+					Select: "vg_tags=" + lvm.DefaultVolumeGroupTag,
+				}).Return([]lvmMgr.VolumeGroup{
+					{Name: lvm.DefaultVolumeGroup},
+				}, nil)
+				m.EXPECT().ListLogicalVolumes(gomock.Any(), &lvmMgr.ListLVOptions{
+					Select: "vg_name=" + lvm.DefaultVolumeGroup,
+				}).Return([]lvmMgr.LogicalVolume{}, nil)
+			},
+			expectedEntries: 0,
+			wantErr:         false,
+		},
+		{
+			name: "list volume groups error",
+			expectLVM: func(m *lvmMgr.MockManager) {
+				m.EXPECT().ListVolumeGroups(gomock.Any(), &lvmMgr.ListVGOptions{
+					Select: "vg_tags=" + lvm.DefaultVolumeGroupTag,
+				}).Return(nil, errors.New("list VG failed"))
+			},
+			expectedEntries: 0,
+			wantErr:         true,
+		},
+		{
+			name: "list logical volumes error",
+			expectLVM: func(m *lvmMgr.MockManager) {
+				m.EXPECT().ListVolumeGroups(gomock.Any(), &lvmMgr.ListVGOptions{
+					Select: "vg_tags=" + lvm.DefaultVolumeGroupTag,
+				}).Return([]lvmMgr.VolumeGroup{
+					{Name: lvm.DefaultVolumeGroup},
+				}, nil)
+				m.EXPECT().ListLogicalVolumes(gomock.Any(), &lvmMgr.ListLVOptions{
+					Select: "vg_name=" + lvm.DefaultVolumeGroup,
+				}).Return(nil, errors.New("list LV failed"))
+			},
+			expectedEntries: 0,
+			wantErr:         true,
+		},
+		{
+			name: "multiple volume groups with same tag",
+			expectLVM: func(m *lvmMgr.MockManager) {
+				m.EXPECT().ListVolumeGroups(gomock.Any(), &lvmMgr.ListVGOptions{
+					Select: "vg_tags=" + lvm.DefaultVolumeGroupTag,
+				}).Return([]lvmMgr.VolumeGroup{
+					{Name: lvm.DefaultVolumeGroup},
+					{Name: "another-vg"},
+				}, nil)
+				m.EXPECT().ListLogicalVolumes(gomock.Any(), &lvmMgr.ListLVOptions{
+					Select: "vg_name=" + lvm.DefaultVolumeGroup,
+				}).Return([]lvmMgr.LogicalVolume{
+					{Name: "test-lv-1", Size: lvmMgr.Int64String(1024 * 1024 * 1024)}, // 1 GiB
+				}, nil)
+				m.EXPECT().ListLogicalVolumes(gomock.Any(), &lvmMgr.ListLVOptions{
+					Select: "vg_name=another-vg",
+				}).Return([]lvmMgr.LogicalVolume{
+					{Name: "test-lv-2", Size: lvmMgr.Int64String(2048 * 1024 * 1024)}, // 2 GiB
+				}, nil)
+			},
+			expectedEntries: 2,
+			wantErr:         false,
+		},
+	}
+
+	for _, tt := range tests {
+		var tt = tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			ctrl := gomock.NewController(t)
+			defer ctrl.Finish()
+
+			mockLVM := lvmMgr.NewMockManager(ctrl)
+			tt.expectLVM(mockLVM)
+
+			tp := telemetry.NewNoopTracerProvider()
+			p := probe.NewFake([]string{"device1"}, nil)
+
+			l, err := lvm.New("test-pod", "test-node", "test-namespace", false, p, mockLVM, tp)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			req := &csi.ListVolumesRequest{}
+			resp, err := l.List(context.Background(), req)
+
+			if tt.wantErr {
+				if err == nil {
+					t.Errorf("List() expected error but got none")
+				}
+				return
+			}
+
+			if err != nil {
+				t.Errorf("List() unexpected error: %v", err)
+				return
+			}
+
+			if len(resp.Entries) != tt.expectedEntries {
+				t.Errorf("List() expected %d entries, got %d", tt.expectedEntries, len(resp.Entries))
+			}
+
+			// Verify volume ID format and topology for each entry
+			for _, entry := range resp.Entries {
+				if entry.Volume == nil {
+					t.Errorf("List() entry has nil Volume")
+					continue
+				}
+
+				// Verify volume ID format (should be <vg>#<lv>)
+				if len(entry.Volume.VolumeId) == 0 || !contains(entry.Volume.VolumeId, "#") {
+					t.Errorf("List() volume ID %q should contain separator '#'", entry.Volume.VolumeId)
+				}
+
+				// Verify topology contains the node name
+				if len(entry.Volume.AccessibleTopology) == 0 {
+					t.Errorf("List() volume %q has no accessible topology", entry.Volume.VolumeId)
+				} else if entry.Volume.AccessibleTopology[0].Segments[lvm.TopologyKey] != "test-node" {
+					t.Errorf("List() volume %q has wrong topology node, expected 'test-node', got %q",
+						entry.Volume.VolumeId,
+						entry.Volume.AccessibleTopology[0].Segments[lvm.TopologyKey])
+				}
+			}
+		})
+	}
+}
+
+// Helper function to check if a string contains a substring.
+func contains(s, substr string) bool {
+	for i := 0; i <= len(s)-len(substr); i++ {
+		if s[i:i+len(substr)] == substr {
+			return true
+		}
+	}
+	return false
 }

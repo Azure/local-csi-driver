@@ -3,14 +3,14 @@ module local-csi-driver
 go 1.25.0
 
 require (
-	github.com/container-storage-interface/spec v1.11.0
+	github.com/container-storage-interface/spec v1.12.0
 	github.com/dpeckett/args v0.3.0
 	github.com/go-logr/logr v1.4.3
 	github.com/google/uuid v1.6.0
 	github.com/gotidy/ptr v1.4.0
 	github.com/kubernetes-csi/csi-lib-utils v0.22.0
-	github.com/kubernetes-csi/csi-test/v5 v5.3.1
-	github.com/onsi/ginkgo/v2 v2.26.0
+	github.com/kubernetes-csi/csi-test/v5 v5.4.0
+	github.com/onsi/ginkgo/v2 v2.27.1
 	github.com/onsi/gomega v1.38.2
 	github.com/open-policy-agent/cert-controller v0.14.0
 	github.com/prometheus/client_golang v1.23.2

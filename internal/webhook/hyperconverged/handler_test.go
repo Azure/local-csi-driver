@@ -242,6 +242,323 @@ var _ = Describe("When Hyperconverged controller is running", Serial, func() {
 			Expect(foundNodes).To(HaveLen(1))
 		})
 	})
+
+	Context("When pod has hyperconverged volume with availability failover mode", func() {
+		It("Should create pod with preferred node affinity", func() {
+			// Test verifies that when failover-mode is set to "availability",
+			// the webhook applies preferred node affinity, allowing pods to be
+			// scheduled on other nodes if the preferred storage nodes are unavailable
+			var (
+				availabilityParams = map[string]string{
+					HyperconvergedParam: "true",
+					FailoverModeParam:   FailoverModeAvailability,
+				}
+				numNodes                 = 2
+				availabilityStorageClass = GenStorageClass("test-sc-availability", lvm.DriverName, availabilityParams)
+				availabilityPVC          = GenPVC(availabilityStorageClass.Name, testNamespace.Name, "16Gi")
+				availabilityPod          *corev1.Pod
+				volumes                  []corev1.Volume
+				volumeMounts             []corev1.VolumeMount
+			)
+
+			for i := 1; i <= numNodes; i++ {
+				By(fmt.Sprintf("Creating Test Node %d for availability mode", i))
+				node := GenNode()
+				Expect(k8sClient.Create(ctx, node)).To(Succeed())
+				Eventually(k8sClient.Get).WithArguments(ctx, types.NamespacedName{Name: node.Name}, node).Should(Succeed())
+			}
+
+			By("Creating Availability Mode Storage Class")
+			Expect(k8sClient.Create(ctx, availabilityStorageClass)).To(Succeed())
+			Eventually(k8sClient.Get).WithArguments(ctx, types.NamespacedName{Name: availabilityStorageClass.Name}, availabilityStorageClass).Should(Succeed())
+
+			By("Creating Availability Mode PVC")
+			Expect(k8sClient.Create(ctx, availabilityPVC)).To(Succeed())
+			Eventually(k8sClient.Get).WithArguments(ctx, types.NamespacedName{Namespace: availabilityPVC.Namespace, Name: availabilityPVC.Name}, availabilityPVC).Should(Succeed())
+
+			// Create corresponding PV with failover mode in volume attributes
+			availabilityPV := GenPersistentVolume(availabilityPVC.Spec.VolumeName, testNamespace.Name, lvm.DriverName, "test-node-1")
+			availabilityPV.Spec.CSI.VolumeAttributes[FailoverModeParam] = FailoverModeAvailability
+
+			By("Creating PV with availability failover mode")
+			Expect(k8sClient.Create(ctx, availabilityPV)).To(Succeed())
+			Eventually(k8sClient.Get).WithArguments(ctx, types.NamespacedName{Name: availabilityPV.Name}, availabilityPV).Should(Succeed())
+
+			volumes = []corev1.Volume{
+				{
+					Name: "test-volume-availability",
+					VolumeSource: corev1.VolumeSource{
+						PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
+							ClaimName: availabilityPVC.Name,
+						},
+					},
+				},
+			}
+			volumeMounts = []corev1.VolumeMount{
+				{
+					Name:      volumes[0].Name,
+					MountPath: "/mnt/availability",
+				},
+			}
+			availabilityPod = GenPod(testNamespace.Name, volumes, volumeMounts)
+
+			By("Creating Pod with availability mode volume")
+			Expect(k8sClient.Create(ctx, availabilityPod)).To(Succeed())
+			Eventually(k8sClient.Get).WithArguments(ctx, types.NamespacedName{Namespace: availabilityPod.Namespace, Name: availabilityPod.Name}, availabilityPod).Should(Succeed())
+
+			By("Verifying Pod has preferred node affinity (not required)")
+			preferredNodes := GetPreferredNodeAffinityValues(availabilityPod.Spec.Affinity)
+			requiredNodes := GetRequiredNodeAffinityValues(availabilityPod.Spec.Affinity)
+
+			Expect(preferredNodes).To(HaveLen(1))
+			Expect(preferredNodes).To(HaveKey("test-node-1"))
+			Expect(requiredNodes).To(BeEmpty()) // Should not have required affinity
+		})
+	})
+
+	Context("When pod has hyperconverged volume with durability failover mode", func() {
+		It("Should create pod with required node affinity", func() {
+			// Test verifies that when failover-mode is set to "durability",
+			// the webhook applies required node affinity, ensuring pods can only
+			// be scheduled on nodes that have the required storage available
+			var (
+				durabilityParams = map[string]string{
+					HyperconvergedParam: "true",
+					FailoverModeParam:   FailoverModeDurability,
+				}
+				numNodes               = 2
+				durabilityStorageClass = GenStorageClass("test-sc-durability", lvm.DriverName, durabilityParams)
+				durabilityPVC          = GenPVC(durabilityStorageClass.Name, testNamespace.Name, "16Gi")
+				durabilityPod          *corev1.Pod
+				volumes                []corev1.Volume
+				volumeMounts           []corev1.VolumeMount
+			)
+
+			for i := 1; i <= numNodes; i++ {
+				By(fmt.Sprintf("Creating Test Node %d for durability mode", i))
+				node := GenNode()
+				Expect(k8sClient.Create(ctx, node)).To(Succeed())
+				Eventually(k8sClient.Get).WithArguments(ctx, types.NamespacedName{Name: node.Name}, node).Should(Succeed())
+			}
+
+			By("Creating Durability Mode Storage Class")
+			Expect(k8sClient.Create(ctx, durabilityStorageClass)).To(Succeed())
+			Eventually(k8sClient.Get).WithArguments(ctx, types.NamespacedName{Name: durabilityStorageClass.Name}, durabilityStorageClass).Should(Succeed())
+
+			By("Creating Durability Mode PVC")
+			Expect(k8sClient.Create(ctx, durabilityPVC)).To(Succeed())
+			Eventually(k8sClient.Get).WithArguments(ctx, types.NamespacedName{Namespace: durabilityPVC.Namespace, Name: durabilityPVC.Name}, durabilityPVC).Should(Succeed())
+
+			// Create corresponding PV with failover mode in volume attributes
+			durabilityPV := GenPersistentVolume(durabilityPVC.Spec.VolumeName, testNamespace.Name, lvm.DriverName, "test-node-2")
+			durabilityPV.Spec.CSI.VolumeAttributes[FailoverModeParam] = FailoverModeDurability
+
+			By("Creating PV with durability failover mode")
+			Expect(k8sClient.Create(ctx, durabilityPV)).To(Succeed())
+			Eventually(k8sClient.Get).WithArguments(ctx, types.NamespacedName{Name: durabilityPV.Name}, durabilityPV).Should(Succeed())
+
+			volumes = []corev1.Volume{
+				{
+					Name: "test-volume-durability",
+					VolumeSource: corev1.VolumeSource{
+						PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
+							ClaimName: durabilityPVC.Name,
+						},
+					},
+				},
+			}
+			volumeMounts = []corev1.VolumeMount{
+				{
+					Name:      volumes[0].Name,
+					MountPath: "/mnt/durability",
+				},
+			}
+			durabilityPod = GenPod(testNamespace.Name, volumes, volumeMounts)
+
+			By("Creating Pod with durability mode volume")
+			Expect(k8sClient.Create(ctx, durabilityPod)).To(Succeed())
+			Eventually(k8sClient.Get).WithArguments(ctx, types.NamespacedName{Namespace: durabilityPod.Namespace, Name: durabilityPod.Name}, durabilityPod).Should(Succeed())
+
+			By("Verifying Pod has required node affinity (not preferred)")
+			preferredNodes := GetPreferredNodeAffinityValues(durabilityPod.Spec.Affinity)
+			requiredNodes := GetRequiredNodeAffinityValues(durabilityPod.Spec.Affinity)
+
+			Expect(requiredNodes).To(HaveLen(1))
+			Expect(requiredNodes).To(ContainElement("test-node-2"))
+			Expect(preferredNodes).To(BeEmpty()) // Should not have preferred affinity
+		})
+	})
+
+	Context("When pod has hyperconverged volume with invalid failover mode", func() {
+		It("Should create pod with preferred node affinity (default behavior)", func() {
+			// Test verifies that when an invalid failover-mode is specified,
+			// the webhook falls back to the default behavior of preferred node affinity
+			var (
+				invalidParams = map[string]string{
+					HyperconvergedParam: "true",
+					FailoverModeParam:   "invalid-mode",
+				}
+				numNodes            = 2
+				invalidStorageClass = GenStorageClass("test-sc-invalid", lvm.DriverName, invalidParams)
+				invalidPVC          = GenPVC(invalidStorageClass.Name, testNamespace.Name, "16Gi")
+				invalidPod          *corev1.Pod
+				volumes             []corev1.Volume
+				volumeMounts        []corev1.VolumeMount
+			)
+
+			for i := 1; i <= numNodes; i++ {
+				By(fmt.Sprintf("Creating Test Node %d for invalid mode", i))
+				node := GenNode()
+				Expect(k8sClient.Create(ctx, node)).To(Succeed())
+				Eventually(k8sClient.Get).WithArguments(ctx, types.NamespacedName{Name: node.Name}, node).Should(Succeed())
+			}
+
+			By("Creating Invalid Mode Storage Class")
+			Expect(k8sClient.Create(ctx, invalidStorageClass)).To(Succeed())
+			Eventually(k8sClient.Get).WithArguments(ctx, types.NamespacedName{Name: invalidStorageClass.Name}, invalidStorageClass).Should(Succeed())
+
+			By("Creating Invalid Mode PVC")
+			Expect(k8sClient.Create(ctx, invalidPVC)).To(Succeed())
+			Eventually(k8sClient.Get).WithArguments(ctx, types.NamespacedName{Namespace: invalidPVC.Namespace, Name: invalidPVC.Name}, invalidPVC).Should(Succeed())
+
+			// Create corresponding PV with invalid failover mode in volume attributes
+			invalidPV := GenPersistentVolume(invalidPVC.Spec.VolumeName, testNamespace.Name, lvm.DriverName, "test-node-3")
+			invalidPV.Spec.CSI.VolumeAttributes[FailoverModeParam] = "invalid-mode"
+
+			By("Creating PV with invalid failover mode")
+			Expect(k8sClient.Create(ctx, invalidPV)).To(Succeed())
+			Eventually(k8sClient.Get).WithArguments(ctx, types.NamespacedName{Name: invalidPV.Name}, invalidPV).Should(Succeed())
+
+			volumes = []corev1.Volume{
+				{
+					Name: "test-volume-invalid",
+					VolumeSource: corev1.VolumeSource{
+						PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
+							ClaimName: invalidPVC.Name,
+						},
+					},
+				},
+			}
+			volumeMounts = []corev1.VolumeMount{
+				{
+					Name:      volumes[0].Name,
+					MountPath: "/mnt/invalid",
+				},
+			}
+			invalidPod = GenPod(testNamespace.Name, volumes, volumeMounts)
+
+			By("Creating Pod with invalid mode volume")
+			Expect(k8sClient.Create(ctx, invalidPod)).To(Succeed())
+			Eventually(k8sClient.Get).WithArguments(ctx, types.NamespacedName{Namespace: invalidPod.Namespace, Name: invalidPod.Name}, invalidPod).Should(Succeed())
+
+			By("Verifying Pod falls back to preferred node affinity (default behavior)")
+			preferredNodes := GetPreferredNodeAffinityValues(invalidPod.Spec.Affinity)
+			requiredNodes := GetRequiredNodeAffinityValues(invalidPod.Spec.Affinity)
+
+			Expect(preferredNodes).To(HaveLen(1))
+			Expect(preferredNodes).To(HaveKey("test-node-3"))
+			Expect(requiredNodes).To(BeEmpty()) // Should fallback to preferred (default)
+		})
+	})
+
+	Context("When pod has multiple hyperconverged volumes with mixed failover modes", func() {
+		It("Should handle mixed failover modes correctly", func() {
+			// Test verifies that when a pod has multiple volumes with different failover modes,
+			// the webhook correctly processes each volume and applies the appropriate affinity.
+			// When durability mode is present, it should result in required affinity
+			var (
+				availabilityParams = map[string]string{
+					HyperconvergedParam: "true",
+					FailoverModeParam:   FailoverModeAvailability,
+				}
+				durabilityParams = map[string]string{
+					HyperconvergedParam: "true",
+					FailoverModeParam:   FailoverModeDurability,
+				}
+				numNodes                 = 3
+				availabilityStorageClass = GenStorageClass("test-sc-mixed-avail", lvm.DriverName, availabilityParams)
+				durabilityStorageClass   = GenStorageClass("test-sc-mixed-dur", lvm.DriverName, durabilityParams)
+				availabilityPVC          = GenPVC(availabilityStorageClass.Name, testNamespace.Name, "8Gi")
+				durabilityPVC            = GenPVC(durabilityStorageClass.Name, testNamespace.Name, "8Gi")
+				mixedPod                 *corev1.Pod
+				volumes                  []corev1.Volume
+				volumeMounts             []corev1.VolumeMount
+			)
+
+			for i := 1; i <= numNodes; i++ {
+				By(fmt.Sprintf("Creating Test Node %d for mixed modes", i))
+				node := GenNode()
+				Expect(k8sClient.Create(ctx, node)).To(Succeed())
+				Eventually(k8sClient.Get).WithArguments(ctx, types.NamespacedName{Name: node.Name}, node).Should(Succeed())
+			}
+
+			By("Creating Mixed Mode Storage Classes")
+			Expect(k8sClient.Create(ctx, availabilityStorageClass)).To(Succeed())
+			Eventually(k8sClient.Get).WithArguments(ctx, types.NamespacedName{Name: availabilityStorageClass.Name}, availabilityStorageClass).Should(Succeed())
+			Expect(k8sClient.Create(ctx, durabilityStorageClass)).To(Succeed())
+			Eventually(k8sClient.Get).WithArguments(ctx, types.NamespacedName{Name: durabilityStorageClass.Name}, durabilityStorageClass).Should(Succeed())
+
+			By("Creating Mixed Mode PVCs")
+			Expect(k8sClient.Create(ctx, availabilityPVC)).To(Succeed())
+			Eventually(k8sClient.Get).WithArguments(ctx, types.NamespacedName{Namespace: availabilityPVC.Namespace, Name: availabilityPVC.Name}, availabilityPVC).Should(Succeed())
+			Expect(k8sClient.Create(ctx, durabilityPVC)).To(Succeed())
+			Eventually(k8sClient.Get).WithArguments(ctx, types.NamespacedName{Namespace: durabilityPVC.Namespace, Name: durabilityPVC.Name}, durabilityPVC).Should(Succeed())
+
+			// Create corresponding PVs with different failover modes
+			availabilityPV := GenPersistentVolume(availabilityPVC.Spec.VolumeName, testNamespace.Name, lvm.DriverName, "test-node-avail")
+			availabilityPV.Spec.CSI.VolumeAttributes[FailoverModeParam] = FailoverModeAvailability
+
+			durabilityPV := GenPersistentVolume(durabilityPVC.Spec.VolumeName, testNamespace.Name, lvm.DriverName, "test-node-dur")
+			durabilityPV.Spec.CSI.VolumeAttributes[FailoverModeParam] = FailoverModeDurability
+
+			By("Creating PVs with mixed failover modes")
+			Expect(k8sClient.Create(ctx, availabilityPV)).To(Succeed())
+			Eventually(k8sClient.Get).WithArguments(ctx, types.NamespacedName{Name: availabilityPV.Name}, availabilityPV).Should(Succeed())
+			Expect(k8sClient.Create(ctx, durabilityPV)).To(Succeed())
+			Eventually(k8sClient.Get).WithArguments(ctx, types.NamespacedName{Name: durabilityPV.Name}, durabilityPV).Should(Succeed())
+
+			volumes = []corev1.Volume{
+				{
+					Name: "test-volume-mixed-avail",
+					VolumeSource: corev1.VolumeSource{
+						PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
+							ClaimName: availabilityPVC.Name,
+						},
+					},
+				},
+				{
+					Name: "test-volume-mixed-dur",
+					VolumeSource: corev1.VolumeSource{
+						PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
+							ClaimName: durabilityPVC.Name,
+						},
+					},
+				},
+			}
+			volumeMounts = []corev1.VolumeMount{
+				{
+					Name:      volumes[0].Name,
+					MountPath: "/mnt/mixed-avail",
+				},
+				{
+					Name:      volumes[1].Name,
+					MountPath: "/mnt/mixed-dur",
+				},
+			}
+			mixedPod = GenPod(testNamespace.Name, volumes, volumeMounts)
+
+			By("Creating Pod with mixed failover mode volumes")
+			Expect(k8sClient.Create(ctx, mixedPod)).To(Succeed())
+			Eventually(k8sClient.Get).WithArguments(ctx, types.NamespacedName{Namespace: mixedPod.Namespace, Name: mixedPod.Name}, mixedPod).Should(Succeed())
+
+			By("Verifying Pod has required node affinity (durability mode takes precedence)")
+			requiredNodes := GetRequiredNodeAffinityValues(mixedPod.Spec.Affinity)
+
+			// When mixed modes exist, durability (required) should take precedence
+			Expect(requiredNodes).ToNot(BeEmpty())
+			Expect(requiredNodes).To(ContainElement("test-node-dur"))
+		})
+	})
 })
 
 // Generate Node Affinity.
