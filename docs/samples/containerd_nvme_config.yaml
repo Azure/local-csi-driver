@@ -173,4 +173,4 @@ spec:
       - name: sys
         hostPath:
           path: /sys
-```
+
