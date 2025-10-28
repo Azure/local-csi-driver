@@ -62,7 +62,7 @@ var (
 )
 
 // Setup installs the CSI driver prerequisites and components.
-func Setup(ctx context.Context, namespace string) {
+func Setup(ctx context.Context, namespace string, helmArgs ...string) {
 	cmd := exec.CommandContext(ctx, "az", "--version")
 	output, err := utils.Run(cmd)
 	Expect(err).NotTo(HaveOccurred(), "Failed to get az cli version")
@@ -170,13 +170,17 @@ func Setup(ctx context.Context, namespace string) {
 
 	if useLocalHelmCharts {
 		By("installing csi driver with local helm charts")
-		cmd = exec.CommandContext(ctx, "make", "deploy", fmt.Sprintf("IMG=%s", image))
+		args := []string{"deploy", fmt.Sprintf("IMG=%s", image)}
+		args = append(args, helmArgs...)
+		cmd = exec.CommandContext(ctx, "make", args...)
 		_, err = utils.Run(cmd)
 		Expect(err).NotTo(HaveOccurred(), "Failed to install csi driver with local helm charts")
 	} else {
 		By("installing csi driver with helm")
 		Eventually(func(g Gomega, ctx context.Context) {
-			cmd = exec.CommandContext(ctx, "make", "helm-install")
+			args := []string{"helm-install"}
+			args = append(args, helmArgs...)
+			cmd = exec.CommandContext(ctx, "make", args...)
 			_, err = utils.Run(cmd)
 			g.Expect(err).NotTo(HaveOccurred(), "Failed to install csi driver with helm")
 		}).WithTimeout(5*time.Minute).WithContext(ctx).Should(Succeed(), "Failed to install csi driver with helm")
