@@ -52,6 +52,16 @@ spec:
               echo "Creating new RAID 0 array with NVMe disks..."
               mdadm --create /dev/md0 --level=0 --raid-devices=$(echo "$nvme_disks" | wc -l) $(echo "$nvme_disks" | sed 's/^/\/dev\//')
               
+              # Wait for array to be ready
+              echo "Waiting for RAID array to be ready..."
+              for i in {1..30}; do
+                if mdadm --detail /dev/md0 >/dev/null 2>&1; then
+                  echo "RAID array is ready"
+                  break
+                fi
+                sleep 2
+              done
+              
               # Save RAID configuration for auto-assembly on reboot
               mkdir -p /etc/mdadm
               mdadm --detail --scan >> /etc/mdadm/mdadm.conf
