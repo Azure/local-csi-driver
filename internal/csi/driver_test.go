@@ -26,6 +26,7 @@ func TestNewCombinedDriver(t *testing.T) {
 
 	driver := NewCombined("node1", fakeVolumeClient, fakeClient, false, recorder, tracerProvider)
 
+	//nolint:staticcheck,nolintlint
 	if driver == nil {
 		t.Fatalf("Expected driver to be non-nil")
 	}
