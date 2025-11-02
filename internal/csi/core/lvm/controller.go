@@ -54,6 +54,46 @@ func (l *LVM) Create(ctx context.Context, req *csi.CreateVolumeRequest) (*csi.Vo
 	log := log.FromContext(ctx)
 	log.V(1).Info("creating volume")
 
+	// Log detailed request information at debug level, help in kusto level debugging.
+	if log.V(3).Enabled() {
+		// Extract meaningful capacity information
+		var capacityGB int64
+		if req.GetCapacityRange() != nil {
+			capacityGB = req.GetCapacityRange().GetRequiredBytes() / (1024 * 1024 * 1024)
+		}
+
+		// Extract target node from topology requirements
+		var targetNode string
+		if accessReqs := req.GetAccessibilityRequirements(); accessReqs != nil {
+			if len(accessReqs.GetRequisite()) > 0 && len(accessReqs.GetRequisite()[0].GetSegments()) > 0 {
+				targetNode = accessReqs.GetRequisite()[0].GetSegments()[TopologyKey]
+			}
+		}
+
+		// Count volume capabilities
+		capCount := len(req.GetVolumeCapabilities())
+
+		log.V(3).Info("CreateVolume request received",
+			"volumeName", req.GetName(),
+			"capacityGB", capacityGB,
+			"targetNode", targetNode,
+			"capabilityCount", capCount,
+			"parametersCount", len(req.GetParameters()),
+			"mutableParametersCount", len(req.GetMutableParameters()),
+			"hasContentSource", req.GetVolumeContentSource() != nil,
+		)
+
+		// Log mutable parameters if present (important for VolumeAttributesClass)
+		if mutableParams := req.GetMutableParameters(); len(mutableParams) > 0 {
+			log.V(3).Info("Mutable parameters received", "mutableParameters", mutableParams)
+		}
+
+		// Log non-sensitive regular parameters
+		if params := req.GetParameters(); len(params) > 0 {
+			log.V(3).Info("StorageClass parameters", "parameters", params)
+		}
+	}
+
 	// Validate request parameters.
 	params := req.GetParameters()
 	if params == nil {

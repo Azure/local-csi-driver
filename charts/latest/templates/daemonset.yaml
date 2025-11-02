@@ -265,7 +265,16 @@ spec:
         - --kube-api-qps={{ .Values.scalability.csiProvisioner.kubeApi.qps }}
         - --kube-api-burst={{ .Values.scalability.csiProvisioner.kubeApi.burst }}
         - --extra-create-metadata
+        {{- if and .Capabilities.KubeVersion.Major .Capabilities.KubeVersion.Minor }}
+        {{- $kubeVersion := printf "%s.%s" .Capabilities.KubeVersion.Major .Capabilities.KubeVersion.Minor }}
+        {{- if semverCompare ">=1.34" $kubeVersion }}
+        - --feature-gates=Topology=true,VolumeAttributesClass=true
+        {{- else }}
         - --feature-gates=Topology=true
+        {{- end }}
+        {{- else }}
+        - --feature-gates=Topology=true
+        {{- end }}
         - --strict-topology=true
         - --enable-capacity
         - --capacity-ownerref-level=0

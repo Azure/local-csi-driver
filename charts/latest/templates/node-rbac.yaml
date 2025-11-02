@@ -118,6 +118,20 @@ rules:
   - create
   - update
   - patch
+{{- if and .Capabilities.KubeVersion.Major .Capabilities.KubeVersion.Minor }}
+{{- $kubeVersion := printf "%s.%s" .Capabilities.KubeVersion.Major .Capabilities.KubeVersion.Minor }}
+{{- if semverCompare ">=1.34" $kubeVersion }}
+- apiGroups:
+  - storage.k8s.io
+  resources:
+  - volumeattributesclasses
+  verbs:
+  - get
+  - list
+  - watch
+  - use
+{{- end }}
+{{- end }}
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding

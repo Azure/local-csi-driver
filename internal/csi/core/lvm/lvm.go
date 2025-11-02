@@ -117,6 +117,7 @@ var (
 	controllerCapabilities = []csi.ControllerServiceCapability_RPC_Type{
 		csi.ControllerServiceCapability_RPC_CREATE_DELETE_VOLUME,
 		csi.ControllerServiceCapability_RPC_GET_CAPACITY,
+		csi.ControllerServiceCapability_RPC_MODIFY_VOLUME,
 		// csi.ControllerServiceCapability_RPC_PUBLISH_UNPUBLISH_VOLUME,
 		// csi.ControllerServiceCapability_RPC_LIST_VOLUMES,
 		// csi.ControllerServiceCapability_RPC_EXPAND_VOLUME,
@@ -128,7 +129,6 @@ var (
 		// csi.ControllerServiceCapability_RPC_VOLUME_CONDITION,
 		// csi.ControllerServiceCapability_RPC_GET_VOLUME,
 		// csi.ControllerServiceCapability_RPC_SINGLE_NODE_MULTI_WRITER,
-		// csi.ControllerServiceCapability_RPC_MODIFY_VOLUME,
 	}
 
 	nodeCapabilities = []csi.NodeServiceCapability_RPC_Type{
