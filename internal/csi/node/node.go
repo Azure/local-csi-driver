@@ -108,6 +108,18 @@ func (ns *Server) NodePublishVolume(ctx context.Context, req *csi.NodePublishVol
 
 	log := log.FromContext(ctx).WithName("NodePublishVolume").WithValues("volumeID", volumeID)
 
+	// Log the complete volume context received
+	volumeContext := req.GetVolumeContext()
+	log.Info("NodePublishVolume received request parameters",
+		"volumeId", volumeID,
+		"stagingTargetPath", stagingTargetPath,
+		"targetPath", targetPath,
+		"readonly", req.GetReadonly(),
+		"volumeContext", volumeContext,
+		"secretsCount", len(req.GetSecrets()),
+		"volumeCapability", req.GetVolumeCapability(),
+	)
+
 	mountOptions := []string{"bind"}
 	if req.GetReadonly() {
 		mountOptions = append(mountOptions, "ro")
@@ -159,6 +171,16 @@ func (ns *Server) NodePublishVolume(ctx context.Context, req *csi.NodePublishVol
 	}
 
 	log.V(2).Info("mount successful", "source", stagingTargetPath, "target", targetPath)
+
+	// Apply IO throttling configuration to the pod's cgroup if parameters are present
+	if err := ns.applyPodIOThrottling(ctx, req.GetVolumeContext(), targetPath); err != nil {
+		log.Error(err, "Failed to apply IO throttling to pod", "volumeId", volumeID, "targetPath", targetPath)
+		// Don't fail the mount if throttling configuration fails
+		span.AddEvent("IO throttling configuration failed", trace.WithAttributes(
+			attribute.String("error", err.Error()),
+		))
+	}
+
 	span.SetStatus(otcodes.Ok, "mount successful")
 	return &csi.NodePublishVolumeResponse{}, nil
 }
@@ -626,6 +648,55 @@ func (ns *Server) EnsureMount(path string) (bool, error) {
 		}
 	}
 	return !notMnt, nil
+}
+
+// applyPodIOThrottling applies IO throttling configuration to the pod's cgroup
+// based on the throttling parameters in the volume context
+func (ns *Server) applyPodIOThrottling(ctx context.Context, volumeContext map[string]string, targetPath string) error {
+	log := log.FromContext(ctx)
+
+	// Extract throttling parameters from volume context
+	throttleParams := extractThrottlingParamsFromVolumeContext(volumeContext)
+	if throttleParams == nil {
+		log.V(3).Info("No throttling parameters found in volume context")
+		return nil
+	}
+
+	log.V(2).Info("Found throttling parameters in volume context", "throttleParams", throttleParams)
+
+	// Get the device path for the volume
+	// We need to find the underlying block device for the mounted volume
+	devicePath, err := ns.findDeviceForMountPath(targetPath)
+	if err != nil {
+		return fmt.Errorf("failed to find device for mount path %s: %w", targetPath, err)
+	}
+
+	log.V(3).Info("Found device for mount", "targetPath", targetPath, "devicePath", devicePath)
+
+	// Find the pod's cgroup path from the target path
+	podCgroupPath, err := ns.findPodCgroupFromTargetPath(targetPath)
+	if err != nil {
+		return fmt.Errorf("failed to find pod cgroup for target path %s: %w", targetPath, err)
+	}
+
+	log.V(3).Info("Found pod cgroup path", "targetPath", targetPath, "cgroupPath", podCgroupPath)
+
+	// Apply throttling configuration to the pod's cgroup
+	if err := ns.configurePodCgroupIOMax(devicePath, throttleParams, podCgroupPath); err != nil {
+		return fmt.Errorf("failed to configure pod cgroup IO throttling: %w", err)
+	}
+
+	log.Info("Successfully applied IO throttling to pod",
+		"targetPath", targetPath,
+		"devicePath", devicePath,
+		"cgroupPath", podCgroupPath,
+		"rbps", throttleParams.RBPS,
+		"wbps", throttleParams.WBPS,
+		"riops", throttleParams.RIOPS,
+		"wiops", throttleParams.WIOPS,
+	)
+
+	return nil
 }
 
 func CheckMountError(err error) error {

@@ -6,6 +6,7 @@ package controller
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strconv"
 	"strings"
 
@@ -60,6 +61,84 @@ func New(volume core.ControllerInterface, caps []*csi.ControllerServiceCapabilit
 		recorder:                 recorder,
 		tracer:                   tp.Tracer("localdisk.csi.acstor.io/internal/csi/controller"),
 	}
+}
+
+// addThrottlingParamsToVolumeContext copies IO throttling parameters to volume context
+// so they're available during NodePublishVolume for pod-level cgroup configuration
+func (cs *Server) addThrottlingParamsToVolumeContext(vol *csi.Volume, parameters map[string]string) error {
+	// Check if there are any IO throttling parameters
+	throttleParams, err := ValidateIOThrottleParams(parameters)
+	if err != nil {
+		return fmt.Errorf("invalid IO throttling parameters: %w", err)
+	}
+
+	// If no throttling parameters, nothing to add
+	if throttleParams == nil {
+		return nil
+	}
+
+	// Initialize VolumeContext if it doesn't exist
+	if vol.VolumeContext == nil {
+		vol.VolumeContext = make(map[string]string)
+	}
+
+	// Copy throttling parameters to volume context with a prefix to avoid conflicts
+	if throttleParams.RBPS != nil {
+		vol.VolumeContext["csi.storage.k8s.io/throttle.rbps"] = fmt.Sprintf("%d", *throttleParams.RBPS)
+	}
+	if throttleParams.WBPS != nil {
+		vol.VolumeContext["csi.storage.k8s.io/throttle.wbps"] = fmt.Sprintf("%d", *throttleParams.WBPS)
+	}
+	if throttleParams.RIOPS != nil {
+		vol.VolumeContext["csi.storage.k8s.io/throttle.riops"] = fmt.Sprintf("%d", *throttleParams.RIOPS)
+	}
+	if throttleParams.WIOPS != nil {
+		vol.VolumeContext["csi.storage.k8s.io/throttle.wiops"] = fmt.Sprintf("%d", *throttleParams.WIOPS)
+	}
+
+	return nil
+}
+
+// updateVolumeContextWithThrottlingParams updates the PersistentVolume's VolumeContext
+// in Kubernetes API with new throttling parameters from VolumeAttributesClass
+func (cs *Server) updateVolumeContextWithThrottlingParams(ctx context.Context, volumeID string, throttleParams *IOThrottleParams) error {
+	// Get the volume name from volume ID
+	pvName, err := cs.volume.GetVolumeName(volumeID)
+	if err != nil {
+		return fmt.Errorf("failed to get volume name for volume ID %s: %w", volumeID, err)
+	}
+
+	// Get the PersistentVolume object
+	pv := &corev1.PersistentVolume{}
+	if err := cs.k8sClient.Get(ctx, client.ObjectKey{Name: pvName}, pv); err != nil {
+		return fmt.Errorf("failed to get PersistentVolume %s: %w", pvName, err)
+	}
+
+	// Initialize VolumeContext if it doesn't exist
+	if pv.Spec.CSI.VolumeAttributes == nil {
+		pv.Spec.CSI.VolumeAttributes = make(map[string]string)
+	}
+
+	// Update throttling parameters in volume context
+	if throttleParams.RBPS != nil {
+		pv.Spec.CSI.VolumeAttributes["csi.storage.k8s.io/throttle.rbps"] = fmt.Sprintf("%d", *throttleParams.RBPS)
+	}
+	if throttleParams.WBPS != nil {
+		pv.Spec.CSI.VolumeAttributes["csi.storage.k8s.io/throttle.wbps"] = fmt.Sprintf("%d", *throttleParams.WBPS)
+	}
+	if throttleParams.RIOPS != nil {
+		pv.Spec.CSI.VolumeAttributes["csi.storage.k8s.io/throttle.riops"] = fmt.Sprintf("%d", *throttleParams.RIOPS)
+	}
+	if throttleParams.WIOPS != nil {
+		pv.Spec.CSI.VolumeAttributes["csi.storage.k8s.io/throttle.wiops"] = fmt.Sprintf("%d", *throttleParams.WIOPS)
+	}
+
+	// Update the PersistentVolume in the API
+	if err := cs.k8sClient.Update(ctx, pv); err != nil {
+		return fmt.Errorf("failed to update PersistentVolume %s: %w", pvName, err)
+	}
+
+	return nil
 }
 
 func (cs *Server) CreateVolume(ctx context.Context, req *csi.CreateVolumeRequest) (*csi.CreateVolumeResponse, error) {
@@ -117,6 +196,35 @@ func (cs *Server) CreateVolume(ctx context.Context, req *csi.CreateVolumeRequest
 		span.SetStatus(otcodes.Error, "CreateVolume failed")
 		span.RecordError(err)
 		return nil, fromCoreError(err)
+	}
+
+	// Copy IO throttling parameters to VolumeContext so they're available in NodePublishVolume
+	// Check both regular parameters (StorageClass) and mutable parameters (VolumeAttributesClass)
+	allParams := make(map[string]string)
+
+	// Start with regular parameters
+	for k, v := range req.GetParameters() {
+		allParams[k] = v
+	}
+
+	// Add mutable parameters (these take precedence if there are conflicts)
+	for k, v := range req.GetMutableParameters() {
+		allParams[k] = v
+	}
+
+	log.V(2).Info("CreateVolume checking for throttling parameters",
+		"regularParameters", req.GetParameters(),
+		"mutableParameters", req.GetMutableParameters(),
+		"combinedParameters", allParams)
+
+	if err := cs.addThrottlingParamsToVolumeContext(vol, allParams); err != nil {
+		log.Error(err, "Failed to add throttling parameters to volume context", "volumeId", vol.GetVolumeId())
+		// Don't fail volume creation if we can't add throttling params
+		span.AddEvent("throttling parameters not added to volume context", trace.WithAttributes(
+			attribute.String("error", err.Error()),
+		))
+	} else {
+		log.V(2).Info("CreateVolume final volume context", "volumeId", vol.GetVolumeId(), "volumeContext", vol.VolumeContext)
 	}
 
 	// Remove node affinity from non-generic ephemeral volumes if the flag is enabled.
@@ -402,14 +510,57 @@ func (cs *Server) ControllerModifyVolume(ctx context.Context, req *csi.Controlle
 
 	log.Info("ControllerModifyVolume called", "volumeId", req.GetVolumeId())
 
-	// TODO:
-	// For VolumeAttributesClass support, we need to handle mutable parameters
-	// Currently, this is a basic implementation that accepts the modification
-	// without making actual changes to the underlying storage
-	// 1. Validate the requested modifications
-	// 2. Apply changes to the underlying storage system
-	// 3. Update volume metadata as needed
+	// Get mutable parameters from the request
+	mutableParams := req.GetMutableParameters()
+	if len(mutableParams) == 0 {
+		log.V(2).Info("No mutable parameters provided, nothing to modify")
+		span.SetStatus(otcodes.Ok, "no modifications needed")
+		return &csi.ControllerModifyVolumeResponse{}, nil
+	}
 
+	log.V(3).Info("Processing mutable parameters", "mutableParameters", mutableParams)
+
+	// Validate IO throttling parameters
+	throttleParams, err := ValidateIOThrottleParams(mutableParams)
+	if err != nil {
+		log.Error(err, "Invalid IO throttling parameters", "mutableParameters", mutableParams)
+		span.SetStatus(otcodes.Error, "parameter validation failed")
+		span.RecordError(err)
+		return nil, status.Error(codes.InvalidArgument, fmt.Sprintf("Invalid mutable parameters: %v", err))
+	}
+
+	// If no throttling parameters were provided, we're done
+	if throttleParams == nil {
+		log.V(2).Info("No IO throttling parameters found in mutable parameters")
+		span.SetStatus(otcodes.Ok, "no throttling parameters to configure")
+		return &csi.ControllerModifyVolumeResponse{}, nil
+	}
+
+	// For ControllerModifyVolume, we need to update the PersistentVolume's VolumeContext
+	// so the new throttling parameters are available during the next NodePublishVolume call
+	// This requires updating the PV object in the Kubernetes API
+	log.V(2).Info("ControllerModifyVolume updating PV with throttling parameters",
+		"volumeId", req.GetVolumeId(),
+		"throttleParams", throttleParams)
+	err = cs.updateVolumeContextWithThrottlingParams(ctx, req.GetVolumeId(), throttleParams)
+	if err != nil {
+		log.Error(err, "Failed to update volume context with throttling parameters", "volumeId", req.GetVolumeId())
+		span.SetStatus(otcodes.Error, "failed to update volume context")
+		span.RecordError(err)
+		return nil, status.Error(codes.Internal, fmt.Sprintf("Failed to update volume context: %v", err))
+	}
+
+	log.V(2).Info("ControllerModifyVolume successfully updated PV with throttling parameters", "volumeId", req.GetVolumeId())
+
+	log.Info("Successfully updated volume with IO throttling parameters",
+		"volumeId", req.GetVolumeId(),
+		"rbps", throttleParams.RBPS,
+		"wbps", throttleParams.WBPS,
+		"riops", throttleParams.RIOPS,
+		"wiops", throttleParams.WIOPS,
+	)
+
+	span.AddEvent("volume context updated with throttling parameters")
 	span.SetStatus(otcodes.Ok, "volume modification completed")
 	return &csi.ControllerModifyVolumeResponse{}, nil
 }

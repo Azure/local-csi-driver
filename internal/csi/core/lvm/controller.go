@@ -55,7 +55,7 @@ func (l *LVM) Create(ctx context.Context, req *csi.CreateVolumeRequest) (*csi.Vo
 	log.V(1).Info("creating volume")
 
 	// Log detailed request information at debug level, help in kusto level debugging.
-	if log.V(3).Enabled() {
+	if log.V(2).Enabled() {
 		// Extract meaningful capacity information
 		var capacityGB int64
 		if req.GetCapacityRange() != nil {
