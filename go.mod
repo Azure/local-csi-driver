@@ -8,7 +8,7 @@ require (
 	github.com/go-logr/logr v1.4.3
 	github.com/google/uuid v1.6.0
 	github.com/gotidy/ptr v1.4.0
-	github.com/kubernetes-csi/csi-lib-utils v0.22.0
+	github.com/kubernetes-csi/csi-lib-utils v0.23.0
 	github.com/kubernetes-csi/csi-test/v5 v5.4.0
 	github.com/onsi/ginkgo/v2 v2.27.2
 	github.com/onsi/gomega v1.38.2
@@ -40,7 +40,7 @@ require (
 	k8s.io/mount-utils v0.34.1
 	k8s.io/utils v0.0.0-20250604170112-4c0f3b243397
 	pault.ag/go/loopback v0.1.4
-	sigs.k8s.io/controller-runtime v0.22.3
+	sigs.k8s.io/controller-runtime v0.22.4
 	sigs.k8s.io/yaml v1.6.0
 )
 
