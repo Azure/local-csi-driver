@@ -10,15 +10,23 @@ metadata:
 spec:
   selector:
     matchLabels:
+      {{- if .Values.daemonset.podSelector }}
+      {{- toYaml .Values.daemonset.podSelector | nindent 6 }}
+      {{- else }}
       app: {{ .Values.name }}-node
       app.kubernetes.io/component: csi-local-node
-    {{- include "chart.selectorLabels" . | nindent 6 }}
+      {{- include "chart.selectorLabels" . | nindent 6 }}
+      {{- end }}
   template:
     metadata:
       labels:
+        {{- if .Values.daemonset.podSelector }}
+        {{- toYaml .Values.daemonset.podSelector | nindent 8 }}
+        {{- else }}
         app: {{ .Values.name }}-node
         app.kubernetes.io/component: csi-local-node
-      {{- include "chart.selectorLabels" . | nindent 8 }}
+        {{- include "chart.selectorLabels" . | nindent 8 }}
+        {{- end }}
       annotations:
         kubectl.kubernetes.io/default-container: driver
     spec:
