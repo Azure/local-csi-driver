@@ -28,6 +28,12 @@ image:
 daemonset:
   # Pod selector labels for the DaemonSet. If empty, default labels are used.
   podSelector: {}
+  # Update strategy for the DaemonSet.
+  updateStrategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 10%
+
   # Node selector for the DaemonSet. If empty, all nodes are selected. This can
   # be used to install the driver on a subset of nodes with local NVMe storage.
   nodeSelector: {}
