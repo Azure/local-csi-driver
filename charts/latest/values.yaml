@@ -12,7 +12,6 @@ image:
     tag:
     pullPolicy: IfNotPresent
   webhook:
-    image:
     repository: localcsidriver.azurecr.io/acstor/local-csi-webhook
     tag: ""  # defaults to Chart.AppVersion
     pullPolicy: IfNotPresent
@@ -179,14 +178,14 @@ observability:
     enabled: true
   webhook:
     log:
-      level: 2
+      level: 6
     metrics:
       port: 8080
     health:
       port: 8081
   driver:
     log:
-      level: 2
+      level: 6
     metrics:
       port: 8080
     health:

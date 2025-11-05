@@ -33,7 +33,11 @@ spec:
       serviceAccountName: {{ .Values.name }}
       containers:
       - name: webhook
-        image: {{ .Values.image.webhook.repository }}:{{ .Values.image.webhook.tag | default .Chart.AppVersion }}
+        {{- if hasPrefix "/" .Values.image.driver.repository }}
+        image: "{{ .Values.image.baseRepo }}{{ .Values.image.webhook.repository }}:{{ .Values.image.webhook.tag | default .Chart.AppVersion }}"
+        {{- else }}
+        image: "{{ .Values.image.webhook.repository }}:{{ .Values.image.webhook.tag | default .Chart.AppVersion }}"
+        {{- end }}
         imagePullPolicy: {{ .Values.image.webhook.pullPolicy }}
         ports:
         - containerPort: {{ .Values.webhook.service.targetPort }}
@@ -77,13 +81,13 @@ spec:
         livenessProbe:
           httpGet:
             path: /healthz
-            port: 8081
+            port: {{ .Values.observability.webhook.health.port }}
           initialDelaySeconds: 15
           periodSeconds: 20
         readinessProbe:
           httpGet:
             path: /readyz
-            port: 8081
+            port: {{ .Values.observability.webhook.health.port }}
           initialDelaySeconds: 5
           periodSeconds: 10
         resources:
