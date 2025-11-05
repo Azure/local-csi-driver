@@ -7,12 +7,14 @@ REGISTRY ?= docker.io
 # REPO_BASE is used in the Dockerfile and will be set to empty when run in the
 # pipelines. Set default for empty string, not just undefined.
 REPO_BASE := $(if $(REPO_BASE),$(REPO_BASE),acstor)
-REPO ?= $(REPO_BASE)/local-csi-driver
 
 COMMIT_HASH ?= $(shell git describe --always --dirty)
 TAG ?= v0.0.0-$(COMMIT_HASH)
 HELM_TAG ?= $(shell echo $(TAG) | sed 's/^v//')
-IMG ?= $(REGISTRY)/$(REPO):$(TAG)
+DRIVER_REPO ?= $(REPO_BASE)/local-csi-driver
+DRIVER_IMG ?= $(REGISTRY)/$(DRIVER_REPO):$(TAG)
+WEBHOOK_REPO ?= $(REPO_BASE)/local-csi-webhook
+WEBHOOK_IMG ?= $(REGISTRY)/$(WEBHOOK_REPO):$(TAG)
 CHART_REPO ?= $(REGISTRY)/$(REPO_BASE)/charts
 CHART_IMG ?= $(CHART_REPO)/local-csi-driver
 
@@ -172,7 +174,7 @@ endef
 
 .PHONY: test-container-structure
 test-container-structure: container-structure-test ## Run the container structure tests.
-	$(CONTAINER_STRUCTURE_TEST) test --image $(IMG) --config test/container-structure/local-csi-driver.yaml
+	$(CONTAINER_STRUCTURE_TEST) test --image $(DRIVER_IMG) --config test/container-structure/local-csi-driver.yaml
 
 .PHONY: lint
 lint: golangci-lint ## Run golangci-lint linter.
@@ -188,13 +190,24 @@ lint-fix: golangci-lint ## Run golangci-lint linter and perform fixes.
 build: fmt vet ## Build binary.
 	go build -ldflags "$(LDFLAGS)" -o bin/local-csi-driver cmd/main.go
 
+.PHONY: build-webhook
+build-webhook: fmt vet ## Build webhook binary.
+	go build -ldflags "$(LDFLAGS)" -o bin/local-csi-webhook cmd/webhook/main.go
+
 .PHONY: run
 run: fmt vet ## Run the local CSI driver from your host.
 	go run ./cmd/main.go
 
 .PHONY: docker-build
-docker-build: docker-buildx ## Build the docker image.
-	$(call docker-build,Dockerfile,${IMG})
+docker-build: docker-build-driver docker-build-webhook
+
+.PHONY: docker-build-driver
+docker-build-driver: docker-buildx ## Build the docker image.
+	$(call docker-build,Dockerfile,${DRIVER_IMG})
+
+.PHONY: docker-build-webhook
+docker-build-webhook: ## Build the webhook docker image.
+	$(call docker-build,Dockerfile.webhook,${WEBHOOK_IMG})
 
 # buildx builder arguments
 BUILDX_BUILDER_NAME ?= img-builder
@@ -223,6 +236,17 @@ define docker-build
 		--tag $(2) \
 		-f $(1) .
 endef
+
+.PHONY: docker-push
+docker-push: docker-push-driver docker-push-webhook
+
+.PHONY: docker-push-driver
+docker-push-driver: ## Push the docker image.
+	$(CONTAINER_TOOL) push ${DRIVER_IMG}
+
+.PHONY: docker-push-webhook
+docker-push-webhook: ## Push the webhook docker image.
+	$(CONTAINER_TOOL) push ${WEBHOOK_IMG}
 
 .PHONY: docker-pull
 docker-pull: ## Pull the docker image.
@@ -293,8 +317,12 @@ helm-install: helm ## Install the Helm chart from REGISTRY into the K8s cluster 
 	$(HELM) install local-csi-driver oci://$(CHART_IMG) \
 		--namespace kube-system \
 		--version $(HELM_TAG) \
-		--set image.driver.repository=$(REGISTRY)/$(REPO) \
+		--set image.driver.repository=$(REGISTRY)/$(DRIVER_REPO) \
 		--set image.driver.tag=$(TAG) \
+		--set image.driver.pullPolicy=Always \
+		--set image.webhook.repository=$(REGISTRY)/$(WEBHOOK_REPO) \
+		--set image.webhook.tag=$(TAG) \
+		--set image.webhook.pullPolicy=Always \
 		--debug --wait --atomic $(HELM_ARGS)
 
 .PHONY: helm-show-values
@@ -313,6 +341,9 @@ deploy: helm ## Deploy to the K8s cluster specified in ~/.kube/config.
 		--set image.driver.repository=$(REGISTRY)/$(REPO) \
 		--set image.driver.tag=$(TAG) \
 		--set image.driver.pullPolicy=Always \
+		--set image.webhook.repository=$(REGISTRY)/$(WEBHOOK_REPO) \
+		--set image.webhook.tag=$(TAG) \
+		--set image.webhook.pullPolicy=Always \
 		--set observability.driver.trace.endpoint=$(OTEL_ENDPOINT) \
 		--debug --wait --atomic $(HELM_ARGS)
 

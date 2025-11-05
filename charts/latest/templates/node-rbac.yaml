@@ -94,19 +94,6 @@ rules:
   - patch
   - update
   - watch
-{{- if or .Values.webhook.enforceEphemeral.enabled .Values.webhook.hyperconverged.enabled }}
-- apiGroups:
-  - "admissionregistration.k8s.io"
-  resources:
-  - "validatingwebhookconfigurations"
-  - "mutatingwebhookconfigurations"
-  verbs:
-  - "get"
-  - "list"
-  - "watch"
-  - "update"
-  - "patch"
-{{- end }}
 - apiGroups:
   - coordination.k8s.io
   resources:
