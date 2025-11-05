@@ -237,20 +237,9 @@ define docker-build
 		-f $(1) .
 endef
 
-.PHONY: docker-push
-docker-push: docker-push-driver docker-push-webhook
-
-.PHONY: docker-push-driver
-docker-push-driver: ## Push the docker image.
-	$(CONTAINER_TOOL) push ${DRIVER_IMG}
-
-.PHONY: docker-push-webhook
-docker-push-webhook: ## Push the webhook docker image.
-	$(CONTAINER_TOOL) push ${WEBHOOK_IMG}
-
 .PHONY: docker-pull
 docker-pull: ## Pull the docker image.
-	$(call docker-pull,${IMG})
+	$(call docker-pull,${DRIVER_IMG})
 
 define docker-pull
 	docker pull $(1)
@@ -258,7 +247,7 @@ endef
 
 .PHONY: docker-load
 docker-load: ## Load the docker image into the kind cluster.
-	$(call docker-load,${IMG})
+	$(call docker-load,${DRIVER_IMG})
 
 define docker-load
 	kind load docker-image $(1) --name kind
@@ -338,7 +327,7 @@ deploy: helm ## Deploy to the K8s cluster specified in ~/.kube/config.
 	$(HELM) install local-csi-driver charts/latest \
 		--namespace kube-system \
 		--version $(TAG) \
-		--set image.driver.repository=$(REGISTRY)/$(REPO) \
+		--set image.driver.repository=$(REGISTRY)/$(DRIVER_REPO) \
 		--set image.driver.tag=$(TAG) \
 		--set image.driver.pullPolicy=Always \
 		--set image.webhook.repository=$(REGISTRY)/$(WEBHOOK_REPO) \
