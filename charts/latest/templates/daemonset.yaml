@@ -167,14 +167,12 @@ spec:
       {{- end }}
 
       containers:
-
       - name: driver
         args:
         - --node-name=$(NODE_NAME)
         - --pod-name=$(POD_NAME)
         - --namespace=$(POD_NAMESPACE)
         - --csi-bind-address=unix:///csi/csi.sock
-        - --webhook-port={{ .Values.webhook.service.targetPort }}
         - --worker-threads={{ .Values.scalability.driver.workerThreads }}
         - --kube-api-qps={{ .Values.scalability.driver.kubeApi.qps }}
         - --kube-api-burst={{ .Values.scalability.driver.kubeApi.burst }}
@@ -189,18 +187,7 @@ spec:
         - --enable-pv-garbage-collection={{ .Values.cleanup.pvGarbageCollection.enabled }}
         - --enable-lvm-orphan-cleanup={{ .Values.cleanup.lvmOrphanCleanup.enabled }}
         - --lvm-orphan-cleanup-interval={{ .Values.cleanup.lvmOrphanCleanup.interval }}
-        {{- if or .Values.webhook.enforceEphemeral.enabled .Values.webhook.hyperconverged.enabled }}
-        - --webhook-service-name={{ .Values.name }}-webhook-service
-        {{- end }}
-        {{- if .Values.webhook.enforceEphemeral.enabled }}
-        - --enforce-ephemeral-webhook-config={{ .Values.name }}-enforce-ephemeral
-        {{- end }}
-        {{- if .Values.webhook.hyperconverged.enabled }}
-        - --hyperconverged-webhook-config={{ .Values.name }}-hyperconverged-webhook
-        {{- end }}
-        {{- if or .Values.webhook.enforceEphemeral.enabled .Values.webhook.hyperconverged.enabled }}
-        - --certificate-secret-name={{ .Values.name }}-webhook-cert
-        {{- end }}
+        - --run-alongside-webhook={{ .Values.webhook.hyperconverged.enabled | default false }}
         command:
         - /local-csi-driver
         env:
@@ -229,9 +216,6 @@ spec:
           initialDelaySeconds: 15
           periodSeconds: 20
         ports:
-        - containerPort: {{ .Values.webhook.service.targetPort}}
-          name: webhook-server
-          protocol: TCP
         - containerPort: {{ .Values.observability.driver.metrics.port }}
           name: metrics
           protocol: TCP
@@ -253,11 +237,6 @@ spec:
         terminationMessagePath: /tmp/termination-log
         terminationMessagePolicy: FallbackToLogsOnError
         volumeMounts:
-        {{- if or .Values.webhook.enforceEphemeral.enabled .Values.webhook.hyperconverged.enabled }}
-        - mountPath: /tmp/k8s-webhook-server/serving-certs
-          name: cert
-          readOnly: true
-        {{- end }}
         - mountPath: /dev
           name: device
         - mountPath: /csi
@@ -407,11 +386,6 @@ spec:
       terminationGracePeriodSeconds: 60
       tolerations: {{- toYaml .Values.daemonset.tolerations | nindent 8 }}
       volumes:
-      {{- if or .Values.webhook.enforceEphemeral.enabled .Values.webhook.hyperconverged.enabled }}
-      - name: cert
-        secret:
-          secretName: {{ .Values.name }}-webhook-cert
-      {{- end }}
       - hostPath:
           path: /dev
           type: Directory
