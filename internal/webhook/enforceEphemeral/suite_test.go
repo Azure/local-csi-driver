@@ -145,7 +145,7 @@ var _ = BeforeSuite(func() {
 			CertDir: webhookInstallOptions.LocalServingCertDir,
 			Host:    webhookInstallOptions.LocalServingHost,
 		}),
-		LeaderElection: true,
+		LeaderElection: false,
 	})
 	Expect(err).NotTo(HaveOccurred(), "failed to create manager")
 
