@@ -30,7 +30,7 @@ spec:
         {{- toYaml . | nindent 8 }}
         {{- end }}
     spec:
-      serviceAccountName: {{ .Values.name }}
+      serviceAccountName: {{ .Values.name }}-webhook
       containers:
       - name: webhook
         {{- if hasPrefix "/" .Values.image.driver.repository }}
@@ -55,6 +55,8 @@ spec:
         - --metrics-bind-address=:{{ .Values.observability.webhook.metrics.port }}
         - --webhook-port={{ .Values.webhook.service.targetPort }}
         - --webhook-service-name={{ .Values.name }}-webhook-service
+        - --kube-api-qps={{ .Values.scalability.webhook.kubeApi.qps }}
+        - --kube-api-burst={{ .Values.scalability.webhook.kubeApi.burst }}
         - --v={{ .Values.observability.webhook.log.level }}
         {{- if .Values.webhook.enforceEphemeral.enabled }}
         - --enforce-ephemeral-webhook-config={{ .Values.name }}-enforce-ephemeral
@@ -91,7 +93,7 @@ spec:
           initialDelaySeconds: 5
           periodSeconds: 10
         resources:
-          {{- toYaml .Values.webhook.deployment.resources | nindent 10 }}
+          {{- toYaml .Values.resources.webhook | nindent 10 }}
         securityContext:
           allowPrivilegeEscalation: false
           capabilities:
@@ -101,13 +103,12 @@ spec:
           {{- with .Values.webhook.deployment.securityContext }}
           {{- toYaml . | nindent 10 }}
           {{- end }}
+        terminationMessagePath: /tmp/termination-log
+        terminationMessagePolicy: FallbackToLogsOnError
         volumeMounts:
         - mountPath: /tmp/k8s-webhook-server/serving-certs
           name: cert
           readOnly: true
-        {{- with .Values.webhook.deployment.volumeMounts }}
-        {{- toYaml . | nindent 8 }}
-        {{- end }}
       {{- with .Values.webhook.deployment.nodeSelector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}
@@ -125,7 +126,4 @@ spec:
         secret:
           defaultMode: 420
           secretName: {{ .Values.name }}-webhook-cert
-      {{- with .Values.webhook.deployment.volumes }}
-      {{- toYaml . | nindent 6 }}
-      {{- end }}
 {{- end }}
