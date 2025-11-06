@@ -51,6 +51,8 @@ FROM mcr.microsoft.com/azurelinux/base/core:3.0@sha256:3d53b96f4e336a197023bda70
 RUN tdnf install -y --releasever 3.0 --installroot /staging \
     e2fsprogs \
     lvm2 \
+    # ensure that libcrypto.so.X is available for dlopen for fips builds
+    openssl-libs \
     util-linux \
     xfsprogs \
     && tdnf clean all \

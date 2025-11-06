@@ -13,7 +13,7 @@ image:
     pullPolicy: IfNotPresent
   webhook:
     repository: localcsidriver.azurecr.io/acstor/local-csi-webhook
-    tag: ""  # defaults to Chart.AppVersion
+    tag:
     pullPolicy: IfNotPresent
   csiProvisioner:
     repository: /oss/v2/kubernetes-csi/csi-provisioner
@@ -108,15 +108,12 @@ webhook:
     # The type of the webhook service. Can be ClusterIP, NodePort, or
     # LoadBalancer.
     type: ClusterIP
+  serviceAccount:
+    # Annotations for the service account. If empty, no annotations are applied.
+    annotations: {}
   deployment:
     # Number of webhook replicas for high availability
     replicas: 2
-    resources:
-      limits:
-        memory: 128Mi
-      requests:
-        cpu: 10m
-        memory: 64Mi
     # Pod security context
     podSecurityContext: {}
     # Container security context
@@ -124,7 +121,19 @@ webhook:
     # Node selector for webhook pods
     nodeSelector: {}
     # Tolerations for webhook pods
-    tolerations: []
+    tolerations:
+    - key: "node-role.kubernetes.io/master"
+      operator: "Exists"
+      effect: "NoSchedule"
+    - key: "node-role.kubernetes.io/controlplane"
+      operator: "Exists"
+      effect: "NoSchedule"
+    - key: "node-role.kubernetes.io/control-plane"
+      operator: "Exists"
+      effect: "NoSchedule"
+    - key: "CriticalAddonsOnly"
+      operator: "Exists"
+      effect: "NoSchedule"
     # Affinity for webhook pods (anti-affinity recommended for HA)
     affinity:
       podAntiAffinity:
@@ -146,10 +155,6 @@ webhook:
     podLabels: {}
     # Pod annotations
     podAnnotations: {}
-    # Extra volumes
-    volumes: []
-    # Extra volume mounts
-    volumeMounts: []
 
 # Resource configuration.
 resources:
@@ -177,6 +182,12 @@ resources:
     requests:
       cpu: 10m
       memory: 20Mi
+  webhook:
+    limits:
+      memory: 128Mi
+    requests:
+      cpu: 10m
+      memory: 64Mi
 
 # Observability and health configuration.
 observability:
@@ -228,6 +239,10 @@ scalability:
       burst: 200
   csiProvisioner:
     workerThreads: 100
+    kubeApi:
+      qps: 100
+      burst: 200
+  webhook:
     kubeApi:
       qps: 100
       burst: 200

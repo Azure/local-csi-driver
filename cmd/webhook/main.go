@@ -116,7 +116,6 @@ func main() {
 	// Log version set by build process.
 	version.Log(log)
 	if printVersionAndExit {
-		fmt.Println("local-csi-webhook development version")
 		return
 	}
 

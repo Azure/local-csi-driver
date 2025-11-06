@@ -113,7 +113,7 @@ roleRef:
   name: {{ .Values.name }}-webhook
 subjects:
 - kind: ServiceAccount
-  name: {{ .Values.name }}
+  name: {{ .Values.name }}-webhook
   namespace: {{ .Release.Namespace }}
 ---
 apiVersion: rbac.authorization.k8s.io/v1
@@ -129,16 +129,16 @@ roleRef:
   name: {{ .Values.name }}-webhook-leader-election
 subjects:
 - kind: ServiceAccount
-  name: {{ .Values.name }}
+  name: {{ .Values.name }}-webhook
   namespace: {{ .Release.Namespace }}
 {{- end }}
 ---
 apiVersion: v1
 kind: ServiceAccount
 metadata:
-  name: {{ .Values.name }}
+  name: {{ .Values.name }}-webhook
   namespace: '{{ .Release.Namespace }}'
   labels:
   {{- include "chart.labels" . | nindent 4 }}
   annotations:
-    {{- toYaml .Values.daemonset.serviceAccount.annotations | nindent 4 }}
+    {{- toYaml .Values.webhook.serviceAccount.annotations | nindent 4 }}

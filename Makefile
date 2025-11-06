@@ -256,6 +256,7 @@ endef
 .PHONY: docker-lint
 docker-lint: hadolint
 	$(HADOLINT) Dockerfile
+	$(HADOLINT) Dockerfile.webhook
 
 .PHONY: helm-build
 helm-build: helm ## Generate a consolidated Helm chart with CRDs and deployment.
