@@ -238,16 +238,30 @@ define docker-build
 endef
 
 .PHONY: docker-pull
-docker-pull: ## Pull the docker image.
+docker-pull: docker-pull-driver docker-pull-webhook
+
+.PHONY: docker-pull-driver
+docker-pull-driver: ## Pull the driver docker image.
 	$(call docker-pull,${DRIVER_IMG})
+
+.PHONY: docker-pull-webhook
+docker-pull-webhook: ## Pull the webhook docker image.
+	$(call docker-pull,${WEBHOOK_IMG})
 
 define docker-pull
 	docker pull $(1)
 endef
 
 .PHONY: docker-load
-docker-load: ## Load the docker image into the kind cluster.
+docker-load: docker-load-driver docker-load-webhook
+
+.PHONY: docker-load-driver
+docker-load-driver: ## Load the docker image into the kind cluster.
 	$(call docker-load,${DRIVER_IMG})
+
+.PHONY: docker-load-webhook
+docker-load-webhook: ## Load the webhook image into the kind cluster.
+	$(call docker-load,${WEBHOOK_IMG})
 
 define docker-load
 	kind load docker-image $(1) --name kind

@@ -54,8 +54,10 @@ var (
 	isKindClusterCreated = false
 
 	// Image will be built and injected into the deploy config.
-	defaultImage = "csi-local-driver/driver:latest"
-	image        = os.Getenv("IMG")
+	defaultDriverImage  = "csi-local-driver/driver:latest"
+	defaultWebhookImage = "csi-local-driver/webhook:latest"
+	driver_image        = os.Getenv("DRIVER_IMG")
+	webhook_image       = os.Getenv("WEBHOOK_IMG")
 
 	startTime     = time.Now()
 	filePathRegex = regexp.MustCompile(`[ /]`)
@@ -77,8 +79,11 @@ func Setup(ctx context.Context, namespace string, helmArgs ...string) {
 	_ = utils.UncommentCode("config/default/kustomization.yaml", "#- ../prometheus", "#")
 
 	By("ensure that image is set")
-	if image == "" {
-		image = defaultImage
+	if driver_image == "" {
+		driver_image = defaultDriverImage
+	}
+	if webhook_image == "" {
+		webhook_image = defaultWebhookImage
 	}
 
 	isKindClusterCreated = kind.IsClusterCreated()
@@ -121,14 +126,18 @@ func Setup(ctx context.Context, namespace string, helmArgs ...string) {
 	}
 	if kind.IsCluster() {
 		By("loading the image into Kind cluster")
-		err = kind.LoadImageWithName(ctx, image)
-		ExpectWithOffset(1, err).NotTo(HaveOccurred(), "Failed to load the image into Kind")
+		err = kind.LoadImageWithName(ctx, driver_image)
+		ExpectWithOffset(1, err).NotTo(HaveOccurred(), "Failed to load the driver image into Kind")
+		err = kind.LoadImageWithName(ctx, webhook_image)
+		ExpectWithOffset(1, err).NotTo(HaveOccurred(), "Failed to load the webhook image into Kind")
 	} else if !skipBuild {
 		// if we are not a kind cluster, we push the images to the registry
 		// instead of loading them into the Kind cluster
 		By("pushing the image to the registry")
-		err = docker.PushImage(ctx, image)
-		ExpectWithOffset(1, err).NotTo(HaveOccurred(), "Failed to push the image to the registry")
+		err = docker.PushImage(ctx, driver_image)
+		ExpectWithOffset(1, err).NotTo(HaveOccurred(), "Failed to push the driver image to the registry")
+		err = docker.PushImage(ctx, webhook_image)
+		ExpectWithOffset(1, err).NotTo(HaveOccurred(), "Failed to push the webhook image to the registry")
 
 		if !useLocalHelmCharts {
 			By("pushing the helm chart to the registry")
@@ -170,7 +179,7 @@ func Setup(ctx context.Context, namespace string, helmArgs ...string) {
 
 	if useLocalHelmCharts {
 		By("installing csi driver with local helm charts")
-		args := []string{"deploy", fmt.Sprintf("IMG=%s", image)}
+		args := []string{"deploy"}
 		args = append(args, helmArgs...)
 		cmd = exec.CommandContext(ctx, "make", args...)
 		_, err = utils.Run(cmd)
@@ -289,7 +298,7 @@ func makeDockerImage(ctx context.Context) error {
 	defer func() {
 		_, _ = fmt.Fprintf(GinkgoWriter, "docker image built in %v\n", time.Since(start))
 	}()
-	cmd := exec.CommandContext(ctx, "make", "docker-build", fmt.Sprintf("IMG=%s", image))
+	cmd := exec.CommandContext(ctx, "make", "docker-build")
 	_, err := utils.Run(cmd)
 	if err != nil {
 		return fmt.Errorf("failed to build the docker image: %v", err)
@@ -307,7 +316,7 @@ func pullDockerImage(ctx context.Context) error {
 	defer func() {
 		_, _ = fmt.Fprintf(GinkgoWriter, "docker image pulled in %v\n", time.Since(start))
 	}()
-	cmd := exec.CommandContext(ctx, "make", "docker-pull", fmt.Sprintf("IMG=%s", image))
+	cmd := exec.CommandContext(ctx, "make", "docker-pull")
 	_, err := utils.Run(cmd)
 	if err != nil {
 		return fmt.Errorf("failed to pull the docker image: %v", err)
@@ -322,7 +331,7 @@ func makeHelmChart(ctx context.Context) error {
 	defer func() {
 		_, _ = fmt.Fprintf(GinkgoWriter, "helm chart built in %v\n", time.Since(start))
 	}()
-	cmd := exec.CommandContext(ctx, "make", "helm-build", fmt.Sprintf("IMG=%s", image))
+	cmd := exec.CommandContext(ctx, "make", "helm-build")
 	_, err := utils.Run(cmd)
 	if err != nil {
 		return fmt.Errorf("failed to build the helm chart: %v", err)
