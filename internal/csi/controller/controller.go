@@ -99,8 +99,8 @@ func (cs *Server) addThrottlingParamsToVolumeContext(vol *csi.Volume, parameters
 	return nil
 }
 
-// updateVolumeContextWithThrottlingParams updates the PersistentVolume's VolumeContext
-// in Kubernetes API with new throttling parameters from VolumeAttributesClass
+// updateVolumeContextWithThrottlingParams updates the PersistentVolume's annotations
+// with new throttling parameters from VolumeAttributesClass since spec.csi.volumeAttributes is immutable
 func (cs *Server) updateVolumeContextWithThrottlingParams(ctx context.Context, volumeID string, throttleParams *IOThrottleParams) error {
 	// Get the volume name from volume ID
 	pvName, err := cs.volume.GetVolumeName(volumeID)
@@ -108,37 +108,51 @@ func (cs *Server) updateVolumeContextWithThrottlingParams(ctx context.Context, v
 		return fmt.Errorf("failed to get volume name for volume ID %s: %w", volumeID, err)
 	}
 
-	// Get the PersistentVolume object
-	pv := &corev1.PersistentVolume{}
-	if err := cs.k8sClient.Get(ctx, client.ObjectKey{Name: pvName}, pv); err != nil {
-		return fmt.Errorf("failed to get PersistentVolume %s: %w", pvName, err)
+	// Use retry logic to handle resource conflicts
+	const maxRetries = 3
+	for attempt := 0; attempt < maxRetries; attempt++ {
+		// Get the latest PersistentVolume object
+		pv := &corev1.PersistentVolume{}
+		if err := cs.k8sClient.Get(ctx, client.ObjectKey{Name: pvName}, pv); err != nil {
+			return fmt.Errorf("failed to get PersistentVolume %s: %w", pvName, err)
+		}
+
+		// Store original for patch operation
+		original := pv.DeepCopy()
+
+		// Initialize annotations if they don't exist
+		if pv.Annotations == nil {
+			pv.Annotations = make(map[string]string)
+		}
+
+		// Update throttling parameters in annotations (mutable unlike spec)
+		if throttleParams.RBPS != nil {
+			pv.Annotations["csi.storage.k8s.io/throttle.rbps"] = fmt.Sprintf("%d", *throttleParams.RBPS)
+		}
+		if throttleParams.WBPS != nil {
+			pv.Annotations["csi.storage.k8s.io/throttle.wbps"] = fmt.Sprintf("%d", *throttleParams.WBPS)
+		}
+		if throttleParams.RIOPS != nil {
+			pv.Annotations["csi.storage.k8s.io/throttle.riops"] = fmt.Sprintf("%d", *throttleParams.RIOPS)
+		}
+		if throttleParams.WIOPS != nil {
+			pv.Annotations["csi.storage.k8s.io/throttle.wiops"] = fmt.Sprintf("%d", *throttleParams.WIOPS)
+		}
+
+		// Use Patch to avoid resource conflicts
+		if err := cs.k8sClient.Patch(ctx, pv, client.MergeFrom(original)); err != nil {
+			// If it's a conflict error and we haven't reached max retries, try again
+			if strings.Contains(err.Error(), "the object has been modified") && attempt < maxRetries-1 {
+				continue
+			}
+			return fmt.Errorf("failed to patch PersistentVolume %s after %d attempts: %w", pvName, attempt+1, err)
+		}
+
+		// Success - break out of retry loop
+		return nil
 	}
 
-	// Initialize VolumeContext if it doesn't exist
-	if pv.Spec.CSI.VolumeAttributes == nil {
-		pv.Spec.CSI.VolumeAttributes = make(map[string]string)
-	}
-
-	// Update throttling parameters in volume context
-	if throttleParams.RBPS != nil {
-		pv.Spec.CSI.VolumeAttributes["csi.storage.k8s.io/throttle.rbps"] = fmt.Sprintf("%d", *throttleParams.RBPS)
-	}
-	if throttleParams.WBPS != nil {
-		pv.Spec.CSI.VolumeAttributes["csi.storage.k8s.io/throttle.wbps"] = fmt.Sprintf("%d", *throttleParams.WBPS)
-	}
-	if throttleParams.RIOPS != nil {
-		pv.Spec.CSI.VolumeAttributes["csi.storage.k8s.io/throttle.riops"] = fmt.Sprintf("%d", *throttleParams.RIOPS)
-	}
-	if throttleParams.WIOPS != nil {
-		pv.Spec.CSI.VolumeAttributes["csi.storage.k8s.io/throttle.wiops"] = fmt.Sprintf("%d", *throttleParams.WIOPS)
-	}
-
-	// Update the PersistentVolume in the API
-	if err := cs.k8sClient.Update(ctx, pv); err != nil {
-		return fmt.Errorf("failed to update PersistentVolume %s: %w", pvName, err)
-	}
-
-	return nil
+	return fmt.Errorf("failed to update PersistentVolume %s after %d attempts due to conflicts", pvName, maxRetries)
 }
 
 func (cs *Server) CreateVolume(ctx context.Context, req *csi.CreateVolumeRequest) (*csi.CreateVolumeResponse, error) {
@@ -483,10 +497,6 @@ func (cs *Server) GetCapacity(ctx context.Context, req *csi.GetCapacityRequest) 
 	return resp, nil
 }
 
-func (cs *Server) ControllerGetVolume(context.Context, *csi.ControllerGetVolumeRequest) (*csi.ControllerGetVolumeResponse, error) {
-	return nil, status.Error(codes.Unimplemented, "")
-}
-
 func (cs *Server) ControllerModifyVolume(ctx context.Context, req *csi.ControllerModifyVolumeRequest) (*csi.ControllerModifyVolumeResponse, error) {
 	ctx, span := cs.tracer.Start(ctx, "csi.v1.Controller/ControllerModifyVolume", trace.WithAttributes(
 		attribute.String("vol.id", req.GetVolumeId()),
@@ -494,6 +504,7 @@ func (cs *Server) ControllerModifyVolume(ctx context.Context, req *csi.Controlle
 	defer span.End()
 
 	log := log.FromContext(ctx)
+	log.Info("ControllerModifyVolume called", "volumeId", req.GetVolumeId())
 
 	// Validate controller capabilities.
 	if err := capability.ValidateController(csi.ControllerServiceCapability_RPC_MODIFY_VOLUME, cs.caps); err != nil {
@@ -507,8 +518,6 @@ func (cs *Server) ControllerModifyVolume(ctx context.Context, req *csi.Controlle
 		span.RecordError(status.Error(codes.InvalidArgument, "Volume ID missing in request"))
 		return nil, status.Error(codes.InvalidArgument, "Volume ID missing in request")
 	}
-
-	log.Info("ControllerModifyVolume called", "volumeId", req.GetVolumeId())
 
 	// Get mutable parameters from the request
 	mutableParams := req.GetMutableParameters()
@@ -535,6 +544,75 @@ func (cs *Server) ControllerModifyVolume(ctx context.Context, req *csi.Controlle
 		span.SetStatus(otcodes.Ok, "no throttling parameters to configure")
 		return &csi.ControllerModifyVolumeResponse{}, nil
 	}
+
+	// Get the volume name from volume ID for node targeting validation
+	pvName, err := cs.volume.GetVolumeName(req.GetVolumeId())
+	if err != nil {
+		log.Error(err, "failed to get volume name", "volumeID", req.GetVolumeId())
+		span.SetStatus(otcodes.Error, "failed to get volume name")
+		return nil, status.Error(codes.Internal, fmt.Sprintf("Failed to get volume name: %v", err))
+	}
+	span.SetAttributes(attribute.String("pv.name", pvName))
+
+	// If pv node affinity is removed, every instance of the controller server
+	// will receive the modify volume request. We need to check if the volume
+	// belongs to the current node and if not, we need to return an error.
+	var pv *corev1.PersistentVolume
+	if cs.removePvNodeAffinity {
+		pv = &corev1.PersistentVolume{}
+		// Get the pv and check selected node annotation
+		if err := cs.k8sClient.Get(ctx, client.ObjectKey{Name: pvName}, pv); err != nil {
+			if client.IgnoreNotFound(err) != nil {
+				log.Error(err, "failed to get pv", "name", pvName)
+				span.SetStatus(otcodes.Error, "ControllerModifyVolume failed")
+				span.RecordError(err)
+				return nil, status.Error(codes.Internal, err.Error())
+			}
+			// If the pv is not found, it means it has already been deleted.
+			log.V(2).Info("pv not found, volume may have been deleted", "name", pvName)
+			span.SetStatus(otcodes.Ok, "volume not found")
+			return &csi.ControllerModifyVolumeResponse{}, nil
+		}
+
+		// Check the selected node annotation and if it exists, only allow modification
+		// if the node name matches the selected node.
+		node, ok := pv.Annotations[cs.selectedNodeAnnotation]
+		if !ok {
+			// Get the node name from volume context
+			if pv.Spec.CSI != nil {
+				node = pv.Spec.CSI.VolumeAttributes[cs.selectedInitialNodeParam]
+			}
+		}
+		if cs.nodeId != "" && node != "" {
+			// Check if the node exists in the cluster.
+			// If it does not exist, we can return an error as we cannot modify
+			// a volume on a non-existent node.
+			if err := cs.k8sClient.Get(ctx, client.ObjectKey{Name: node}, &corev1.Node{}); err != nil {
+				if client.IgnoreNotFound(err) == nil { // node not found
+					log.V(2).Info("node not found, cannot modify volume on deleted node", "name", node)
+					span.SetStatus(otcodes.Error, "target node not found")
+					return nil, status.Error(codes.FailedPrecondition, "Cannot modify volume on deleted node "+node)
+				}
+				log.Error(err, "failed to get node", "name", node)
+			}
+
+			// If the nodeName does not match the selected node, we cannot
+			// modify the volume. Return FailedPrecondition to let Kubernetes retry on the correct node.
+			// Include target node information to help with debugging and potential smart routing
+			if !strings.EqualFold(node, cs.nodeId) {
+				log.V(2).Info("volume is on a different node, rejecting modification request",
+					"volumeId", req.GetVolumeId(), "targetNode", node, "currentNode", cs.nodeId)
+				span.SetStatus(otcodes.Error, "ControllerModifyVolume failed")
+				// Enhanced error message with target node info for potential smart routing
+				return nil, status.Error(codes.FailedPrecondition,
+					fmt.Sprintf("Volume is on node %s, current controller is on node %s. CSI-resizer should retry on correct node.",
+						node, cs.nodeId))
+			}
+		}
+	}
+
+	log.V(2).Info("ControllerModifyVolume validated node targeting",
+		"volumeId", req.GetVolumeId(), "node", cs.nodeId)
 
 	// For ControllerModifyVolume, we need to update the PersistentVolume's VolumeContext
 	// so the new throttling parameters are available during the next NodePublishVolume call
@@ -567,6 +645,23 @@ func (cs *Server) ControllerModifyVolume(ctx context.Context, req *csi.Controlle
 
 // Default supports all capabilities.
 func (cs *Server) ControllerGetCapabilities(ctx context.Context, req *csi.ControllerGetCapabilitiesRequest) (*csi.ControllerGetCapabilitiesResponse, error) {
+	ctx, span := cs.tracer.Start(ctx, "csi.v1.Controller/ControllerGetCapabilities")
+	defer span.End()
+
+	log := log.FromContext(ctx)
+
+	// Log all capabilities being advertised
+	capabilityNames := make([]string, len(cs.caps))
+	for i, cap := range cs.caps {
+		if cap.GetRpc() != nil {
+			capabilityNames[i] = cap.GetRpc().GetType().String()
+		}
+	}
+
+	log.Info("ControllerGetCapabilities called",
+		"capabilities", capabilityNames,
+		"capabilityCount", len(cs.caps))
+
 	return &csi.ControllerGetCapabilitiesResponse{
 		Capabilities: cs.caps,
 	}, nil

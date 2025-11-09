@@ -289,3 +289,51 @@ func getDeviceMajorMinorFromStat(devicePath string) (string, error) {
 
 	return majorMinor, nil
 }
+
+// extractThrottlingParamsFromAnnotations extracts throttling parameters from PV annotations
+func extractThrottlingParamsFromAnnotations(annotations map[string]string) *IOThrottleParams {
+	if len(annotations) == 0 {
+		return nil
+	}
+
+	params := &IOThrottleParams{}
+	hasParams := false
+
+	// Parse RBPS from annotations
+	if rbpsStr, exists := annotations["csi.storage.k8s.io/throttle.rbps"]; exists {
+		if rbps, err := strconv.ParseInt(rbpsStr, 10, 64); err == nil {
+			params.RBPS = &rbps
+			hasParams = true
+		}
+	}
+
+	// Parse WBPS from annotations
+	if wbpsStr, exists := annotations["csi.storage.k8s.io/throttle.wbps"]; exists {
+		if wbps, err := strconv.ParseInt(wbpsStr, 10, 64); err == nil {
+			params.WBPS = &wbps
+			hasParams = true
+		}
+	}
+
+	// Parse RIOPS from annotations
+	if riopsStr, exists := annotations["csi.storage.k8s.io/throttle.riops"]; exists {
+		if riops, err := strconv.ParseInt(riopsStr, 10, 64); err == nil {
+			params.RIOPS = &riops
+			hasParams = true
+		}
+	}
+
+	// Parse WIOPS from annotations
+	if wiopsStr, exists := annotations["csi.storage.k8s.io/throttle.wiops"]; exists {
+		if wiops, err := strconv.ParseInt(wiopsStr, 10, 64); err == nil {
+			params.WIOPS = &wiops
+			hasParams = true
+		}
+	}
+
+	if !hasParams {
+		return nil
+	}
+
+	return params
+}

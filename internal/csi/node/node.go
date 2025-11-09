@@ -173,7 +173,7 @@ func (ns *Server) NodePublishVolume(ctx context.Context, req *csi.NodePublishVol
 	log.V(2).Info("mount successful", "source", stagingTargetPath, "target", targetPath)
 
 	// Apply IO throttling configuration to the pod's cgroup if parameters are present
-	if err := ns.applyPodIOThrottling(ctx, req.GetVolumeContext(), targetPath); err != nil {
+	if err := ns.applyPodIOThrottling(ctx, req.GetVolumeContext(), targetPath, volumeID); err != nil {
 		log.Error(err, "Failed to apply IO throttling to pod", "volumeId", volumeID, "targetPath", targetPath)
 		// Don't fail the mount if throttling configuration fails
 		span.AddEvent("IO throttling configuration failed", trace.WithAttributes(
@@ -650,19 +650,51 @@ func (ns *Server) EnsureMount(path string) (bool, error) {
 	return !notMnt, nil
 }
 
-// applyPodIOThrottling applies IO throttling configuration to the pod's cgroup
-// based on the throttling parameters in the volume context
-func (ns *Server) applyPodIOThrottling(ctx context.Context, volumeContext map[string]string, targetPath string) error {
+// getThrottlingParamsFromPV fetches the latest throttling parameters from PV annotations
+func (ns *Server) getThrottlingParamsFromPV(ctx context.Context, volumeId string) *IOThrottleParams {
 	log := log.FromContext(ctx)
 
-	// Extract throttling parameters from volume context
-	throttleParams := extractThrottlingParamsFromVolumeContext(volumeContext)
-	if throttleParams == nil {
-		log.V(3).Info("No throttling parameters found in volume context")
+	// Extract PV name from volume ID
+	// Assuming volumeId format is "containerstorage#pv-name"
+	parts := strings.Split(volumeId, "#")
+	if len(parts) != 2 {
+		log.V(3).Info("Unable to parse volume ID for PV lookup", "volumeId", volumeId)
+		return nil
+	}
+	pvName := parts[1]
+
+	// Get PV object from Kubernetes API
+	pv := &corev1.PersistentVolume{}
+	if err := ns.k8sClient.Get(ctx, client.ObjectKey{Name: pvName}, pv); err != nil {
+		log.V(3).Info("Failed to get PV for throttling parameters", "pvName", pvName, "error", err)
 		return nil
 	}
 
-	log.V(2).Info("Found throttling parameters in volume context", "throttleParams", throttleParams)
+	// Extract throttling parameters from PV annotations
+	return extractThrottlingParamsFromAnnotations(pv.Annotations)
+}
+
+// applyPodIOThrottling applies IO throttling configuration to the pod's cgroup
+// based on the throttling parameters from PV annotations (latest) or volume context (fallback)
+func (ns *Server) applyPodIOThrottling(ctx context.Context, volumeContext map[string]string, targetPath string, volumeId string) error {
+	log := log.FromContext(ctx)
+
+	// Priority 1: Check PV annotations for latest parameters (from ControllerModifyVolume)
+	throttleParams := ns.getThrottlingParamsFromPV(ctx, volumeId)
+	if throttleParams != nil {
+		log.V(2).Info("Found throttling parameters in PV annotations", "throttleParams", throttleParams)
+	} else {
+		// Priority 2: Fallback to volume context (original creation parameters)
+		throttleParams = extractThrottlingParamsFromVolumeContext(volumeContext)
+		if throttleParams != nil {
+			log.V(2).Info("Found throttling parameters in volume context", "throttleParams", throttleParams)
+		}
+	}
+
+	if throttleParams == nil {
+		log.V(3).Info("No throttling parameters found in PV annotations or volume context")
+		return nil
+	}
 
 	// Get the device path for the volume
 	// We need to find the underlying block device for the mounted volume
