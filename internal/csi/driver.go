@@ -36,6 +36,27 @@ const (
 	SelectedNodeAnnotation = "localdisk.csi.acstor.io/selected-node"
 )
 
+// ThrottlingAdapter adapts between node and controller IOThrottleParams types
+type ThrottlingAdapter struct {
+	nodeServer *node.Server
+}
+
+// UpdateRunningPodsThrottling converts controller params to node params and calls node server
+func (ta *ThrottlingAdapter) UpdateRunningPodsThrottling(volumeID string, throttleParams *controller.IOThrottleParams) error {
+	// Convert controller.IOThrottleParams to node.IOThrottleParams
+	var nodeParams *node.IOThrottleParams
+	if throttleParams != nil {
+		nodeParams = &node.IOThrottleParams{
+			RBPS:  throttleParams.RBPS,
+			WBPS:  throttleParams.WBPS,
+			RIOPS: throttleParams.RIOPS,
+			WIOPS: throttleParams.WIOPS,
+		}
+	}
+
+	return ta.nodeServer.UpdateRunningPodsThrottling(volumeID, nodeParams)
+}
+
 type Driver struct {
 	is *identity.Server
 	cs *controller.Server
@@ -49,10 +70,20 @@ type Driver struct {
 
 // NewCombined creates a new CSI driver with controller and node capabilities.
 func NewCombined(nodeID string, volumeClient core.Interface, client client.Client, removePvNodeAffinity bool, recorder record.EventRecorder, tp trace.TracerProvider) *Driver {
+	// Create node server first
+	ns := node.New(volumeClient, nodeID, SelectedNodeAnnotation, SelectedInitialNodeParam, volumeClient.GetDriverName(), volumeClient.GetNodeDriverCapabilities(), mounter.New(tp), client, removePvNodeAffinity, recorder, tp)
+
+	// Create controller server
+	cs := controller.New(volumeClient, volumeClient.GetControllerDriverCapabilities(), volumeClient.GetNodeAccessModes(), mounter.New(tp), client, nodeID, SelectedNodeAnnotation, SelectedInitialNodeParam, removePvNodeAffinity, recorder, tp)
+
+	// Wire up the throttling updater so controller can update running pods
+	adapter := &ThrottlingAdapter{nodeServer: ns}
+	cs.SetThrottlingUpdater(adapter)
+
 	d := &Driver{
 		is:       identity.New(volumeClient.GetDriverName(), Version),
-		cs:       controller.New(volumeClient, volumeClient.GetControllerDriverCapabilities(), volumeClient.GetNodeAccessModes(), mounter.New(tp), client, nodeID, SelectedNodeAnnotation, SelectedInitialNodeParam, removePvNodeAffinity, recorder, tp),
-		ns:       node.New(volumeClient, nodeID, SelectedNodeAnnotation, SelectedInitialNodeParam, volumeClient.GetDriverName(), volumeClient.GetNodeDriverCapabilities(), mounter.New(tp), client, removePvNodeAffinity, recorder, tp),
+		cs:       cs,
+		ns:       ns,
 		client:   client,
 		volume:   volumeClient,
 		recorder: recorder,

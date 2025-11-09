@@ -27,6 +27,12 @@ import (
 	"local-csi-driver/internal/pkg/events"
 )
 
+// ThrottlingUpdater is an interface for updating running pod throttling settings
+// This allows the controller to trigger updates to running pods
+type ThrottlingUpdater interface {
+	UpdateRunningPodsThrottling(volumeID string, throttleParams *IOThrottleParams) error
+}
+
 type Server struct {
 	caps                     []*csi.ControllerServiceCapability
 	modes                    []*csi.VolumeCapability_AccessMode
@@ -39,6 +45,7 @@ type Server struct {
 	removePvNodeAffinity     bool
 	recorder                 record.EventRecorder
 	tracer                   trace.Tracer
+	throttlingUpdater        ThrottlingUpdater // Optional node throttling updater
 
 	// Embed for forward compatibility.
 	csi.UnimplementedControllerServer
@@ -60,7 +67,14 @@ func New(volume core.ControllerInterface, caps []*csi.ControllerServiceCapabilit
 		removePvNodeAffinity:     removePvNodeAffinity,
 		recorder:                 recorder,
 		tracer:                   tp.Tracer("localdisk.csi.acstor.io/internal/csi/controller"),
+		throttlingUpdater:        nil, // Will be set by SetThrottlingUpdater if needed
 	}
+}
+
+// SetThrottlingUpdater sets the throttling updater for updating running pod throttling settings
+// This is called when the controller is part of a combined server with node capabilities
+func (cs *Server) SetThrottlingUpdater(updater ThrottlingUpdater) {
+	cs.throttlingUpdater = updater
 }
 
 // addThrottlingParamsToVolumeContext copies IO throttling parameters to volume context
@@ -629,6 +643,25 @@ func (cs *Server) ControllerModifyVolume(ctx context.Context, req *csi.Controlle
 	}
 
 	log.V(2).Info("ControllerModifyVolume successfully updated PV with throttling parameters", "volumeId", req.GetVolumeId())
+
+	// If we have a throttling updater (combined server mode), update running pods
+	if cs.throttlingUpdater != nil {
+		log.V(2).Info("ControllerModifyVolume updating running pods with new throttling parameters", "volumeId", req.GetVolumeId())
+
+		if err := cs.throttlingUpdater.UpdateRunningPodsThrottling(req.GetVolumeId(), throttleParams); err != nil {
+			// Log the error but don't fail the request - the PV has been successfully updated
+			// and new pods will get the correct parameters. This is a best-effort update for existing pods.
+			log.Error(err, "Failed to update running pods throttling parameters - new pods will get correct settings", "volumeId", req.GetVolumeId())
+			span.AddEvent("failed to update running pods throttling", trace.WithAttributes(
+				attribute.String("error", err.Error()),
+			))
+		} else {
+			log.V(2).Info("ControllerModifyVolume successfully updated running pods throttling", "volumeId", req.GetVolumeId())
+			span.AddEvent("running pods throttling updated")
+		}
+	} else {
+		log.V(2).Info("ControllerModifyVolume no throttling updater available - running pods will retain old throttling until restart", "volumeId", req.GetVolumeId())
+	}
 
 	log.Info("Successfully updated volume with IO throttling parameters",
 		"volumeId", req.GetVolumeId(),

@@ -20,6 +20,12 @@ type IOThrottleParams struct {
 	WIOPS *int64 // Write IOPS per second
 }
 
+// ThrottlingUpdater is an interface for updating running pod throttling settings
+// This allows the controller to trigger updates to running pods
+type ThrottlingUpdater interface {
+	UpdateRunningPodsThrottling(volumeID string, throttleParams *IOThrottleParams) error
+}
+
 // extractThrottlingParamsFromVolumeContext extracts throttling parameters from volume context
 func extractThrottlingParamsFromVolumeContext(volumeContext map[string]string) *IOThrottleParams {
 	if len(volumeContext) == 0 {
@@ -336,4 +342,151 @@ func extractThrottlingParamsFromAnnotations(annotations map[string]string) *IOTh
 	}
 
 	return params
+}
+
+// UpdateRunningPodsThrottling updates the IO throttling parameters for all running pods using a specific volume
+// This function is called after ControllerModifyVolume successfully updates PV annotations
+func (ns *Server) UpdateRunningPodsThrottling(volumeID string, throttleParams *IOThrottleParams) error {
+	if throttleParams == nil {
+		return nil // No throttling to update
+	}
+
+	fmt.Printf("Debug: UpdateRunningPodsThrottling called for volume %s with params %+v\n", volumeID, throttleParams)
+
+	// Find all active volume mounts for this volume ID
+	activeMounts, err := ns.findActiveVolumeMounts(volumeID)
+	if err != nil {
+		return fmt.Errorf("failed to find active mounts for volume %s: %w", volumeID, err)
+	}
+
+	if len(activeMounts) == 0 {
+		fmt.Printf("Debug: No active mounts found for volume %s\n", volumeID)
+		return nil
+	}
+
+	fmt.Printf("Debug: Found %d active mounts for volume %s\n", len(activeMounts), volumeID)
+
+	// Update throttling for each active mount
+	var updateErrors []error
+	for _, mountInfo := range activeMounts {
+		fmt.Printf("Debug: Updating throttling for mount %s, device %s, cgroup %s\n",
+			mountInfo.MountPath, mountInfo.DevicePath, mountInfo.CgroupPath)
+
+		if err := ns.configurePodCgroupIOMax(mountInfo.DevicePath, throttleParams, mountInfo.CgroupPath); err != nil {
+			updateErrors = append(updateErrors, fmt.Errorf("failed to update throttling for mount %s: %w", mountInfo.MountPath, err))
+		} else {
+			fmt.Printf("Debug: Successfully updated throttling for mount %s\n", mountInfo.MountPath)
+		}
+	}
+
+	if len(updateErrors) > 0 {
+		return fmt.Errorf("failed to update some mounts: %v", updateErrors)
+	}
+
+	return nil
+}
+
+// VolumeMount represents an active volume mount
+type VolumeMount struct {
+	MountPath  string
+	DevicePath string
+	CgroupPath string
+}
+
+// findActiveVolumeMounts finds all active mounts for a given volume ID
+func (ns *Server) findActiveVolumeMounts(volumeID string) ([]VolumeMount, error) {
+	var mounts []VolumeMount
+
+	// The volume ID is used in the mount path, so we can search /proc/mounts
+	// and /var/lib/kubelet/pods for matching paths
+
+	// Read /proc/mounts to find all CSI volume mounts
+	content, err := os.ReadFile("/proc/mounts")
+	if err != nil {
+		return nil, fmt.Errorf("failed to read /proc/mounts: %w", err)
+	}
+
+	lines := strings.Split(string(content), "\n")
+	for _, line := range lines {
+		fields := strings.Fields(line)
+		if len(fields) >= 2 {
+			mountPath := fields[1]
+			devicePath := fields[0]
+
+			// Check if this mount path corresponds to our volume
+			if ns.isMountForVolume(mountPath, volumeID) {
+				// Extract pod cgroup path from mount path
+				cgroupPath, err := ns.findPodCgroupFromTargetPath(mountPath)
+				if err != nil {
+					fmt.Printf("Debug: Could not find cgroup for mount %s: %v\n", mountPath, err)
+					continue
+				}
+
+				// Resolve device path to actual device
+				realDevicePath, err := ns.findDeviceForMountPath(mountPath)
+				if err != nil {
+					fmt.Printf("Debug: Could not find device for mount %s: %v\n", mountPath, err)
+					// Fall back to the device path from /proc/mounts
+					realDevicePath = devicePath
+				}
+
+				mounts = append(mounts, VolumeMount{
+					MountPath:  mountPath,
+					DevicePath: realDevicePath,
+					CgroupPath: cgroupPath,
+				})
+
+				fmt.Printf("Debug: Found active mount - path: %s, device: %s, cgroup: %s\n",
+					mountPath, realDevicePath, cgroupPath)
+			}
+		}
+	}
+
+	return mounts, nil
+}
+
+// isMountForVolume checks if a mount path corresponds to our volume ID
+func (ns *Server) isMountForVolume(mountPath, volumeID string) bool {
+	// CSI volume mount paths typically look like:
+	// /var/lib/kubelet/pods/{pod-uid}/volumes/kubernetes.io~csi/{volume-name}/mount
+
+	// The volume name should contain our volume ID (with some transformation)
+	// For our driver, volume IDs are like "containerstorage#pvc-{uuid}"
+
+	if !strings.Contains(mountPath, "/volumes/kubernetes.io~csi/") {
+		return false
+	}
+
+	// Extract the volume name from the path
+	parts := strings.Split(mountPath, "/")
+	for i, part := range parts {
+		if part == "kubernetes.io~csi" && i+1 < len(parts) {
+			volumeName := parts[i+1]
+			// Check if this volume name corresponds to our volume ID
+			// The volume name in the path is typically the PV name, which can be derived from volume ID
+			if ns.volumeNameMatchesID(volumeName, volumeID) {
+				return true
+			}
+		}
+	}
+
+	return false
+}
+
+// volumeNameMatchesID checks if a volume name from mount path matches our volume ID
+func (ns *Server) volumeNameMatchesID(volumeName, volumeID string) bool {
+	// For our CSI driver, we can try to get the volume name from the volume ID
+	// and compare it with the mount path volume name
+	expectedVolumeName, err := ns.volume.GetVolumeName(volumeID)
+	if err != nil {
+		// If we can't resolve the volume name, fall back to string matching
+		// Volume IDs like "containerstorage#pvc-{uuid}" should match volume names containing the PVC part
+		if strings.Contains(volumeID, "#") {
+			volumePart := strings.Split(volumeID, "#")[1]
+			return strings.Contains(volumeName, volumePart)
+		}
+		return false
+	}
+
+	return volumeName == expectedVolumeName
 }
