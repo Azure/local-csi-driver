@@ -1,3 +1,5 @@
+//go:build linux && cgo
+
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
