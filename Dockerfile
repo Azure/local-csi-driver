@@ -1,4 +1,4 @@
-FROM mcr.microsoft.com/oss/go/microsoft/golang:1.25-azurelinux3.0@sha256:787f05f03a807bbd7be9278567f99914f48bf6c03c6b1cde51bc02ee5fddb317 AS builder
+FROM mcr.microsoft.com/oss/go/microsoft/golang:1.25-azurelinux3.0@sha256:f0044f7c81429e3892e3a1569638bbe2954b705771ddd13a2ad5ddc3c7a3fd58 AS builder
 ARG TARGETOS
 ARG TARGETARCH
 
