@@ -167,7 +167,8 @@ test-scaledown: ginkgo ## Run the scale down tests.
 define run_tests
 TAG=$(TAG) \
 REGISTRY=$(REGISTRY) \
-IMG=$(IMG) \
+DRIVER_IMG=${DRIVER_IMG} \
+WEBHOOK_IMG=${WEBHOOK_IMG} \
 $(GINKGO) -v -r $(3) --label-filter="$(1)$(if $(LABEL_FILTER), && ($(LABEL_FILTER)))" --focus="$(FOCUS)" --no-color="$(NO_COLOR)" --timeout="$(TEST_TIMEOUT)" "$(2)" -- \
 	--junit-report=$(TEST_OUTPUT) --support-bundle-dir=$(SUPPORT_BUNDLE_OUTPUT_DIR) "$(4)"
 endef
