@@ -7,8 +7,6 @@ concurrency:
 on:
   push:
     branches: [main]
-  pull_request:
-    branches: [main, release-**]
   pull_request_target:
     types: [labeled]
     branches: [main, release-**]
@@ -27,19 +25,8 @@ env:
   REPO_BASE: "acstor"
 
 jobs:
-  should-run:
-    if: |
-      github.event_name == 'push' ||
-      (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository) ||
-      (github.event_name == 'pull_request_target' && github.event.pull_request.head.repo.full_name != github.repository && contains(github.event.pull_request.labels.*.name, 'safe to test'))
-    runs-on: ubuntu-latest
-    steps:
-      - name:
-        run: |
-          echo "Workflow will run!"
-
   vars:
-    needs: [should-run]
+    if: github.event_name == 'push' || (github.event_name == 'pull_request_target' && contains(github.event.pull_request.labels.*.name, 'safe to test'))
     runs-on: ubuntu-latest
     outputs:
       TAG: ${{ steps.set-tag.outputs.TAG }}
@@ -71,6 +58,7 @@ jobs:
           fi
           echo "latest_tag=${LATEST_TAG}" >> "$GITHUB_OUTPUT"
   build-docker:
+    if: github.event_name == 'push' || (github.event_name == 'pull_request_target' && contains(github.event.pull_request.labels.*.name, 'safe to test'))
     needs: [vars]
     uses: ./.github/workflows/docker-build-template.yml
     with:
@@ -87,6 +75,7 @@ jobs:
       AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
   build-helm:
+    if: github.event_name == 'push' || (github.event_name == 'pull_request_target' && contains(github.event.pull_request.labels.*.name, 'safe to test'))
     needs: [vars]
     uses: ./.github/workflows/helm-build-template.yml
     with:
@@ -102,6 +91,7 @@ jobs:
       AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
   e2e-test:
+    if: github.event_name == 'push' || (github.event_name == 'pull_request_target' && contains(github.event.pull_request.labels.*.name, 'safe to test'))
     needs: [build-docker, build-helm, vars]
     runs-on: ubuntu-latest
     environment: pull-request
