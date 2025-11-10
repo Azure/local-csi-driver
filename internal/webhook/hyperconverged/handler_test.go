@@ -166,9 +166,7 @@ var _ = Describe("When Hyperconverged controller is running", Serial, func() {
 	Context("When pod has hyperconverged volume", func() {
 		It("Should allow pod to be created and mutate pod with node affinity", func() {
 			var (
-				firstParams = map[string]string{
-					HyperconvergedParam: "true",
-				}
+				firstParams       = map[string]string{}
 				numNodes          = 3
 				firstStorageClass = GenStorageClass("test-sc", lvm.DriverName, firstParams)
 				firstPVC          = GenPVC(firstStorageClass.Name, testNamespace.Name, "32Gi")
