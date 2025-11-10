@@ -166,9 +166,7 @@ var _ = Describe("When Hyperconverged controller is running", Serial, func() {
 	Context("When pod has hyperconverged volume", func() {
 		It("Should allow pod to be created and mutate pod with node affinity", func() {
 			var (
-				firstParams = map[string]string{
-					HyperconvergedParam: "true",
-				}
+				firstParams       = map[string]string{}
 				numNodes          = 3
 				firstStorageClass = GenStorageClass("test-sc", lvm.DriverName, firstParams)
 				firstPVC          = GenPVC(firstStorageClass.Name, testNamespace.Name, "32Gi")
@@ -250,8 +248,7 @@ var _ = Describe("When Hyperconverged controller is running", Serial, func() {
 			// scheduled on other nodes if the preferred storage nodes are unavailable
 			var (
 				availabilityParams = map[string]string{
-					HyperconvergedParam: "true",
-					FailoverModeParam:   FailoverModeAvailability,
+					FailoverModeParam: FailoverModeAvailability,
 				}
 				numNodes                 = 2
 				availabilityStorageClass = GenStorageClass("test-sc-availability", lvm.DriverName, availabilityParams)
@@ -323,8 +320,7 @@ var _ = Describe("When Hyperconverged controller is running", Serial, func() {
 			// be scheduled on nodes that have the required storage available
 			var (
 				durabilityParams = map[string]string{
-					HyperconvergedParam: "true",
-					FailoverModeParam:   FailoverModeDurability,
+					FailoverModeParam: FailoverModeDurability,
 				}
 				numNodes               = 2
 				durabilityStorageClass = GenStorageClass("test-sc-durability", lvm.DriverName, durabilityParams)
@@ -395,8 +391,7 @@ var _ = Describe("When Hyperconverged controller is running", Serial, func() {
 			// the webhook falls back to the default behavior of preferred node affinity
 			var (
 				invalidParams = map[string]string{
-					HyperconvergedParam: "true",
-					FailoverModeParam:   "invalid-mode",
+					FailoverModeParam: "invalid-mode",
 				}
 				numNodes            = 2
 				invalidStorageClass = GenStorageClass("test-sc-invalid", lvm.DriverName, invalidParams)
@@ -468,12 +463,10 @@ var _ = Describe("When Hyperconverged controller is running", Serial, func() {
 			// When durability mode is present, it should result in required affinity
 			var (
 				availabilityParams = map[string]string{
-					HyperconvergedParam: "true",
-					FailoverModeParam:   FailoverModeAvailability,
+					FailoverModeParam: FailoverModeAvailability,
 				}
 				durabilityParams = map[string]string{
-					HyperconvergedParam: "true",
-					FailoverModeParam:   FailoverModeDurability,
+					FailoverModeParam: FailoverModeDurability,
 				}
 				numNodes                 = 3
 				availabilityStorageClass = GenStorageClass("test-sc-mixed-avail", lvm.DriverName, availabilityParams)
