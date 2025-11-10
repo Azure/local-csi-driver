@@ -1,0 +1,129 @@
+{{- if or .Values.webhook.enforceEphemeral.enabled .Values.webhook.hyperconverged.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Values.name }}-webhook
+  labels:
+    app.kubernetes.io/component: webhook
+  {{- include "chart.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.webhook.deployment.replicas }}
+  selector:
+    matchLabels:
+      app: {{ .Values.name }}-webhook
+      {{- include "chart.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        app: {{ .Values.name }}-webhook
+        app.kubernetes.io/component: webhook
+        {{- include "chart.selectorLabels" . | nindent 8 }}
+        {{- with .Values.webhook.deployment.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      annotations:
+        {{- if .Values.webhook.deployment.autoRestart | default true }}
+        checksum/config: {{ include (print $.Template.BasePath "/webhook-config-ephemeral.yaml") . | sha256sum }}
+        checksum/config2: {{ include (print $.Template.BasePath "/webhook-config-hyperconverged.yaml") . | sha256sum }}
+        {{- end }}
+        {{- with .Values.webhook.deployment.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      serviceAccountName: {{ .Values.name }}-webhook
+      containers:
+      - name: webhook
+        {{- if hasPrefix "/" .Values.image.driver.repository }}
+        image: "{{ .Values.image.baseRepo }}{{ .Values.image.webhook.repository }}:{{ .Values.image.webhook.tag | default .Chart.AppVersion }}"
+        {{- else }}
+        image: "{{ .Values.image.webhook.repository }}:{{ .Values.image.webhook.tag | default .Chart.AppVersion }}"
+        {{- end }}
+        imagePullPolicy: {{ .Values.image.webhook.pullPolicy }}
+        ports:
+        - containerPort: {{ .Values.webhook.service.targetPort }}
+          name: webhook-api
+          protocol: TCP
+        - containerPort: {{ .Values.observability.webhook.health.port }}
+          name: health
+          protocol: TCP
+        - containerPort: {{ .Values.observability.webhook.metrics.port }}
+          name: metrics
+          protocol: TCP
+        args:
+        - --namespace=$(POD_NAMESPACE)
+        - --health-probe-bind-address=:{{ .Values.observability.webhook.health.port }}
+        - --metrics-bind-address=:{{ .Values.observability.webhook.metrics.port }}
+        - --webhook-port={{ .Values.webhook.service.targetPort }}
+        - --webhook-service-name={{ .Values.name }}-webhook-service
+        - --kube-api-qps={{ .Values.scalability.webhook.kubeApi.qps }}
+        - --kube-api-burst={{ .Values.scalability.webhook.kubeApi.burst }}
+        - --v={{ .Values.observability.webhook.log.level }}
+        {{- if .Values.webhook.enforceEphemeral.enabled }}
+        - --enforce-ephemeral-webhook-config={{ .Values.name }}-enforce-ephemeral
+        {{- end }}
+        {{- if .Values.webhook.hyperconverged.enabled }}
+        - --hyperconverged-webhook-config={{ .Values.name }}-hyperconverged-webhook
+        {{- end }}
+        {{- if or .Values.webhook.enforceEphemeral.enabled .Values.webhook.hyperconverged.enabled }}
+        - --certificate-secret-name={{ .Values.name }}-webhook-cert
+        {{- end }}
+        {{- with .Values.webhook.deployment.extraArgs }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+        env:
+        - name: WEBHOOK_CERT_DIR
+          value: /tmp/k8s-webhook-server/serving-certs
+        {{- with .Values.webhook.deployment.env }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+        - name: POD_NAMESPACE
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.namespace
+        livenessProbe:
+          httpGet:
+            path: /healthz
+            port: {{ .Values.observability.webhook.health.port }}
+          initialDelaySeconds: 15
+          periodSeconds: 20
+        readinessProbe:
+          httpGet:
+            path: /readyz
+            port: {{ .Values.observability.webhook.health.port }}
+          initialDelaySeconds: 5
+          periodSeconds: 10
+        resources:
+          {{- toYaml .Values.resources.webhook | nindent 10 }}
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+            - ALL
+          readOnlyRootFilesystem: true
+          {{- with .Values.webhook.deployment.securityContext }}
+          {{- toYaml . | nindent 10 }}
+          {{- end }}
+        terminationMessagePath: /tmp/termination-log
+        terminationMessagePolicy: FallbackToLogsOnError
+        volumeMounts:
+        - mountPath: /tmp/k8s-webhook-server/serving-certs
+          name: cert
+          readOnly: true
+      {{- with .Values.webhook.deployment.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.webhook.deployment.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.webhook.deployment.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 6 }}
+      {{- end }}
+      volumes:
+      - name: cert
+        secret:
+          defaultMode: 420
+          secretName: {{ .Values.name }}-webhook-cert
+{{- end }}
