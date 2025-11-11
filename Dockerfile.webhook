@@ -1,4 +1,4 @@
-FROM mcr.microsoft.com/oss/go/microsoft/golang:1.25-azurelinux3.0@sha256:e8256b5d6b1639ddd4f97ca427f0babbc216aecfb92ceac0b67eb8704e26f64b AS builder
+FROM mcr.microsoft.com/oss/go/microsoft/golang:1.25-azurelinux3.0@sha256:f0044f7c81429e3892e3a1569638bbe2954b705771ddd13a2ad5ddc3c7a3fd58 AS builder
 ARG TARGETOS
 ARG TARGETARCH
 
@@ -47,7 +47,7 @@ RUN --mount=type=cache,target=/go/pkg/mod \
     CGO_ENABLED=1 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} go build -v -ldflags "${LDFLAGS}" -o local-csi-webhook cmd/webhook/main.go
 
 
-FROM mcr.microsoft.com/azurelinux/base/core:3.0@sha256:87023dc668a1081651e20efb9a0cb418bc9accf81c3364a3eddb206dc811bfdf AS dependency-install
+FROM mcr.microsoft.com/azurelinux/base/core:3.0@sha256:3d53b96f4e336a197023bda703a056eaefecc6728e9a2b0c1ef42f7dce183338 AS dependency-install
 RUN tdnf install -y --releasever 3.0 --installroot /staging \
     # ensure that libcrypto.so.X is available for dlopen for fips builds
     openssl-libs \
@@ -55,7 +55,7 @@ RUN tdnf install -y --releasever 3.0 --installroot /staging \
     && rm -rf /staging/run /staging/var/log /staging/var/cache/tdnf
 
 # Use distroless as minimal base image to package the driver binary.
-FROM mcr.microsoft.com/azurelinux/distroless/minimal:3.0@sha256:2c499f6b125eeae1c7816f267a61034b3d61d7364874b9a67cdba53f7f0762af
+FROM mcr.microsoft.com/azurelinux/distroless/minimal:3.0@sha256:6b78aa535a2a5107ee308b767c0f1f5055a58d0e751f9d87543bc504da6d0ed3
 WORKDIR /
 COPY --from=builder /workspace/local-csi-webhook .
 COPY --from=dependency-install /staging /
