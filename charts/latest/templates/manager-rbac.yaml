@@ -2,7 +2,7 @@
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
-  name: {{ .Values.name }}-webhook
+  name: {{ .Values.name }}-manager
   labels:
   {{- include "chart.labels" . | nindent 4 }}
 rules:
@@ -52,6 +52,7 @@ rules:
   - get
   - list
   - watch
+  - patch
 - apiGroups:
   - ""
   resources:
@@ -60,11 +61,26 @@ rules:
   - get
   - list
   - watch
+- apiGroups:
+  - ""
+  resources:
+  - nodes
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - ""
+  resources:
+  - events
+  verbs:
+  - create
+  - patch
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
-  name: {{ .Values.name }}-webhook-leader-election
+  name: {{ .Values.name }}-manager-leader-election
   namespace: {{ .Release.Namespace }}
   labels:
   {{- include "chart.labels" . | nindent 4 }}
@@ -104,41 +120,41 @@ rules:
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
 metadata:
-  name: {{ .Values.name }}-webhook
+  name: {{ .Values.name }}-manager
   labels:
   {{- include "chart.labels" . | nindent 4 }}
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
-  name: {{ .Values.name }}-webhook
+  name: {{ .Values.name }}-manager
 subjects:
 - kind: ServiceAccount
-  name: {{ .Values.name }}-webhook
+  name: {{ .Values.name }}-manager
   namespace: {{ .Release.Namespace }}
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:
-  name: {{ .Values.name }}-webhook-leader-election
+  name: {{ .Values.name }}-manager-leader-election
   namespace: {{ .Release.Namespace }}
   labels:
   {{- include "chart.labels" . | nindent 4 }}
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: Role
-  name: {{ .Values.name }}-webhook-leader-election
+  name: {{ .Values.name }}-manager-leader-election
 subjects:
 - kind: ServiceAccount
-  name: {{ .Values.name }}-webhook
+  name: {{ .Values.name }}-manager
   namespace: {{ .Release.Namespace }}
 {{- end }}
 ---
 apiVersion: v1
 kind: ServiceAccount
 metadata:
-  name: {{ .Values.name }}-webhook
+  name: {{ .Values.name }}-manager
   namespace: '{{ .Release.Namespace }}'
   labels:
   {{- include "chart.labels" . | nindent 4 }}
   annotations:
-    {{- toYaml .Values.webhook.serviceAccount.annotations | nindent 4 }}
+    {{- toYaml .Values.manager.serviceAccount.annotations | nindent 4 }}

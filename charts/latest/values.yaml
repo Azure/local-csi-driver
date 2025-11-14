@@ -11,8 +11,8 @@ image:
     # When the tag is unset (recommended), the chart version is used as the tag.
     tag:
     pullPolicy: IfNotPresent
-  webhook:
-    repository: localcsidriver.azurecr.io/acstor/local-csi-webhook
+  manager:
+    repository: localcsidriver.azurecr.io/acstor/local-csi-manager
     tag:
     pullPolicy: IfNotPresent
   csiProvisioner:
@@ -108,6 +108,9 @@ webhook:
     # The type of the webhook service. Can be ClusterIP, NodePort, or
     # LoadBalancer.
     type: ClusterIP
+
+# Manager configuration.
+manager:
   serviceAccount:
     # Annotations for the service account. If empty, no annotations are applied.
     annotations: {}
@@ -182,7 +185,7 @@ resources:
     requests:
       cpu: 10m
       memory: 20Mi
-  webhook:
+  manager:
     limits:
       memory: 128Mi
     requests:
@@ -195,7 +198,7 @@ observability:
     # Endpoints are always enabled, toggling this only affects the RBAC
     # rule creation.
     enabled: true
-  webhook:
+  manager:
     log:
       level: 6
     metrics:
@@ -242,7 +245,7 @@ scalability:
     kubeApi:
       qps: 100
       burst: 200
-  webhook:
+  manager:
     kubeApi:
       qps: 100
       burst: 200

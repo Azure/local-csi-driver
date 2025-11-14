@@ -13,8 +13,8 @@ TAG ?= v0.0.0-$(COMMIT_HASH)
 HELM_TAG ?= $(shell echo $(TAG) | sed 's/^v//')
 DRIVER_REPO ?= $(REPO_BASE)/local-csi-driver
 DRIVER_IMG ?= $(REGISTRY)/$(DRIVER_REPO):$(TAG)
-WEBHOOK_REPO ?= $(REPO_BASE)/local-csi-webhook
-WEBHOOK_IMG ?= $(REGISTRY)/$(WEBHOOK_REPO):$(TAG)
+MANAGER_REPO ?= $(REPO_BASE)/local-csi-manager
+MANAGER_IMG ?= $(REGISTRY)/$(MANAGER_REPO):$(TAG)
 CHART_REPO ?= $(REGISTRY)/$(REPO_BASE)/charts
 CHART_IMG ?= $(CHART_REPO)/local-csi-driver
 
@@ -168,7 +168,7 @@ define run_tests
 TAG=$(TAG) \
 REGISTRY=$(REGISTRY) \
 DRIVER_IMG=${DRIVER_IMG} \
-WEBHOOK_IMG=${WEBHOOK_IMG} \
+MANAGER_IMG=${MANAGER_IMG} \
 $(GINKGO) -v -r $(3) --label-filter="$(1)$(if $(LABEL_FILTER), && ($(LABEL_FILTER)))" --focus="$(FOCUS)" --no-color="$(NO_COLOR)" --timeout="$(TEST_TIMEOUT)" "$(2)" -- \
 	--junit-report=$(TEST_OUTPUT) --support-bundle-dir=$(SUPPORT_BUNDLE_OUTPUT_DIR) "$(4)"
 endef
@@ -191,24 +191,24 @@ lint-fix: golangci-lint ## Run golangci-lint linter and perform fixes.
 build: fmt vet ## Build binary.
 	go build -ldflags "$(LDFLAGS)" -o bin/local-csi-driver cmd/main.go
 
-.PHONY: build-webhook
-build-webhook: fmt vet ## Build webhook binary.
-	go build -ldflags "$(LDFLAGS)" -o bin/local-csi-webhook cmd/webhook/main.go
+.PHONY: build-manager
+build-manager: fmt vet ## Build manager binary.
+	go build -ldflags "$(LDFLAGS)" -o bin/local-csi-manager cmd/manager/main.go
 
 .PHONY: run
 run: fmt vet ## Run the local CSI driver from your host.
 	go run ./cmd/main.go
 
 .PHONY: docker-build
-docker-build: docker-build-driver docker-build-webhook
+docker-build: docker-build-driver docker-build-manager
 
 .PHONY: docker-build-driver
 docker-build-driver: docker-buildx ## Build the docker image.
 	$(call docker-build,Dockerfile,${DRIVER_IMG})
 
-.PHONY: docker-build-webhook
-docker-build-webhook: ## Build the webhook docker image.
-	$(call docker-build,Dockerfile.webhook,${WEBHOOK_IMG})
+.PHONY: docker-build-manager
+docker-build-manager: ## Build the manager docker image.
+	$(call docker-build,Dockerfile.webhook,${MANAGER_IMG})
 
 # buildx builder arguments
 BUILDX_BUILDER_NAME ?= img-builder
@@ -239,30 +239,30 @@ define docker-build
 endef
 
 .PHONY: docker-pull
-docker-pull: docker-pull-driver docker-pull-webhook
+docker-pull: docker-pull-driver docker-pull-manager
 
 .PHONY: docker-pull-driver
 docker-pull-driver: ## Pull the driver docker image.
 	$(call docker-pull,${DRIVER_IMG})
 
-.PHONY: docker-pull-webhook
-docker-pull-webhook: ## Pull the webhook docker image.
-	$(call docker-pull,${WEBHOOK_IMG})
+.PHONY: docker-pull-manager
+docker-pull-manager: ## Pull the manager docker image.
+	$(call docker-pull,${MANAGER_IMG})
 
 define docker-pull
 	docker pull $(1)
 endef
 
 .PHONY: docker-load
-docker-load: docker-load-driver docker-load-webhook
+docker-load: docker-load-driver docker-load-manager
 
 .PHONY: docker-load-driver
 docker-load-driver: ## Load the docker image into the kind cluster.
 	$(call docker-load,${DRIVER_IMG})
 
-.PHONY: docker-load-webhook
-docker-load-webhook: ## Load the webhook image into the kind cluster.
-	$(call docker-load,${WEBHOOK_IMG})
+.PHONY: docker-load-manager
+docker-load-manager: ## Load the manager image into the kind cluster.
+	$(call docker-load,${MANAGER_IMG})
 
 define docker-load
 	kind load docker-image $(1) --name kind
@@ -325,9 +325,9 @@ helm-install: helm ## Install the Helm chart from REGISTRY into the K8s cluster 
 		--set image.driver.repository=$(REGISTRY)/$(DRIVER_REPO) \
 		--set image.driver.tag=$(TAG) \
 		--set image.driver.pullPolicy=Always \
-		--set image.webhook.repository=$(REGISTRY)/$(WEBHOOK_REPO) \
-		--set image.webhook.tag=$(TAG) \
-		--set image.webhook.pullPolicy=Always \
+		--set image.manager.repository=$(REGISTRY)/$(MANAGER_REPO) \
+		--set image.manager.tag=$(TAG) \
+		--set image.manager.pullPolicy=Always \
 		--debug --wait --atomic $(HELM_ARGS)
 
 .PHONY: helm-show-values
@@ -346,9 +346,9 @@ deploy: helm ## Deploy to the K8s cluster specified in ~/.kube/config.
 		--set image.driver.repository=$(REGISTRY)/$(DRIVER_REPO) \
 		--set image.driver.tag=$(TAG) \
 		--set image.driver.pullPolicy=Always \
-		--set image.webhook.repository=$(REGISTRY)/$(WEBHOOK_REPO) \
-		--set image.webhook.tag=$(TAG) \
-		--set image.webhook.pullPolicy=Always \
+		--set image.manager.repository=$(REGISTRY)/$(MANAGER_REPO) \
+		--set image.manager.tag=$(TAG) \
+		--set image.manager.pullPolicy=Always \
 		--set observability.driver.trace.endpoint=$(OTEL_ENDPOINT) \
 		--debug --wait --atomic $(HELM_ARGS)
 

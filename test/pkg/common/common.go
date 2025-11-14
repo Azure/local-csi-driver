@@ -55,9 +55,9 @@ var (
 
 	// Image will be built and injected into the deploy config.
 	defaultDriverImage  = "csi-local-driver/driver:latest"
-	defaultWebhookImage = "csi-local-driver/webhook:latest"
+	defaultManagerImage = "csi-local-driver/manager:latest"
 	driver_image        = os.Getenv("DRIVER_IMG")
-	webhook_image       = os.Getenv("WEBHOOK_IMG")
+	manager_image       = os.Getenv("MANAGER_IMG")
 
 	startTime     = time.Now()
 	filePathRegex = regexp.MustCompile(`[ /]`)
@@ -82,8 +82,8 @@ func Setup(ctx context.Context, namespace string, helmArgs ...string) {
 	if driver_image == "" {
 		driver_image = defaultDriverImage
 	}
-	if webhook_image == "" {
-		webhook_image = defaultWebhookImage
+	if manager_image == "" {
+		manager_image = defaultManagerImage
 	}
 
 	isKindClusterCreated = kind.IsClusterCreated()
@@ -128,16 +128,16 @@ func Setup(ctx context.Context, namespace string, helmArgs ...string) {
 		By("loading the image into Kind cluster")
 		err = kind.LoadImageWithName(ctx, driver_image)
 		ExpectWithOffset(1, err).NotTo(HaveOccurred(), "Failed to load the driver image into Kind")
-		err = kind.LoadImageWithName(ctx, webhook_image)
-		ExpectWithOffset(1, err).NotTo(HaveOccurred(), "Failed to load the webhook image into Kind")
+		err = kind.LoadImageWithName(ctx, manager_image)
+		ExpectWithOffset(1, err).NotTo(HaveOccurred(), "Failed to load the manager image into Kind")
 	} else if !skipBuild {
 		// if we are not a kind cluster, we push the images to the registry
 		// instead of loading them into the Kind cluster
 		By("pushing the image to the registry")
 		err = docker.PushImage(ctx, driver_image)
 		ExpectWithOffset(1, err).NotTo(HaveOccurred(), "Failed to push the driver image to the registry")
-		err = docker.PushImage(ctx, webhook_image)
-		ExpectWithOffset(1, err).NotTo(HaveOccurred(), "Failed to push the webhook image to the registry")
+		err = docker.PushImage(ctx, manager_image)
+		ExpectWithOffset(1, err).NotTo(HaveOccurred(), "Failed to push the manager image to the registry")
 
 		if !useLocalHelmCharts {
 			By("pushing the helm chart to the registry")
