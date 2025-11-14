@@ -23,6 +23,7 @@ import (
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
 
+	"local-csi-driver/internal/manager/pvcleanup"
 	"local-csi-driver/internal/pkg/events"
 	"local-csi-driver/internal/pkg/version"
 	"local-csi-driver/internal/webhook/enforceEphemeral"
@@ -31,7 +32,7 @@ import (
 
 const (
 	// ServiceName is the name of the service used in traces.
-	ServiceName = "local-csi-webhook"
+	ServiceName = "local-csi-manager"
 
 	// terminationMessagePath is the path to the termination message file for the
 	// Kubernetes pod. This file is used to store the last error message.
@@ -87,7 +88,7 @@ func main() {
 		"If set, the metrics endpoint is served securely via HTTPS. Use --metrics-secure=false to use HTTP instead.")
 	flag.BoolVar(&enableHTTP2, "enable-http2", false,
 		"If set, HTTP/2 will be enabled for the metrics and webhook servers")
-	flag.StringVar(&leaderElectionID, "leader-election-id", "local-csi-webhook-leader-election",
+	flag.StringVar(&leaderElectionID, "leader-election-id", "local-csi-manager-leader-election",
 		"The ID used for leader election.")
 	flag.BoolVar(&enableLeaderElection, "enable-leader-election", true,
 		"Enable leader election for webhook manager. Enabling this will ensure there is only one active webhook manager.")
@@ -264,8 +265,18 @@ func main() {
 	recorder := events.NewNoopRecorder()
 	if eventRecorderEnabled {
 		log.Info("event recorder enabled")
-		recorder = mgr.GetEventRecorderFor("local-csi-webhook")
+		recorder = mgr.GetEventRecorderFor("local-csi-manager")
 	}
+
+	// Register PV cleanup controller
+	log.Info("registering PV cleanup controller")
+	if err := (&pvcleanup.PVCleanupReconciler{
+		Client:   mgr.GetClient(),
+		Recorder: mgr.GetEventRecorderFor("pvcleanup-controller"),
+	}).SetupWithManager(mgr); err != nil {
+		logAndExit(err, "unable to register PV cleanup controller")
+	}
+	log.Info("PV cleanup controller registered successfully")
 
 	// Register webhooks once certificates are ready
 	go func() {
@@ -296,9 +307,9 @@ func main() {
 		log.Info("all webhooks registered successfully")
 	}()
 
-	log.Info("starting webhook manager")
+	log.Info("starting manager")
 	if err := mgr.Start(ctx); err != nil {
-		logAndExit(err, "problem running webhook manager")
+		logAndExit(err, "problem running manager")
 	}
 }
 
