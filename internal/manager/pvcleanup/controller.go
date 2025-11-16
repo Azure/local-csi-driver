@@ -19,23 +19,20 @@ import (
 )
 
 const (
-	// PVProtectionFinalizer is the standard Kubernetes finalizer that prevents PV deletion
+	// PVProtectionFinalizer is the standard Kubernetes finalizer that prevents PV deletion.
 	PVProtectionFinalizer = "kubernetes.io/pv-protection"
 
-	// ExternalProvisionerFinalizer is the finalizer set by the external provisioner
+	// ExternalProvisionerFinalizer is the finalizer set by the external provisioner.
 	ExternalProvisionerFinalizer = "external-provisioner.volume.kubernetes.io/finalizer"
-
-	// LocalCSIDriverName is the name of our CSI driver
-	LocalCSIDriverName = "localdisk.csi.acstor.io"
 )
 
-// PVCleanupReconciler watches PV delete events and removes finalizer if node doesn't exist
+// PVCleanupReconciler watches PV delete events and removes finalizer if node doesn't exist.
 type PVCleanupReconciler struct {
 	client.Client
 	Recorder record.EventRecorder
 }
 
-// Reconcile handles PV reconciliation
+// Reconcile handles PV reconciliation.
 func (r *PVCleanupReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	logger := log.FromContext(ctx)
 
@@ -137,7 +134,7 @@ func (r *PVCleanupReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 }
 
 // extractHostnamesFromPV extracts hostnames from PV's node affinity
-// Specifically looks for topology.localdisk.csi.acstor.io/node topology constraints
+// Specifically looks for topology.localdisk.csi.acstor.io/node topology constraints.
 func extractHostnamesFromPV(pv *corev1.PersistentVolume) []string {
 	if pv.Spec.NodeAffinity == nil || pv.Spec.NodeAffinity.Required == nil {
 		return nil
@@ -155,7 +152,7 @@ func extractHostnamesFromPV(pv *corev1.PersistentVolume) []string {
 	return hostnames
 }
 
-// isNodeReady checks if a node is in Ready condition
+// isNodeReady checks if a node is in Ready condition.
 func isNodeReady(node *corev1.Node) bool {
 	for _, condition := range node.Status.Conditions {
 		if condition.Type == corev1.NodeReady {
@@ -165,7 +162,7 @@ func isNodeReady(node *corev1.Node) bool {
 	return false
 }
 
-// hasFinalizer checks if the object has the specified finalizer
+// hasFinalizer checks if the object has the specified finalizer.
 func hasFinalizer(pv *corev1.PersistentVolume, finalizer string) bool {
 	for _, f := range pv.Finalizers {
 		if f == finalizer {
@@ -175,7 +172,7 @@ func hasFinalizer(pv *corev1.PersistentVolume, finalizer string) bool {
 	return false
 }
 
-// removeFinalizer removes the specified finalizer from the list
+// removeFinalizer removes the specified finalizer from the list.
 func removeFinalizer(finalizers []string, finalizer string) []string {
 	result := make([]string, 0, len(finalizers))
 	for _, f := range finalizers {
@@ -186,7 +183,7 @@ func removeFinalizer(finalizers []string, finalizer string) []string {
 	return result
 }
 
-// SetupWithManager sets up the controller with the Manager
+// SetupWithManager sets up the controller with the Manager.
 func (r *PVCleanupReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	// Create predicate to filter events
 	pvPredicate := predicate.Funcs{
