@@ -73,7 +73,7 @@ func (r *PVCleanupReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		return ctrl.Result{}, nil
 	}
 
-	logger.Info("PV is released with delete reclaim policy", "pv", pv.Name, "driver", pv.Spec.CSI.Driver)
+	logger.V(2).Info("PV is released with delete reclaim policy", "pv", pv.Name, "driver", pv.Spec.CSI.Driver)
 
 	// Extract hostnames from PV's node affinity
 	hostnames := extractHostnamesFromPV(&pv)
@@ -82,7 +82,7 @@ func (r *PVCleanupReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		return ctrl.Result{}, nil
 	}
 
-	logger.Info("PV has hostname topology", "pv", pv.Name, "hostnames", hostnames)
+	logger.V(2).Info("PV has hostname topology", "pv", pv.Name, "hostnames", hostnames)
 
 	// Check if any of the hostnames are available as nodes in the cluster
 	hasAvailableNode := false
@@ -92,7 +92,7 @@ func (r *PVCleanupReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 			// Node exists, check if it's ready
 			if isNodeReady(&node) {
 				hasAvailableNode = true
-				logger.Info("Found available node for PV", "pv", pv.Name, "node", hostname)
+				logger.V(2).Info("Found available node for PV", "pv", pv.Name, "node", hostname)
 				break
 			}
 		}
@@ -103,7 +103,26 @@ func (r *PVCleanupReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		return ctrl.Result{}, nil
 	}
 
-	logger.Info("None of the PV's hostname nodes are available, removing finalizers", "pv", pv.Name, "hostnames", hostnames)
+	logger.V(2).Info("None of the PV's hostname nodes are available, removing finalizers", "pv", pv.Name, "hostnames", hostnames)
+
+	// If the PV deletion timestamp is not set, issue a delete request first
+	if pv.DeletionTimestamp.IsZero() {
+		logger.Info("PV deletion timestamp not set, issuing delete request", "pv", pv.Name)
+		if err := r.Delete(ctx, &pv); err != nil {
+			logger.Error(err, "failed to delete PV", "pv", pv.Name)
+			r.Recorder.Eventf(&pv, corev1.EventTypeWarning, "DeleteFailed",
+				"Failed to delete PV: %v", err)
+			return ctrl.Result{}, err
+		}
+		logger.V(2).Info("Successfully issued PV delete request", "pv", pv.Name)
+		r.Recorder.Event(&pv, corev1.EventTypeNormal, "DeleteIssued",
+			"Issued PV delete request because no hostname nodes are available")
+
+		// Requeue to handle finalizer removal after deletion timestamp is set
+		return ctrl.Result{Requeue: true}, nil
+	}
+
+	logger.V(2).Info("PV has deletion timestamp set, proceeding to remove finalizers", "pv", pv.Name)
 
 	// Remove the finalizers
 	patch := client.MergeFrom(pv.DeepCopy())
@@ -120,6 +139,11 @@ func (r *PVCleanupReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	}
 
 	if err := r.Patch(ctx, &pv, patch); err != nil {
+		// Treat NotFound as success - PV was already deleted
+		if apierrors.IsNotFound(err) {
+			logger.Info("PV not found during finalizer removal, assuming already deleted", "pv", pv.Name)
+			return ctrl.Result{}, nil
+		}
 		logger.Error(err, "failed to remove finalizers from PV", "pv", pv.Name)
 		r.Recorder.Eventf(&pv, corev1.EventTypeWarning, "FinalizerRemovalFailed",
 			"Failed to remove finalizers: %v", err)

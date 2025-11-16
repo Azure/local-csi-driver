@@ -12,6 +12,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
@@ -188,22 +189,19 @@ var _ = Describe("PV Cleanup Controller", func() {
 			pv.Status.Phase = corev1.VolumeReleased
 			Expect(k8sClient.Status().Update(ctx, pv)).To(Succeed())
 
-			// Wait for controller to process and remove finalizers
+			// Wait for controller to process, remove finalizers or delete the PV
 			Eventually(func() bool {
 				var updatedPV corev1.PersistentVolume
 				err := k8sClient.Get(ctx, types.NamespacedName{Name: pv.Name}, &updatedPV)
 				if err != nil {
-					return false
+					// PV not found means it was successfully deleted (finalizers removed)
+					return apierrors.IsNotFound(err)
 				}
+				// PV still exists, check if finalizers are removed
 				return len(updatedPV.Finalizers) == 0
 			}, time.Second*10, time.Millisecond*250).Should(BeTrue())
 
-			// Verify finalizers are removed
-			var updatedPV corev1.PersistentVolume
-			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: pv.Name}, &updatedPV)).To(Succeed())
-			Expect(updatedPV.Finalizers).To(BeEmpty())
-
-			// Clean up
+			// Clean up (if PV still exists)
 			_ = k8sClient.Delete(ctx, pv)
 		})
 
@@ -563,17 +561,21 @@ var _ = Describe("PV Cleanup Controller", func() {
 			pv.Status.Phase = corev1.VolumeReleased
 			Expect(k8sClient.Status().Update(ctx, pv)).To(Succeed())
 
-			// Wait for controller to process and remove finalizers (node not ready = unavailable)
+			// Wait for controller to process and either remove finalizers or delete the PV
+			// After the fix, the controller issues a delete and removes finalizers,
+			// so the PV will be fully deleted
 			Eventually(func() bool {
 				var updatedPV corev1.PersistentVolume
 				err := k8sClient.Get(ctx, types.NamespacedName{Name: pv.Name}, &updatedPV)
 				if err != nil {
-					return false
+					// PV not found means it was successfully deleted (finalizers removed)
+					return apierrors.IsNotFound(err)
 				}
+				// PV still exists, check if finalizers are removed
 				return len(updatedPV.Finalizers) == 0
 			}, time.Second*10, time.Millisecond*250).Should(BeTrue())
 
-			// Clean up
+			// Clean up (if PV still exists)
 			_ = k8sClient.Delete(ctx, pv)
 		})
 	})

@@ -53,6 +53,7 @@ rules:
   - list
   - watch
   - patch
+  - delete
 - apiGroups:
   - ""
   resources:
