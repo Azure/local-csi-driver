@@ -6,6 +6,7 @@
 ![Made for Kubernetes](https://img.shields.io/github/tag/azure/local-csi-driver.svg?style=flat-square&label=release&color=purple)
 ![Supports Kubernetes v1.11.3+](https://img.shields.io/badge/Supports-Kubernetes_v1.11.3+-326ce5.svg?style=flat-square&logo=Kubernetes&logoColor=white)
 ![Latest commit](https://img.shields.io/github/last-commit/azure/local-csi-driver?style=flat-square)
+![License](https://img.shields.io/badge/License-MIT-blue.svg)
 
 local-csi-driver provides access to local NVMe drives on Kubernetes clusters.
 
