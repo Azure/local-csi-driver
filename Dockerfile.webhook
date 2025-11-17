@@ -44,7 +44,7 @@ ARG LDFLAGS="\
     # CGO_ENABLED=1 is required to build the driver with FIPS support.
 RUN --mount=type=cache,target=/go/pkg/mod \
     --mount=type=cache,target=/root/.cache/go-build \
-    CGO_ENABLED=1 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} go build -v -ldflags "${LDFLAGS}" -o local-csi-webhook cmd/manager/main.go
+    CGO_ENABLED=1 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} go build -v -ldflags "${LDFLAGS}" -o local-csi-manager cmd/manager/main.go
 
 
 FROM mcr.microsoft.com/azurelinux/base/core:3.0@sha256:3d53b96f4e336a197023bda703a056eaefecc6728e9a2b0c1ef42f7dce183338 AS dependency-install
@@ -57,7 +57,7 @@ RUN tdnf install -y --releasever 3.0 --installroot /staging \
 # Use distroless as minimal base image to package the driver binary.
 FROM mcr.microsoft.com/azurelinux/distroless/minimal:3.0@sha256:6b78aa535a2a5107ee308b767c0f1f5055a58d0e751f9d87543bc504da6d0ed3
 WORKDIR /
-COPY --from=builder /workspace/local-csi-webhook .
+COPY --from=builder /workspace/local-csi-manager .
 COPY --from=dependency-install /staging /
 
-ENTRYPOINT ["/local-csi-webhook"]
+ENTRYPOINT ["/local-csi-manager"]

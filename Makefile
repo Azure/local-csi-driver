@@ -174,8 +174,15 @@ $(GINKGO) -v -r $(3) --label-filter="$(1)$(if $(LABEL_FILTER), && ($(LABEL_FILTE
 endef
 
 .PHONY: test-container-structure
-test-container-structure: container-structure-test ## Run the container structure tests.
+test-container-structure: test-container-structure-driver test-container-structure-manager ## Run all container structure tests.
+
+.PHONY: test-container-structure-driver
+test-container-structure-driver: container-structure-test ## Run the driver container structure tests.
 	$(CONTAINER_STRUCTURE_TEST) test --image $(DRIVER_IMG) --config test/container-structure/local-csi-driver.yaml
+
+.PHONY: test-container-structure-manager
+test-container-structure-manager: container-structure-test ## Run the manager container structure tests.
+	$(CONTAINER_STRUCTURE_TEST) test --image $(MANAGER_IMG) --config test/container-structure/local-csi-manager.yaml
 
 .PHONY: lint
 lint: golangci-lint ## Run golangci-lint linter.

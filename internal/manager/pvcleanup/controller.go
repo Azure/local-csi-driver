@@ -11,6 +11,7 @@ import (
 	"k8s.io/client-go/tools/record"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	ctrlutil "sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/event"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
@@ -43,7 +44,6 @@ func (r *PVCleanupReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 			// PV was deleted, nothing to do
 			return ctrl.Result{}, nil
 		}
-		logger.Error(err, "failed to get PersistentVolume")
 		return ctrl.Result{}, err
 	}
 
@@ -65,8 +65,8 @@ func (r *PVCleanupReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		return ctrl.Result{}, nil
 	}
 
-	hasPVProtection := hasFinalizer(&pv, PVProtectionFinalizer)
-	hasExternalProvisioner := hasFinalizer(&pv, ExternalProvisionerFinalizer)
+	hasPVProtection := ctrlutil.ContainsFinalizer(&pv, PVProtectionFinalizer)
+	hasExternalProvisioner := ctrlutil.ContainsFinalizer(&pv, ExternalProvisionerFinalizer)
 
 	if !hasPVProtection && !hasExternalProvisioner {
 		// PV doesn't have any finalizers we care about, nothing to do
@@ -109,7 +109,6 @@ func (r *PVCleanupReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	if pv.DeletionTimestamp.IsZero() {
 		logger.Info("PV deletion timestamp not set, issuing delete request", "pv", pv.Name)
 		if err := r.Delete(ctx, &pv); err != nil {
-			logger.Error(err, "failed to delete PV", "pv", pv.Name)
 			r.Recorder.Eventf(&pv, corev1.EventTypeWarning, "DeleteFailed",
 				"Failed to delete PV: %v", err)
 			return ctrl.Result{}, err
@@ -135,7 +134,7 @@ func (r *PVCleanupReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	}
 
 	for _, finalizer := range finalizersToRemove {
-		pv.Finalizers = removeFinalizer(pv.Finalizers, finalizer)
+		_ = ctrlutil.RemoveFinalizer(&pv, finalizer)
 	}
 
 	if err := r.Patch(ctx, &pv, patch); err != nil {
@@ -144,7 +143,6 @@ func (r *PVCleanupReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 			logger.Info("PV not found during finalizer removal, assuming already deleted", "pv", pv.Name)
 			return ctrl.Result{}, nil
 		}
-		logger.Error(err, "failed to remove finalizers from PV", "pv", pv.Name)
 		r.Recorder.Eventf(&pv, corev1.EventTypeWarning, "FinalizerRemovalFailed",
 			"Failed to remove finalizers: %v", err)
 		return ctrl.Result{}, err
