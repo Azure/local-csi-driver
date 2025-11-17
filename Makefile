@@ -7,12 +7,14 @@ REGISTRY ?= docker.io
 # REPO_BASE is used in the Dockerfile and will be set to empty when run in the
 # pipelines. Set default for empty string, not just undefined.
 REPO_BASE := $(if $(REPO_BASE),$(REPO_BASE),acstor)
-REPO ?= $(REPO_BASE)/local-csi-driver
 
 COMMIT_HASH ?= $(shell git describe --always --dirty)
 TAG ?= v0.0.0-$(COMMIT_HASH)
 HELM_TAG ?= $(shell echo $(TAG) | sed 's/^v//')
-IMG ?= $(REGISTRY)/$(REPO):$(TAG)
+DRIVER_REPO ?= $(REPO_BASE)/local-csi-driver
+DRIVER_IMG ?= $(REGISTRY)/$(DRIVER_REPO):$(TAG)
+WEBHOOK_REPO ?= $(REPO_BASE)/local-csi-webhook
+WEBHOOK_IMG ?= $(REGISTRY)/$(WEBHOOK_REPO):$(TAG)
 CHART_REPO ?= $(REGISTRY)/$(REPO_BASE)/charts
 CHART_IMG ?= $(CHART_REPO)/local-csi-driver
 
@@ -165,14 +167,15 @@ test-scaledown: ginkgo ## Run the scale down tests.
 define run_tests
 TAG=$(TAG) \
 REGISTRY=$(REGISTRY) \
-IMG=$(IMG) \
+DRIVER_IMG=${DRIVER_IMG} \
+WEBHOOK_IMG=${WEBHOOK_IMG} \
 $(GINKGO) -v -r $(3) --label-filter="$(1)$(if $(LABEL_FILTER), && ($(LABEL_FILTER)))" --focus="$(FOCUS)" --no-color="$(NO_COLOR)" --timeout="$(TEST_TIMEOUT)" "$(2)" -- \
 	--junit-report=$(TEST_OUTPUT) --support-bundle-dir=$(SUPPORT_BUNDLE_OUTPUT_DIR) "$(4)"
 endef
 
 .PHONY: test-container-structure
 test-container-structure: container-structure-test ## Run the container structure tests.
-	$(CONTAINER_STRUCTURE_TEST) test --image $(IMG) --config test/container-structure/local-csi-driver.yaml
+	$(CONTAINER_STRUCTURE_TEST) test --image $(DRIVER_IMG) --config test/container-structure/local-csi-driver.yaml
 
 .PHONY: lint
 lint: golangci-lint ## Run golangci-lint linter.
@@ -188,13 +191,24 @@ lint-fix: golangci-lint ## Run golangci-lint linter and perform fixes.
 build: fmt vet ## Build binary.
 	go build -ldflags "$(LDFLAGS)" -o bin/local-csi-driver cmd/main.go
 
+.PHONY: build-webhook
+build-webhook: fmt vet ## Build webhook binary.
+	go build -ldflags "$(LDFLAGS)" -o bin/local-csi-webhook cmd/webhook/main.go
+
 .PHONY: run
 run: fmt vet ## Run the local CSI driver from your host.
 	go run ./cmd/main.go
 
 .PHONY: docker-build
-docker-build: docker-buildx ## Build the docker image.
-	$(call docker-build,Dockerfile,${IMG})
+docker-build: docker-build-driver docker-build-webhook
+
+.PHONY: docker-build-driver
+docker-build-driver: docker-buildx ## Build the docker image.
+	$(call docker-build,Dockerfile,${DRIVER_IMG})
+
+.PHONY: docker-build-webhook
+docker-build-webhook: ## Build the webhook docker image.
+	$(call docker-build,Dockerfile.webhook,${WEBHOOK_IMG})
 
 # buildx builder arguments
 BUILDX_BUILDER_NAME ?= img-builder
@@ -225,16 +239,30 @@ define docker-build
 endef
 
 .PHONY: docker-pull
-docker-pull: ## Pull the docker image.
-	$(call docker-pull,${IMG})
+docker-pull: docker-pull-driver docker-pull-webhook
+
+.PHONY: docker-pull-driver
+docker-pull-driver: ## Pull the driver docker image.
+	$(call docker-pull,${DRIVER_IMG})
+
+.PHONY: docker-pull-webhook
+docker-pull-webhook: ## Pull the webhook docker image.
+	$(call docker-pull,${WEBHOOK_IMG})
 
 define docker-pull
 	docker pull $(1)
 endef
 
 .PHONY: docker-load
-docker-load: ## Load the docker image into the kind cluster.
-	$(call docker-load,${IMG})
+docker-load: docker-load-driver docker-load-webhook
+
+.PHONY: docker-load-driver
+docker-load-driver: ## Load the docker image into the kind cluster.
+	$(call docker-load,${DRIVER_IMG})
+
+.PHONY: docker-load-webhook
+docker-load-webhook: ## Load the webhook image into the kind cluster.
+	$(call docker-load,${WEBHOOK_IMG})
 
 define docker-load
 	kind load docker-image $(1) --name kind
@@ -243,6 +271,7 @@ endef
 .PHONY: docker-lint
 docker-lint: hadolint
 	$(HADOLINT) Dockerfile
+	$(HADOLINT) Dockerfile.webhook
 
 .PHONY: helm-build
 helm-build: helm ## Generate a consolidated Helm chart with CRDs and deployment.
@@ -293,8 +322,12 @@ helm-install: helm ## Install the Helm chart from REGISTRY into the K8s cluster 
 	$(HELM) install local-csi-driver oci://$(CHART_IMG) \
 		--namespace kube-system \
 		--version $(HELM_TAG) \
-		--set image.driver.repository=$(REGISTRY)/$(REPO) \
+		--set image.driver.repository=$(REGISTRY)/$(DRIVER_REPO) \
 		--set image.driver.tag=$(TAG) \
+		--set image.driver.pullPolicy=Always \
+		--set image.webhook.repository=$(REGISTRY)/$(WEBHOOK_REPO) \
+		--set image.webhook.tag=$(TAG) \
+		--set image.webhook.pullPolicy=Always \
 		--debug --wait --atomic $(HELM_ARGS)
 
 .PHONY: helm-show-values
@@ -310,9 +343,12 @@ deploy: helm ## Deploy to the K8s cluster specified in ~/.kube/config.
 	$(HELM) install local-csi-driver charts/latest \
 		--namespace kube-system \
 		--version $(TAG) \
-		--set image.driver.repository=$(REGISTRY)/$(REPO) \
+		--set image.driver.repository=$(REGISTRY)/$(DRIVER_REPO) \
 		--set image.driver.tag=$(TAG) \
 		--set image.driver.pullPolicy=Always \
+		--set image.webhook.repository=$(REGISTRY)/$(WEBHOOK_REPO) \
+		--set image.webhook.tag=$(TAG) \
+		--set image.webhook.pullPolicy=Always \
 		--set observability.driver.trace.endpoint=$(OTEL_ENDPOINT) \
 		--debug --wait --atomic $(HELM_ARGS)
 
@@ -424,7 +460,7 @@ HELM ?= $(LOCALBIN)/helm
 GOMOCK_VERSION ?= $(shell go list -m -f '{{.Version}}' go.uber.org/mock)
 ENVTEST_VERSION ?= release-0.21
 KIND_VERSION ?= v0.29.0
-GOLANGCI_LINT_VERSION ?= v2.4.0
+GOLANGCI_LINT_VERSION ?= v2.6.0
 GO_JUNIT_REPORT_VERSION ?= v2.1.0
 PROMETHEUS_VERSION ?= v0.77.1
 JAEGER_VERSION ?= v1.62.0

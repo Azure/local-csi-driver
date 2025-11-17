@@ -11,6 +11,10 @@ image:
     # When the tag is unset (recommended), the chart version is used as the tag.
     tag:
     pullPolicy: IfNotPresent
+  webhook:
+    repository: localcsidriver.azurecr.io/acstor/local-csi-webhook
+    tag:
+    pullPolicy: IfNotPresent
   csiProvisioner:
     repository: /oss/v2/kubernetes-csi/csi-provisioner
     tag: v5.2.0
@@ -26,6 +30,14 @@ image:
 
 # DaemonSet configuration.
 daemonset:
+  # Pod selector labels for the DaemonSet. If empty, default labels are used.
+  podSelector: {}
+  # Update strategy for the DaemonSet.
+  updateStrategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 10%
+
   # Node selector for the DaemonSet. If empty, all nodes are selected. This can
   # be used to install the driver on a subset of nodes with local NVMe storage.
   nodeSelector: {}
@@ -96,6 +108,53 @@ webhook:
     # The type of the webhook service. Can be ClusterIP, NodePort, or
     # LoadBalancer.
     type: ClusterIP
+  serviceAccount:
+    # Annotations for the service account. If empty, no annotations are applied.
+    annotations: {}
+  deployment:
+    # Number of webhook replicas for high availability
+    replicas: 2
+    # Pod security context
+    podSecurityContext: {}
+    # Container security context
+    securityContext: {}
+    # Node selector for webhook pods
+    nodeSelector: {}
+    # Tolerations for webhook pods
+    tolerations:
+    - key: "node-role.kubernetes.io/master"
+      operator: "Exists"
+      effect: "NoSchedule"
+    - key: "node-role.kubernetes.io/controlplane"
+      operator: "Exists"
+      effect: "NoSchedule"
+    - key: "node-role.kubernetes.io/control-plane"
+      operator: "Exists"
+      effect: "NoSchedule"
+    - key: "CriticalAddonsOnly"
+      operator: "Exists"
+      effect: "NoSchedule"
+    # Affinity for webhook pods (anti-affinity recommended for HA)
+    affinity:
+      podAntiAffinity:
+        preferredDuringSchedulingIgnoredDuringExecution:
+        - weight: 100
+          podAffinityTerm:
+            labelSelector:
+              matchExpressions:
+              - key: app.kubernetes.io/component
+                operator: In
+                values:
+                - webhook
+            topologyKey: kubernetes.io/hostname
+    # Extra environment variables
+    env: []
+    # Extra arguments for the webhook
+    extraArgs: []
+    # Pod labels
+    podLabels: {}
+    # Pod annotations
+    podAnnotations: {}
 
 # Resource configuration.
 resources:
@@ -123,6 +182,12 @@ resources:
     requests:
       cpu: 10m
       memory: 20Mi
+  webhook:
+    limits:
+      memory: 128Mi
+    requests:
+      cpu: 10m
+      memory: 64Mi
 
 # Observability and health configuration.
 observability:
@@ -130,9 +195,16 @@ observability:
     # Endpoints are always enabled, toggling this only affects the RBAC
     # rule creation.
     enabled: true
+  webhook:
+    log:
+      level: 6
+    metrics:
+      port: 8080
+    health:
+      port: 8081
   driver:
     log:
-      level: 2
+      level: 6
     metrics:
       port: 8080
     health:
@@ -167,6 +239,10 @@ scalability:
       burst: 200
   csiProvisioner:
     workerThreads: 100
+    kubeApi:
+      qps: 100
+      burst: 200
+  webhook:
     kubeApi:
       qps: 100
       burst: 200

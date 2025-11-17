@@ -18,7 +18,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Harden Runner
-        uses: step-security/harden-runner@f4a75cfd619ee5ce8d5b864b0d183aff3c69b55a # v2.13.1
+        uses: step-security/harden-runner@95d9a5deda9de15063e7595e9719c11c38c90ae2 # v2.13.2
         with:
           egress-policy: audit
           disable-sudo: true
@@ -38,22 +38,46 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@e468171a9de216ec08956ac3ada2f0791b6bd435 # v3.11.1
 
-      - name: Docker build
+      - name: Docker build driver
         uses: docker/build-push-action@263435318d21b8e681c14492fe198d362a7d2c83 # v6.18.0
         with:
           context: .
+          file: Dockerfile
           push: false
           tags: test/local-csi-driver/driver:latest
           cache-from: type=gha
           cache-to: type=gha,mode=max
           load: true
 
-      - name: Run Trivy vulnerability scanner
+      - name: Docker build webhook
+        uses: docker/build-push-action@263435318d21b8e681c14492fe198d362a7d2c83 # v6.18.0
+        with:
+          context: .
+          file: Dockerfile.webhook
+          push: false
+          tags: test/local-csi-driver/webhook:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          load: true
+
+      - name: Run Trivy vulnerability scanner on driver
         uses: aquasecurity/trivy-action@b6643a29fecd7f34b3597bc6acb0a98b03d33ff8 # 0.33.1
         env:
           TRIVY_DB_REPOSITORY: "public.ecr.aws/aquasecurity/trivy-db:2"
         with:
           image-ref: 'test/local-csi-driver/driver:latest'
+          format: 'table'
+          exit-code: '1'
+          ignore-unfixed: true
+          vuln-type: 'os,library'
+          severity: 'CRITICAL,HIGH,MEDIUM,LOW,UNKNOWN'
+
+      - name: Run Trivy vulnerability scanner on webhook
+        uses: aquasecurity/trivy-action@b6643a29fecd7f34b3597bc6acb0a98b03d33ff8 # 0.33.1
+        env:
+          TRIVY_DB_REPOSITORY: "public.ecr.aws/aquasecurity/trivy-db:2"
+        with:
+          image-ref: 'test/local-csi-driver/webhook:latest'
           format: 'table'
           exit-code: '1'
           ignore-unfixed: true

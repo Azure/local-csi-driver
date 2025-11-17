@@ -35,14 +35,7 @@ type handler struct {
 	decoder   admission.Decoder
 }
 
-// opType is they type of request being processed.
-type opType string
-
 const (
-	unknown             opType = "unknown"
-	create              opType = "create"
-	HyperconvergedParam        = "hyperconverged"
-
 	// Well known label used by Kubernetes to identify the node name.
 	KubernetesNodeHostNameLabel = "kubernetes.io/hostname"
 
@@ -75,7 +68,7 @@ func (h *handler) Handle(ctx context.Context, req admission.Request) admission.R
 		storageClass     = &storagev1.StorageClass{}
 		pvNames          = make([]string, 0)
 	)
-	log.Info("handling request", "request", req)
+	log.V(1).Info("pod handling request", "kind", req.Kind.Kind, "request", req.Name, "operation", req.Operation)
 
 	// We shouldn't get requests for anything other than creating pods, but if
 	// we do, allow them immediately.

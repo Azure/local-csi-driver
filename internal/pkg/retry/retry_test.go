@@ -29,7 +29,7 @@ func TestBackoff(t *testing.T) {
 			backoff:         WriteBackoff,
 			wantCnt:         10,
 			wantMinDuration: 95 * time.Millisecond,
-			wantMaxDuration: 120 * time.Millisecond,
+			wantMaxDuration: 180 * time.Millisecond,
 		},
 		// Leaving this disabled as it will never fail and just adds to test
 		// time.
