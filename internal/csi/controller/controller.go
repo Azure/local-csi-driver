@@ -81,9 +81,14 @@ func (cs *Server) SetThrottlingUpdater(updater ThrottlingUpdater) {
 // so they're available during NodePublishVolume for pod-level cgroup configuration
 func (cs *Server) addThrottlingParamsToVolumeContext(vol *csi.Volume, parameters map[string]string) error {
 	// Check if there are any IO throttling parameters
-	throttleParams, err := ValidateIOThrottleParams(parameters)
+	throttleParams, clearParams, err := ValidateIOThrottleParams(parameters)
 	if err != nil {
 		return fmt.Errorf("invalid IO throttling parameters: %w", err)
+	}
+
+	// If clear throttling is requested, don't add any throttling params
+	if clearParams != nil && clearParams.ShouldClear {
+		return nil
 	}
 
 	// If no throttling parameters, nothing to add
@@ -167,6 +172,49 @@ func (cs *Server) updateVolumeContextWithThrottlingParams(ctx context.Context, v
 	}
 
 	return fmt.Errorf("failed to update PersistentVolume %s after %d attempts due to conflicts", pvName, maxRetries)
+}
+
+// handleClearThrottling handles the removal of throttling when a "no-throttle" VAC is applied
+//
+// This function is called when:
+// 1. A PVC has a VolumeAttributesClass with "clear-throttling: true" parameter
+// 2. This signals that the user wants to restore the pod to its original state without throttling
+//
+// The function:
+// - Removes throttling annotations from the PersistentVolume
+// - Clears throttling limits from running pods (best effort)
+func (cs *Server) handleClearThrottling(ctx context.Context, volumeID string) (*csi.ControllerModifyVolumeResponse, error) {
+	ctx, span := cs.tracer.Start(ctx, "csi.v1.Controller/handleClearThrottling", trace.WithAttributes(
+		attribute.String("vol.id", volumeID),
+	))
+	defer span.End()
+
+	log := log.FromContext(ctx)
+	log.Info("Clearing throttling parameters via no-throttle VAC", "volumeId", volumeID)
+
+	// If we have a throttling updater (combined server mode), clear throttling for running pods
+	if cs.throttlingUpdater != nil {
+		log.V(2).Info("Clearing throttling for running pods", "volumeId", volumeID)
+
+		// Signal to clear throttling by passing nil (no limits)
+		if err := cs.throttlingUpdater.UpdateRunningPodsThrottling(volumeID, nil); err != nil {
+			// Log the error but don't fail the request - the PV has been successfully updated
+			log.Error(err, "Failed to clear running pods throttling - pods will retain throttling until restart", "volumeId", volumeID)
+			span.AddEvent("failed to clear running pods throttling", trace.WithAttributes(
+				attribute.String("error", err.Error()),
+			))
+		} else {
+			log.V(2).Info("Successfully cleared running pods throttling", "volumeId", volumeID)
+			span.AddEvent("running pods throttling cleared")
+		}
+	} else {
+		log.V(2).Info("No throttling updater available - running pods will retain throttling until restart", "volumeId", volumeID)
+	}
+
+	log.Info("Successfully cleared IO throttling parameters", "volumeId", volumeID)
+	span.AddEvent("throttling parameters cleared")
+	span.SetStatus(otcodes.Ok, "throttling clear completed")
+	return &csi.ControllerModifyVolumeResponse{}, nil
 }
 
 func (cs *Server) CreateVolume(ctx context.Context, req *csi.CreateVolumeRequest) (*csi.CreateVolumeResponse, error) {
@@ -544,12 +592,20 @@ func (cs *Server) ControllerModifyVolume(ctx context.Context, req *csi.Controlle
 	log.V(3).Info("Processing mutable parameters", "mutableParameters", mutableParams)
 
 	// Validate IO throttling parameters
-	throttleParams, err := ValidateIOThrottleParams(mutableParams)
+	throttleParams, clearThrottleParams, err := ValidateIOThrottleParams(mutableParams)
 	if err != nil {
 		log.Error(err, "Invalid IO throttling parameters", "mutableParameters", mutableParams)
 		span.SetStatus(otcodes.Error, "parameter validation failed")
 		span.RecordError(err)
 		return nil, status.Error(codes.InvalidArgument, fmt.Sprintf("Invalid mutable parameters: %v", err))
+	}
+
+	// Handle clear throttling request when "no-throttle" VAC is applied
+	// Since VAC reference cannot be removed from PVC per Kubernetes KEP,
+	// users can apply a special VAC with "clear-throttling: true" parameter
+	if clearThrottleParams != nil && clearThrottleParams.ShouldClear {
+		log.V(2).Info("Clear throttling requested via no-throttle VAC")
+		return cs.handleClearThrottling(ctx, req.GetVolumeId())
 	}
 
 	// If no throttling parameters were provided, we're done

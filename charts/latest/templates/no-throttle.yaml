@@ -1,0 +1,9 @@
+apiVersion: storage.k8s.io/v1
+kind: VolumeAttributesClass
+metadata:
+  name: no-throttle
+driverName: localdisk.csi.acstor.io
+parameters:
+   # This parameter disables any form of throttling. Its presence indicates that the
+   # storage system should not apply throttling policies to volumes created with this class.
+  clear-throttling: "true"

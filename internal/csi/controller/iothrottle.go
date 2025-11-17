@@ -19,10 +19,26 @@ type IOThrottleParams struct {
 	WIOPS *int64 // Write IOPS per second
 }
 
+// ClearThrottleParams represents a request to clear/remove all throttling
+// This is used when a "no-throttle" VAC is applied to restore original performance
+type ClearThrottleParams struct {
+	ShouldClear bool
+}
+
 // ValidateIOThrottleParams validates the IO throttling parameters from mutable parameters
-func ValidateIOThrottleParams(params map[string]string) (*IOThrottleParams, error) {
+// Returns IOThrottleParams for setting throttling, ClearThrottleParams for removing throttling, or nil for no change
+// Supports a special "clear-throttling" parameter that can be set to "true" in a VAC to remove all throttling
+func ValidateIOThrottleParams(params map[string]string) (*IOThrottleParams, *ClearThrottleParams, error) {
 	if len(params) == 0 {
-		return nil, nil
+		return nil, nil, nil
+	}
+
+	// Check for explicit clear throttling request via special parameter
+	// This allows users to apply a "no-throttle" VAC that removes all throttling
+	if clearStr, exists := params["clear-throttling"]; exists {
+		if clearStr == "true" {
+			return nil, &ClearThrottleParams{ShouldClear: true}, nil
+		}
 	}
 
 	throttleParams := &IOThrottleParams{}
@@ -32,14 +48,14 @@ func ValidateIOThrottleParams(params map[string]string) (*IOThrottleParams, erro
 	if rbpsStr, exists := params["rbps"]; exists {
 		hasThrottleParams = true
 		if rbpsStr == "" {
-			return nil, fmt.Errorf("rbps parameter cannot be empty")
+			return nil, nil, fmt.Errorf("rbps parameter cannot be empty")
 		}
 		rbps, err := strconv.ParseInt(rbpsStr, 10, 64)
 		if err != nil {
-			return nil, fmt.Errorf("invalid rbps value '%s': must be a valid integer", rbpsStr)
+			return nil, nil, fmt.Errorf("invalid rbps value '%s': must be a valid integer", rbpsStr)
 		}
 		if rbps < 0 {
-			return nil, fmt.Errorf("rbps value %d cannot be negative", rbps)
+			return nil, nil, fmt.Errorf("rbps value %d cannot be negative", rbps)
 		}
 		throttleParams.RBPS = &rbps
 	}
@@ -48,14 +64,14 @@ func ValidateIOThrottleParams(params map[string]string) (*IOThrottleParams, erro
 	if wbpsStr, exists := params["wbps"]; exists {
 		hasThrottleParams = true
 		if wbpsStr == "" {
-			return nil, fmt.Errorf("wbps parameter cannot be empty")
+			return nil, nil, fmt.Errorf("wbps parameter cannot be empty")
 		}
 		wbps, err := strconv.ParseInt(wbpsStr, 10, 64)
 		if err != nil {
-			return nil, fmt.Errorf("invalid wbps value '%s': must be a valid integer", wbpsStr)
+			return nil, nil, fmt.Errorf("invalid wbps value '%s': must be a valid integer", wbpsStr)
 		}
 		if wbps < 0 {
-			return nil, fmt.Errorf("wbps value %d cannot be negative", wbps)
+			return nil, nil, fmt.Errorf("wbps value %d cannot be negative", wbps)
 		}
 		throttleParams.WBPS = &wbps
 	}
@@ -64,14 +80,14 @@ func ValidateIOThrottleParams(params map[string]string) (*IOThrottleParams, erro
 	if riopsStr, exists := params["riops"]; exists {
 		hasThrottleParams = true
 		if riopsStr == "" {
-			return nil, fmt.Errorf("riops parameter cannot be empty")
+			return nil, nil, fmt.Errorf("riops parameter cannot be empty")
 		}
 		riops, err := strconv.ParseInt(riopsStr, 10, 64)
 		if err != nil {
-			return nil, fmt.Errorf("invalid riops value '%s': must be a valid integer", riopsStr)
+			return nil, nil, fmt.Errorf("invalid riops value '%s': must be a valid integer", riopsStr)
 		}
 		if riops < 0 {
-			return nil, fmt.Errorf("riops value %d cannot be negative", riops)
+			return nil, nil, fmt.Errorf("riops value %d cannot be negative", riops)
 		}
 		throttleParams.RIOPS = &riops
 	}
@@ -80,24 +96,24 @@ func ValidateIOThrottleParams(params map[string]string) (*IOThrottleParams, erro
 	if wiopsStr, exists := params["wiops"]; exists {
 		hasThrottleParams = true
 		if wiopsStr == "" {
-			return nil, fmt.Errorf("wiops parameter cannot be empty")
+			return nil, nil, fmt.Errorf("wiops parameter cannot be empty")
 		}
 		wiops, err := strconv.ParseInt(wiopsStr, 10, 64)
 		if err != nil {
-			return nil, fmt.Errorf("invalid wiops value '%s': must be a valid integer", wiopsStr)
+			return nil, nil, fmt.Errorf("invalid wiops value '%s': must be a valid integer", wiopsStr)
 		}
 		if wiops < 0 {
-			return nil, fmt.Errorf("wiops value %d cannot be negative", wiops)
+			return nil, nil, fmt.Errorf("wiops value %d cannot be negative", wiops)
 		}
 		throttleParams.WIOPS = &wiops
 	}
 
 	// Return nil if no throttling parameters were found
 	if !hasThrottleParams {
-		return nil, nil
+		return nil, nil, nil
 	}
 
-	return throttleParams, nil
+	return throttleParams, nil, nil
 }
 
 // GetDeviceMajorMinor gets the major:minor device numbers for a device path

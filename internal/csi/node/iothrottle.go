@@ -345,12 +345,8 @@ func extractThrottlingParamsFromAnnotations(annotations map[string]string) *IOTh
 }
 
 // UpdateRunningPodsThrottling updates the IO throttling parameters for all running pods using a specific volume
-// This function is called after ControllerModifyVolume successfully updates PV annotations
+// If throttleParams is nil, it clears/removes all throttling
 func (ns *Server) UpdateRunningPodsThrottling(volumeID string, throttleParams *IOThrottleParams) error {
-	if throttleParams == nil {
-		return nil // No throttling to update
-	}
-
 	fmt.Printf("Debug: UpdateRunningPodsThrottling called for volume %s with params %+v\n", volumeID, throttleParams)
 
 	// Find all active volume mounts for this volume ID
@@ -366,16 +362,34 @@ func (ns *Server) UpdateRunningPodsThrottling(volumeID string, throttleParams *I
 
 	fmt.Printf("Debug: Found %d active mounts for volume %s\n", len(activeMounts), volumeID)
 
-	// Update throttling for each active mount
+	// Update or clear throttling for each active mount
 	var updateErrors []error
 	for _, mountInfo := range activeMounts {
-		fmt.Printf("Debug: Updating throttling for mount %s, device %s, cgroup %s\n",
-			mountInfo.MountPath, mountInfo.DevicePath, mountInfo.CgroupPath)
-
-		if err := ns.configurePodCgroupIOMax(mountInfo.DevicePath, throttleParams, mountInfo.CgroupPath); err != nil {
-			updateErrors = append(updateErrors, fmt.Errorf("failed to update throttling for mount %s: %w", mountInfo.MountPath, err))
+		var err error
+		if throttleParams == nil {
+			// Clear throttling when throttleParams is nil (no-throttle VAC applied)
+			fmt.Printf("Debug: Clearing throttling for mount %s, device %s, cgroup %s\n",
+				mountInfo.MountPath, mountInfo.DevicePath, mountInfo.CgroupPath)
+			err = ns.clearPodCgroupIOMax(mountInfo.DevicePath, mountInfo.CgroupPath)
 		} else {
-			fmt.Printf("Debug: Successfully updated throttling for mount %s\n", mountInfo.MountPath)
+			// Set throttling parameters
+			fmt.Printf("Debug: Updating throttling for mount %s, device %s, cgroup %s\n",
+				mountInfo.MountPath, mountInfo.DevicePath, mountInfo.CgroupPath)
+			err = ns.configurePodCgroupIOMax(mountInfo.DevicePath, throttleParams, mountInfo.CgroupPath)
+		}
+
+		if err != nil {
+			operation := "update"
+			if throttleParams == nil {
+				operation = "clear"
+			}
+			updateErrors = append(updateErrors, fmt.Errorf("failed to %s throttling for mount %s: %w", operation, mountInfo.MountPath, err))
+		} else {
+			operation := "updated"
+			if throttleParams == nil {
+				operation = "cleared"
+			}
+			fmt.Printf("Debug: Successfully %s throttling for mount %s\n", operation, mountInfo.MountPath)
 		}
 	}
 
@@ -383,6 +397,33 @@ func (ns *Server) UpdateRunningPodsThrottling(volumeID string, throttleParams *I
 		return fmt.Errorf("failed to update some mounts: %v", updateErrors)
 	}
 
+	return nil
+}
+
+// clearPodCgroupIOMax clears all IO throttling limits for the pod's cgroup
+func (ns *Server) clearPodCgroupIOMax(devicePath string, cgroupPath string) error {
+	// Get device major:minor numbers
+	deviceNumbers, err := getDeviceMajorMinor(devicePath)
+	if err != nil {
+		return fmt.Errorf("failed to get device numbers: %w", err)
+	}
+
+	// Construct the full cgroup io.max path
+	ioMaxPath := filepath.Join("/sys/fs/cgroup", cgroupPath, "io.max")
+
+	// Debug logging
+	fmt.Printf("Debug: clearPodCgroupIOMax - clearing throttling for device %s at path %s\n", deviceNumbers, ioMaxPath)
+
+	// Clear throttling by writing device with "max" values (no limits)
+	// Format: "major:minor rbps=max wbps=max riops=max wiops=max"
+	clearConfig := fmt.Sprintf("%s rbps=max wbps=max riops=max wiops=max", deviceNumbers)
+
+	err = os.WriteFile(ioMaxPath, []byte(clearConfig), 0644)
+	if err != nil {
+		return fmt.Errorf("failed to clear io.max throttling for device %s at %s: %w", deviceNumbers, ioMaxPath, err)
+	}
+
+	fmt.Printf("Debug: clearPodCgroupIOMax - successfully cleared throttling for device %s\n", deviceNumbers)
 	return nil
 }
 
