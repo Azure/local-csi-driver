@@ -184,27 +184,6 @@ func isNodeReady(node *corev1.Node) bool {
 	return false
 }
 
-// hasFinalizer checks if the object has the specified finalizer.
-func hasFinalizer(pv *corev1.PersistentVolume, finalizer string) bool {
-	for _, f := range pv.Finalizers {
-		if f == finalizer {
-			return true
-		}
-	}
-	return false
-}
-
-// removeFinalizer removes the specified finalizer from the list.
-func removeFinalizer(finalizers []string, finalizer string) []string {
-	result := make([]string, 0, len(finalizers))
-	for _, f := range finalizers {
-		if f != finalizer {
-			result = append(result, f)
-		}
-	}
-	return result
-}
-
 // SetupWithManager sets up the controller with the Manager.
 func (r *PVCleanupReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	// Create predicate to filter events
