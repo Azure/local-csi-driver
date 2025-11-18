@@ -215,7 +215,7 @@ docker-build-driver: docker-buildx ## Build the docker image.
 
 .PHONY: docker-build-manager
 docker-build-manager: ## Build the manager docker image.
-	$(call docker-build,Dockerfile.webhook,${MANAGER_IMG})
+	$(call docker-build,Dockerfile.manager,${MANAGER_IMG})
 
 # buildx builder arguments
 BUILDX_BUILDER_NAME ?= img-builder
@@ -278,7 +278,7 @@ endef
 .PHONY: docker-lint
 docker-lint: hadolint
 	$(HADOLINT) Dockerfile
-	$(HADOLINT) Dockerfile.webhook
+	$(HADOLINT) Dockerfile.manager
 
 .PHONY: helm-build
 helm-build: helm ## Generate a consolidated Helm chart with CRDs and deployment.
