@@ -13,7 +13,7 @@ TAG ?= v0.0.0-$(COMMIT_HASH)
 HELM_TAG ?= $(shell echo $(TAG) | sed 's/^v//')
 DRIVER_REPO ?= $(REPO_BASE)/local-csi-driver
 DRIVER_IMG ?= $(REGISTRY)/$(DRIVER_REPO):$(TAG)
-MANAGER_REPO ?= $(REPO_BASE)/local-csi-webhook
+MANAGER_REPO ?= $(REPO_BASE)/local-csi-manager
 MANAGER_IMG ?= $(REGISTRY)/$(MANAGER_REPO):$(TAG)
 CHART_REPO ?= $(REGISTRY)/$(REPO_BASE)/charts
 CHART_IMG ?= $(CHART_REPO)/local-csi-driver
@@ -215,7 +215,7 @@ docker-build-driver: docker-buildx ## Build the docker image.
 
 .PHONY: docker-build-manager
 docker-build-manager: ## Build the manager docker image.
-	$(call docker-build,Dockerfile.webhook,${MANAGER_IMG})
+	$(call docker-build,Dockerfile.manager,${MANAGER_IMG})
 
 # buildx builder arguments
 BUILDX_BUILDER_NAME ?= img-builder
@@ -278,7 +278,7 @@ endef
 .PHONY: docker-lint
 docker-lint: hadolint
 	$(HADOLINT) Dockerfile
-	$(HADOLINT) Dockerfile.webhook
+	$(HADOLINT) Dockerfile.manager
 
 .PHONY: helm-build
 helm-build: helm ## Generate a consolidated Helm chart with CRDs and deployment.
