@@ -29,6 +29,6 @@ roleRef:
   name: {{ .Values.name }}-certificate-role
 subjects:
 - kind: ServiceAccount
-  name: {{ .Values.name }}-webhook
+  name: {{ .Values.name }}-manager
   namespace: '{{ .Release.Namespace }}'
 {{- end }}

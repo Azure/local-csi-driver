@@ -22,6 +22,7 @@ import (
 
 	"local-csi-driver/internal/csi/capability"
 	"local-csi-driver/internal/csi/core"
+	"local-csi-driver/internal/csi/core/lvm"
 	"local-csi-driver/internal/csi/mounter"
 	"local-csi-driver/internal/pkg/events"
 )
@@ -102,7 +103,7 @@ func (cs *Server) CreateVolume(ctx context.Context, req *csi.CreateVolumeRequest
 		pvc = &corev1.PersistentVolumeClaim{}
 		if err := cs.k8sClient.Get(ctx, client.ObjectKey{Namespace: req.Parameters[core.PVCNamespaceParam], Name: req.Parameters[core.PVCNameParam]}, pvc); err != nil {
 			// We error in this scenario because we need the PVC to be able to
-			// be able to check the owner references and set the volume to be
+			// check the owner references and set the volume to be
 			// accessible from all nodes if it is not a generic ephemeral volume.
 			log.Error(err, "failed to get pvc", "name", req.Parameters[core.PVCNameParam], "namespace", req.Parameters[core.PVCNamespaceParam])
 			return nil, status.Error(codes.Internal, err.Error())
@@ -171,75 +172,70 @@ func (cs *Server) DeleteVolume(ctx context.Context, req *csi.DeleteVolumeRequest
 	}
 	span.SetAttributes(attribute.String("pv.name", pvName))
 
-	// If pv node affinity is removed, every instance of the controller server
-	// will receive the delete volume request. We need to check if the volume
-	// belongs to the current node and if not, we need to return an error.
-	var pv *corev1.PersistentVolume
-	if cs.removePvNodeAffinity {
-		pv = &corev1.PersistentVolume{}
-		// Get the pv and check selected node annotation
-		if err := cs.k8sClient.Get(ctx, client.ObjectKey{Name: pvName}, pv); err != nil {
-			if client.IgnoreNotFound(err) != nil {
-				log.Error(err, "failed to get pv", "name", pvName)
-				span.SetStatus(otcodes.Error, "DeleteVolume failed")
-				span.RecordError(err)
-				return nil, status.Error(codes.Internal, err.Error())
-			}
-			// If the pv is not found, it means it has already been deleted.
-			// This is not an error, so we return success.
-			log.V(2).Info("pv not found, assuming it has already been deleted", "name", pvName)
-			span.SetStatus(otcodes.Ok, "volume not found")
-			return &csi.DeleteVolumeResponse{}, nil
+	// Get the PV to check node affinity topology and for event recording.
+	// Every instance of the controller server will receive the delete volume request
+	// when node affinity is removed from PVs. We need to check if the volume belongs
+	// to the current node based on its topology or selected node annotation.
+	pv := &corev1.PersistentVolume{}
+	if err := cs.k8sClient.Get(ctx, client.ObjectKey{Name: pvName}, pv); err != nil {
+		if client.IgnoreNotFound(err) != nil {
+			log.Error(err, "failed to get pv", "name", pvName)
+			span.SetStatus(otcodes.Error, "DeleteVolume failed")
+			span.RecordError(err)
+			return nil, status.Error(codes.Internal, err.Error())
+		}
+		// If the pv is not found, it means it has already been deleted.
+		// This is not an error, so we return success.
+		log.V(2).Info("pv not found, assuming it has already been deleted", "name", pvName)
+		span.SetStatus(otcodes.Ok, "volume not found")
+		return &csi.DeleteVolumeResponse{}, nil
+	}
+
+	// Check if PV has hostname topology. If it does, the CSI provisioner already
+	// ensured this request went to the correct node, so we can proceed.
+	// If it doesn't have hostname topology (removed in favor of using webhooks), we need
+	// to check the selected node annotation or volume context to ensure only the
+	// correct node handles the deletion.
+	hasHostnameTopology := pvHasHostnameTopology(pv)
+
+	if !hasHostnameTopology {
+		// PV doesn't have hostname topology, so we need to check if this is the
+		// correct node to handle the deletion based on annotations or volume context.
+		selectedNode := ""
+
+		// Check the selected node annotation first
+		if pv.Annotations != nil {
+			selectedNode = pv.Annotations[cs.selectedNodeAnnotation]
 		}
 
-		// Check the selected node annotation and if it exists, only allow deletion
-		// if the node name matches the selected node.
-		node, ok := pv.Annotations[cs.selectedNodeAnnotation]
-		if !ok {
-			// Get the node name from volume context
-			if pv.Spec.CSI != nil {
-				node = pv.Spec.CSI.VolumeAttributes[cs.selectedInitialNodeParam]
-			}
+		// Fall back to volume context if annotation is not set
+		if selectedNode == "" && pv.Spec.CSI != nil && pv.Spec.CSI.VolumeAttributes != nil {
+			selectedNode = pv.Spec.CSI.VolumeAttributes[cs.selectedInitialNodeParam]
 		}
-		if cs.nodeId != "" && node != "" {
+
+		if cs.nodeId != "" && selectedNode != "" {
 			// Check if the node exists in the cluster.
-			// If it does not exist, we can return success without deleting the
-			// volume.
-			if err := cs.k8sClient.Get(ctx, client.ObjectKey{Name: node}, &corev1.Node{}); err != nil {
+			// If it does not exist, we can return success without deleting the volume
+			// since the PV cleanup controller will handle finalizer removal.
+			if err := cs.k8sClient.Get(ctx, client.ObjectKey{Name: selectedNode}, &corev1.Node{}); err != nil {
 				if client.IgnoreNotFound(err) == nil { // node not found
-					log.V(2).Info("node not found, assuming it has been deleted", "name", node)
+					log.V(2).Info("node not found, assuming it has been deleted", "name", selectedNode)
 					span.SetStatus(otcodes.Ok, "node not found")
 					return &csi.DeleteVolumeResponse{}, nil
 				}
-				log.Error(err, "failed to get node", "name", node)
+				log.Error(err, "failed to get node", "name", selectedNode)
 			}
 
-			// If the nodeName does not match the selected node, we cannot
-			// delete the volume.
-			if !strings.EqualFold(node, cs.nodeId) {
-				span.SetStatus(otcodes.Error, "DeleteVolume failed")
-				return nil, status.Error(codes.FailedPrecondition, "Volume is on a different node "+node)
+			// If the nodeName does not match the selected node, we cannot delete the volume.
+			if !strings.EqualFold(selectedNode, cs.nodeId) {
+				span.SetStatus(otcodes.Error, "DeleteVolume failed - wrong node")
+				return nil, status.Error(codes.FailedPrecondition, "Volume is on a different node "+selectedNode)
 			}
 		}
 	}
 
-	if pv == nil {
-		// If the pv is nil, it means we are not using the removePvNodeAffinity
-		// flag. Avoid the extra GET call to get the pv if we are not using the
-		// flag.
-		pv = &corev1.PersistentVolume{}
-		if err := cs.k8sClient.Get(ctx, client.ObjectKey{Name: pvName}, pv); err != nil {
-			log.Error(err, "failed to get persistent volume")
-			// Getting PV for events recording will be best effort, we could be
-			// running outside of a k8s cluster, so we don't want to fail the
-			// delete volume request if we can't get the PV.
-		}
-	}
-
-	if pv != nil {
-		// The PVC is deleted by this point, so use events on PV.
-		ctx = events.WithObjectIntoContext(ctx, cs.recorder, pv)
-	}
+	// The PVC is deleted by this point, so use events on PV.
+	ctx = events.WithObjectIntoContext(ctx, cs.recorder, pv)
 
 	// Since NodeUnstageVolume is a no-op to preserve the page cache between
 	// pods using the same volume, we need to unmount the device here if it is
@@ -412,4 +408,25 @@ func fromCoreError(err error) error {
 	default:
 		return status.Error(codes.Internal, err.Error())
 	}
+}
+
+// pvHasHostnameTopology checks if a PV has hostname-based node affinity topology.
+// Returns true if the PV has node affinity with the driver's topology key.
+func pvHasHostnameTopology(pv *corev1.PersistentVolume) bool {
+	if pv == nil || pv.Spec.NodeAffinity == nil || pv.Spec.NodeAffinity.Required == nil {
+		return false
+	}
+
+	// Import the topology key from the lvm package
+	const topologyKey = lvm.TopologyKey
+
+	for _, term := range pv.Spec.NodeAffinity.Required.NodeSelectorTerms {
+		for _, expr := range term.MatchExpressions {
+			if expr.Key == topologyKey && expr.Operator == corev1.NodeSelectorOpIn {
+				return true
+			}
+		}
+	}
+
+	return false
 }
