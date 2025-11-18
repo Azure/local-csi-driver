@@ -49,13 +49,13 @@ jobs:
           cache-to: type=gha,mode=max
           load: true
 
-      - name: Docker build webhook
+      - name: Docker build manager
         uses: docker/build-push-action@263435318d21b8e681c14492fe198d362a7d2c83 # v6.18.0
         with:
           context: .
-          file: Dockerfile.webhook
+          file: Dockerfile.manager
           push: false
-          tags: test/local-csi-driver/webhook:latest
+          tags: test/local-csi-driver/manager:latest
           cache-from: type=gha
           cache-to: type=gha,mode=max
           load: true
@@ -72,12 +72,12 @@ jobs:
           vuln-type: 'os,library'
           severity: 'CRITICAL,HIGH,MEDIUM,LOW,UNKNOWN'
 
-      - name: Run Trivy vulnerability scanner on webhook
+      - name: Run Trivy vulnerability scanner on manager
         uses: aquasecurity/trivy-action@b6643a29fecd7f34b3597bc6acb0a98b03d33ff8 # 0.33.1
         env:
           TRIVY_DB_REPOSITORY: "public.ecr.aws/aquasecurity/trivy-db:2"
         with:
-          image-ref: 'test/local-csi-driver/webhook:latest'
+          image-ref: 'test/local-csi-driver/manager:latest'
           format: 'table'
           exit-code: '1'
           ignore-unfixed: true
