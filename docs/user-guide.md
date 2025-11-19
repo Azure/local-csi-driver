@@ -104,8 +104,8 @@ kubectl apply -f storageclass.yaml
 
 The local-csi-driver supports several optional parameters in the StorageClass:
 
-| Parameter | Description | Values | Default |
-|-----------|-------------|---------|---------|
+| Parameter                               | Description                                               | Values                       | Default                              |
+|-----------------------------------------|-----------------------------------------------------------|------------------------------|--------------------------------------|
 | `localdisk.csi.acstor.io/failover-mode` | Controls pod scheduling behavior in hyperconverged setups | `availability`, `durability` | Not set (defaults to `availability`) |
 
 #### Failover Modes

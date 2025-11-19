@@ -44,11 +44,11 @@ the user specifies `localdisk.csi.acstor.io/disk-path-prefixes: /dev/nvme,/dev/s
 the driver will select disks that have either `/dev/nvme` or `/dev/sda` as the
 path prefix.
 
-| Parameter                                   | Description                 | Default Value                                              |
+| Parameter                                    | Description                | Default Value                                              |
 |----------------------------------------------|----------------------------|------------------------------------------------------------|
-| `localdisk.csi.acstor.io/disk-path-prefixes`     | Prefix of the disk path    | `/dev/nvme`                                                |
-| `localdisk.csi.acstor.io/disk-models`            | Model of the disk          | `Microsoft NVMe Direct Disk,Microsoft NVMe Direct Disk v2` |
-| `localdisk.csi.acstor.io/disk-types`             | Type of the disk           | `disk`                                                     |
+| `localdisk.csi.acstor.io/disk-path-prefixes` | Prefix of the disk path    | `/dev/nvme`                                                |
+| `localdisk.csi.acstor.io/disk-models`        | Model of the disk          | `Microsoft NVMe Direct Disk,Microsoft NVMe Direct Disk v2` |
+| `localdisk.csi.acstor.io/disk-types`         | Type of the disk           | `disk`                                                     |
 
 Example with all parameters:
 
