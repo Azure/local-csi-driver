@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+
+	"k8s.io/apimachinery/pkg/api/resource"
 )
 
 // IOThrottleParams represents the IO throttling parameters
@@ -23,6 +25,73 @@ type IOThrottleParams struct {
 // This is used when a "no-throttle" VAC is applied to restore original performance
 type ClearThrottleParams struct {
 	ShouldClear bool
+}
+
+// parseQuantityOrInt parses a string value that can be either a plain integer or a Kubernetes quantity.
+// For bytes per second (BPS) parameters, it supports standard Kubernetes quantity formats like:
+// - Plain numbers: "1000", "50000"
+// - Binary units: "1Ki", "10Mi", "1Gi", "100Ki"
+// - Decimal units: "1k", "10M", "1G", "100k" (case-insensitive: "20K" = "20k", "2g" = "2G")
+// For IOPS parameters, it typically uses plain numbers or decimal multipliers like "50k"
+//
+// Examples:
+// - rbps: "100Mi" = 100 * 1024 * 1024 = 104,857,600 bytes/sec
+// - wbps: "50M" = 50 * 1000 * 1000 = 50,000,000 bytes/sec
+// - riops: "50k" or "50K" = 50 * 1000 = 50,000 IOPS
+// - wiops: "25000" = 25,000 IOPS
+func parseQuantityOrInt(value, paramName string) (int64, error) {
+	if value == "" {
+		return 0, fmt.Errorf("%s parameter cannot be empty", paramName)
+	}
+
+	// Normalize case for decimal units: K->k, M->M (already correct), G->g
+	// Binary units (Ki, Mi, Gi) are already case-correct in typical usage
+	// This allows users to use "20K" instead of requiring "20k"
+	normalizedValue := normalizeQuantityCase(value)
+
+	// First try parsing as a Kubernetes quantity
+	if quantity, err := resource.ParseQuantity(normalizedValue); err == nil {
+		quantityValue := quantity.Value()
+		if quantityValue < 0 {
+			return 0, fmt.Errorf("%s value %d cannot be negative", paramName, quantityValue)
+		}
+		return quantityValue, nil
+	}
+
+	// Fall back to parsing as a plain integer for backward compatibility
+	intValue, err := strconv.ParseInt(value, 10, 64)
+	if err != nil {
+		return 0, fmt.Errorf("invalid %s value '%s': must be a valid integer or Kubernetes quantity (e.g., '50k', '100Mi', '1G')", paramName, value)
+	}
+
+	if intValue < 0 {
+		return 0, fmt.Errorf("%s value %d cannot be negative", paramName, intValue)
+	}
+
+	return intValue, nil
+}
+
+// normalizeQuantityCase normalizes case for decimal unit suffixes to match Kubernetes quantity format.
+// Kubernetes resource.ParseQuantity expects specific cases: k (kilo), M (mega), G (giga)
+// This function converts: K->k, g->G, while preserving binary units (Ki, Mi, Gi) and M/G (which are already correct)
+func normalizeQuantityCase(value string) string {
+	if len(value) == 0 {
+		return value
+	}
+
+	// Handle common case-insensitive patterns
+	// Convert K to k (but preserve Ki for binary)
+	if strings.HasSuffix(value, "K") && !strings.HasSuffix(value, "Ki") {
+		return value[:len(value)-1] + "k"
+	}
+
+	// Convert lowercase g to uppercase G (but preserve Gi for binary)
+	if strings.HasSuffix(value, "g") && !strings.HasSuffix(value, "Gi") {
+		return value[:len(value)-1] + "G"
+	}
+
+	// M and G are already correct case, Ki/Mi/Gi are correct
+	return value
 }
 
 // ValidateIOThrottleParams validates the IO throttling parameters from mutable parameters
@@ -47,15 +116,9 @@ func ValidateIOThrottleParams(params map[string]string) (*IOThrottleParams, *Cle
 	// Validate rbps (read bytes per second)
 	if rbpsStr, exists := params["rbps"]; exists {
 		hasThrottleParams = true
-		if rbpsStr == "" {
-			return nil, nil, fmt.Errorf("rbps parameter cannot be empty")
-		}
-		rbps, err := strconv.ParseInt(rbpsStr, 10, 64)
+		rbps, err := parseQuantityOrInt(rbpsStr, "rbps")
 		if err != nil {
-			return nil, nil, fmt.Errorf("invalid rbps value '%s': must be a valid integer", rbpsStr)
-		}
-		if rbps < 0 {
-			return nil, nil, fmt.Errorf("rbps value %d cannot be negative", rbps)
+			return nil, nil, err
 		}
 		throttleParams.RBPS = &rbps
 	}
@@ -63,15 +126,9 @@ func ValidateIOThrottleParams(params map[string]string) (*IOThrottleParams, *Cle
 	// Validate wbps (write bytes per second)
 	if wbpsStr, exists := params["wbps"]; exists {
 		hasThrottleParams = true
-		if wbpsStr == "" {
-			return nil, nil, fmt.Errorf("wbps parameter cannot be empty")
-		}
-		wbps, err := strconv.ParseInt(wbpsStr, 10, 64)
+		wbps, err := parseQuantityOrInt(wbpsStr, "wbps")
 		if err != nil {
-			return nil, nil, fmt.Errorf("invalid wbps value '%s': must be a valid integer", wbpsStr)
-		}
-		if wbps < 0 {
-			return nil, nil, fmt.Errorf("wbps value %d cannot be negative", wbps)
+			return nil, nil, err
 		}
 		throttleParams.WBPS = &wbps
 	}
@@ -79,15 +136,9 @@ func ValidateIOThrottleParams(params map[string]string) (*IOThrottleParams, *Cle
 	// Validate riops (read IOPS per second)
 	if riopsStr, exists := params["riops"]; exists {
 		hasThrottleParams = true
-		if riopsStr == "" {
-			return nil, nil, fmt.Errorf("riops parameter cannot be empty")
-		}
-		riops, err := strconv.ParseInt(riopsStr, 10, 64)
+		riops, err := parseQuantityOrInt(riopsStr, "riops")
 		if err != nil {
-			return nil, nil, fmt.Errorf("invalid riops value '%s': must be a valid integer", riopsStr)
-		}
-		if riops < 0 {
-			return nil, nil, fmt.Errorf("riops value %d cannot be negative", riops)
+			return nil, nil, err
 		}
 		throttleParams.RIOPS = &riops
 	}
@@ -95,15 +146,9 @@ func ValidateIOThrottleParams(params map[string]string) (*IOThrottleParams, *Cle
 	// Validate wiops (write IOPS per second)
 	if wiopsStr, exists := params["wiops"]; exists {
 		hasThrottleParams = true
-		if wiopsStr == "" {
-			return nil, nil, fmt.Errorf("wiops parameter cannot be empty")
-		}
-		wiops, err := strconv.ParseInt(wiopsStr, 10, 64)
+		wiops, err := parseQuantityOrInt(wiopsStr, "wiops")
 		if err != nil {
-			return nil, nil, fmt.Errorf("invalid wiops value '%s': must be a valid integer", wiopsStr)
-		}
-		if wiops < 0 {
-			return nil, nil, fmt.Errorf("wiops value %d cannot be negative", wiops)
+			return nil, nil, err
 		}
 		throttleParams.WIOPS = &wiops
 	}
