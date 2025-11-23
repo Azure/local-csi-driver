@@ -29,7 +29,11 @@ import (
 
 // ThrottlingUpdater is an interface for updating running pod throttling settings
 // This allows the controller to trigger updates to running pods
+// ThrottlingUpdater interface for updating running pods' IO throttling
+// The implementation uses provided parameters when available, nil signals to clear throttling
 type ThrottlingUpdater interface {
+	// UpdateRunningPodsThrottling updates running pods' throttling with provided params
+	// If throttleParams is nil, it signals that throttling should be cleared
 	UpdateRunningPodsThrottling(volumeID string, throttleParams *IOThrottleParams) error
 }
 
@@ -77,8 +81,9 @@ func (cs *Server) SetThrottlingUpdater(updater ThrottlingUpdater) {
 	cs.throttlingUpdater = updater
 }
 
-// addThrottlingParamsToVolumeContext copies IO throttling parameters to volume context
-// so they're available during NodePublishVolume for pod-level cgroup configuration
+// addThrottlingParamsToVolumeContext copies IO throttling parameters to volume context as fallback
+// This is only used during volume creation when parameters come from StorageClass
+// During normal operation, throttling parameters are read directly from VolumeAttributesClass
 func (cs *Server) addThrottlingParamsToVolumeContext(vol *csi.Volume, parameters map[string]string) error {
 	// Check if there are any IO throttling parameters
 	throttleParams, clearParams, err := ValidateIOThrottleParams(parameters)
@@ -118,62 +123,6 @@ func (cs *Server) addThrottlingParamsToVolumeContext(vol *csi.Volume, parameters
 	return nil
 }
 
-// updateVolumeContextWithThrottlingParams updates the PersistentVolume's annotations
-// with new throttling parameters from VolumeAttributesClass since spec.csi.volumeAttributes is immutable
-func (cs *Server) updateVolumeContextWithThrottlingParams(ctx context.Context, volumeID string, throttleParams *IOThrottleParams) error {
-	// Get the volume name from volume ID
-	pvName, err := cs.volume.GetVolumeName(volumeID)
-	if err != nil {
-		return fmt.Errorf("failed to get volume name for volume ID %s: %w", volumeID, err)
-	}
-
-	// Use retry logic to handle resource conflicts
-	const maxRetries = 3
-	for attempt := 0; attempt < maxRetries; attempt++ {
-		// Get the latest PersistentVolume object
-		pv := &corev1.PersistentVolume{}
-		if err := cs.k8sClient.Get(ctx, client.ObjectKey{Name: pvName}, pv); err != nil {
-			return fmt.Errorf("failed to get PersistentVolume %s: %w", pvName, err)
-		}
-
-		// Store original for patch operation
-		original := pv.DeepCopy()
-
-		// Initialize annotations if they don't exist
-		if pv.Annotations == nil {
-			pv.Annotations = make(map[string]string)
-		}
-
-		// Update throttling parameters in annotations (mutable unlike spec)
-		if throttleParams.RBPS != nil {
-			pv.Annotations["csi.storage.k8s.io/throttle.rbps"] = fmt.Sprintf("%d", *throttleParams.RBPS)
-		}
-		if throttleParams.WBPS != nil {
-			pv.Annotations["csi.storage.k8s.io/throttle.wbps"] = fmt.Sprintf("%d", *throttleParams.WBPS)
-		}
-		if throttleParams.RIOPS != nil {
-			pv.Annotations["csi.storage.k8s.io/throttle.riops"] = fmt.Sprintf("%d", *throttleParams.RIOPS)
-		}
-		if throttleParams.WIOPS != nil {
-			pv.Annotations["csi.storage.k8s.io/throttle.wiops"] = fmt.Sprintf("%d", *throttleParams.WIOPS)
-		}
-
-		// Use Patch to avoid resource conflicts
-		if err := cs.k8sClient.Patch(ctx, pv, client.MergeFrom(original)); err != nil {
-			// If it's a conflict error and we haven't reached max retries, try again
-			if strings.Contains(err.Error(), "the object has been modified") && attempt < maxRetries-1 {
-				continue
-			}
-			return fmt.Errorf("failed to patch PersistentVolume %s after %d attempts: %w", pvName, attempt+1, err)
-		}
-
-		// Success - break out of retry loop
-		return nil
-	}
-
-	return fmt.Errorf("failed to update PersistentVolume %s after %d attempts due to conflicts", pvName, maxRetries)
-}
-
 // handleClearThrottling handles the removal of throttling when a "no-throttle" VAC is applied
 //
 // This function is called when:
@@ -193,19 +142,20 @@ func (cs *Server) handleClearThrottling(ctx context.Context, volumeID string) (*
 	log.Info("Clearing throttling parameters via no-throttle VAC", "volumeId", volumeID)
 
 	// If we have a throttling updater (combined server mode), clear throttling for running pods
+	// The updater will read from VAC and detect the no-throttle configuration
 	if cs.throttlingUpdater != nil {
-		log.V(2).Info("Clearing throttling for running pods", "volumeId", volumeID)
+		log.V(2).Info("Clearing throttling for running pods via VAC", "volumeId", volumeID)
 
-		// Signal to clear throttling by passing nil (no limits)
+		// Trigger throttling update - the updater will read from VAC and clear throttling appropriately
 		if err := cs.throttlingUpdater.UpdateRunningPodsThrottling(volumeID, nil); err != nil {
-			// Log the error but don't fail the request - the PV has been successfully updated
+			// Log the error but don't fail the request - the VAC has been updated with no-throttle
 			log.Error(err, "Failed to clear running pods throttling - pods will retain throttling until restart", "volumeId", volumeID)
 			span.AddEvent("failed to clear running pods throttling", trace.WithAttributes(
 				attribute.String("error", err.Error()),
 			))
 		} else {
-			log.V(2).Info("Successfully cleared running pods throttling", "volumeId", volumeID)
-			span.AddEvent("running pods throttling cleared")
+			log.V(2).Info("Successfully cleared running pods throttling via VAC", "volumeId", volumeID)
+			span.AddEvent("running pods throttling cleared via VAC")
 		}
 	} else {
 		log.V(2).Info("No throttling updater available - running pods will retain throttling until restart", "volumeId", volumeID)
@@ -215,6 +165,74 @@ func (cs *Server) handleClearThrottling(ctx context.Context, volumeID string) (*
 	span.AddEvent("throttling parameters cleared")
 	span.SetStatus(otcodes.Ok, "throttling clear completed")
 	return &csi.ControllerModifyVolumeResponse{}, nil
+}
+
+// validateVolumeOwnership validates that the PersistentVolume belongs to the current node
+// Returns the PersistentVolume if it belongs to this node, or an error if it belongs to another node
+func (cs *Server) validateVolumeOwnership(ctx context.Context, volumeID string) (*corev1.PersistentVolume, error) {
+	log := log.FromContext(ctx)
+
+	// Get the volume name from volume ID for node targeting validation
+	pvName, err := cs.volume.GetVolumeName(volumeID)
+	if err != nil {
+		log.Error(err, "failed to get volume name", "volumeID", volumeID)
+		return nil, status.Error(codes.Internal, fmt.Sprintf("Failed to get volume name: %v", err))
+	}
+
+	// If pv node affinity is removed, every instance of the controller server
+	// will receive the modify volume request. We need to check if the volume
+	// belongs to the current node and if not, we need to return an error.
+	var pv *corev1.PersistentVolume
+	if cs.removePvNodeAffinity {
+		pv = &corev1.PersistentVolume{}
+		// Get the pv and check selected node annotation
+		if err := cs.k8sClient.Get(ctx, client.ObjectKey{Name: pvName}, pv); err != nil {
+			if client.IgnoreNotFound(err) != nil {
+				log.Error(err, "failed to get pv", "name", pvName)
+				return nil, status.Error(codes.Internal, err.Error())
+			}
+			// If the pv is not found, it means it has already been deleted.
+			log.V(2).Info("pv not found, volume may have been deleted", "name", pvName)
+			return nil, status.Error(codes.NotFound, "Volume not found")
+		}
+
+		// Check the selected node annotation and if it exists, only allow modification
+		// if the node name matches the selected node.
+		node, ok := pv.Annotations[cs.selectedNodeAnnotation]
+		if !ok {
+			// Get the node name from volume context
+			if pv.Spec.CSI != nil {
+				node = pv.Spec.CSI.VolumeAttributes[cs.selectedInitialNodeParam]
+			}
+		}
+		if cs.nodeId != "" && node != "" {
+			// Check if the node exists in the cluster.
+			// If it does not exist, we can return an error as we cannot modify
+			// a volume on a non-existent node.
+			if err := cs.k8sClient.Get(ctx, client.ObjectKey{Name: node}, &corev1.Node{}); err != nil {
+				if client.IgnoreNotFound(err) == nil { // node not found
+					log.V(2).Info("node not found, cannot modify volume on deleted node", "name", node)
+					return nil, status.Error(codes.FailedPrecondition, "Cannot modify volume on deleted node "+node)
+				}
+				log.Error(err, "failed to get node", "name", node)
+			}
+
+			// If the nodeName does not match the selected node, we cannot
+			// modify the volume. Return FailedPrecondition to let Kubernetes retry on the correct node.
+			// Include target node information to help with debugging and potential smart routing
+			if !strings.EqualFold(node, cs.nodeId) {
+				log.V(2).Info("volume is on a different node, rejecting modification request",
+					"volumeId", volumeID, "targetNode", node, "currentNode", cs.nodeId)
+				// Enhanced error message with target node info for potential smart routing
+				return nil, status.Error(codes.FailedPrecondition,
+					fmt.Sprintf("Volume is on node %s, current controller is on node %s. CSI-resizer should retry on correct node.",
+						node, cs.nodeId))
+			}
+		}
+	}
+
+	log.V(2).Info("Volume ownership validation passed", "volumeId", volumeID, "node", cs.nodeId)
+	return pv, nil
 }
 
 func (cs *Server) CreateVolume(ctx context.Context, req *csi.CreateVolumeRequest) (*csi.CreateVolumeResponse, error) {
@@ -581,6 +599,17 @@ func (cs *Server) ControllerModifyVolume(ctx context.Context, req *csi.Controlle
 		return nil, status.Error(codes.InvalidArgument, "Volume ID missing in request")
 	}
 
+	// Validate volume ownership early to avoid unnecessary processing
+	pv, err := cs.validateVolumeOwnership(ctx, req.GetVolumeId())
+	if err != nil {
+		span.SetStatus(otcodes.Error, "volume ownership validation failed")
+		span.RecordError(err)
+		return nil, err
+	}
+	if pv != nil {
+		span.SetAttributes(attribute.String("pv.name", pv.Name))
+	}
+
 	// Get mutable parameters from the request
 	mutableParams := req.GetMutableParameters()
 	if len(mutableParams) == 0 {
@@ -615,105 +644,27 @@ func (cs *Server) ControllerModifyVolume(ctx context.Context, req *csi.Controlle
 		return &csi.ControllerModifyVolumeResponse{}, nil
 	}
 
-	// Get the volume name from volume ID for node targeting validation
-	pvName, err := cs.volume.GetVolumeName(req.GetVolumeId())
-	if err != nil {
-		log.Error(err, "failed to get volume name", "volumeID", req.GetVolumeId())
-		span.SetStatus(otcodes.Error, "failed to get volume name")
-		return nil, status.Error(codes.Internal, fmt.Sprintf("Failed to get volume name: %v", err))
-	}
-	span.SetAttributes(attribute.String("pv.name", pvName))
-
-	// If pv node affinity is removed, every instance of the controller server
-	// will receive the modify volume request. We need to check if the volume
-	// belongs to the current node and if not, we need to return an error.
-	var pv *corev1.PersistentVolume
-	if cs.removePvNodeAffinity {
-		pv = &corev1.PersistentVolume{}
-		// Get the pv and check selected node annotation
-		if err := cs.k8sClient.Get(ctx, client.ObjectKey{Name: pvName}, pv); err != nil {
-			if client.IgnoreNotFound(err) != nil {
-				log.Error(err, "failed to get pv", "name", pvName)
-				span.SetStatus(otcodes.Error, "ControllerModifyVolume failed")
-				span.RecordError(err)
-				return nil, status.Error(codes.Internal, err.Error())
-			}
-			// If the pv is not found, it means it has already been deleted.
-			log.V(2).Info("pv not found, volume may have been deleted", "name", pvName)
-			span.SetStatus(otcodes.Ok, "volume not found")
-			return &csi.ControllerModifyVolumeResponse{}, nil
-		}
-
-		// Check the selected node annotation and if it exists, only allow modification
-		// if the node name matches the selected node.
-		node, ok := pv.Annotations[cs.selectedNodeAnnotation]
-		if !ok {
-			// Get the node name from volume context
-			if pv.Spec.CSI != nil {
-				node = pv.Spec.CSI.VolumeAttributes[cs.selectedInitialNodeParam]
-			}
-		}
-		if cs.nodeId != "" && node != "" {
-			// Check if the node exists in the cluster.
-			// If it does not exist, we can return an error as we cannot modify
-			// a volume on a non-existent node.
-			if err := cs.k8sClient.Get(ctx, client.ObjectKey{Name: node}, &corev1.Node{}); err != nil {
-				if client.IgnoreNotFound(err) == nil { // node not found
-					log.V(2).Info("node not found, cannot modify volume on deleted node", "name", node)
-					span.SetStatus(otcodes.Error, "target node not found")
-					return nil, status.Error(codes.FailedPrecondition, "Cannot modify volume on deleted node "+node)
-				}
-				log.Error(err, "failed to get node", "name", node)
-			}
-
-			// If the nodeName does not match the selected node, we cannot
-			// modify the volume. Return FailedPrecondition to let Kubernetes retry on the correct node.
-			// Include target node information to help with debugging and potential smart routing
-			if !strings.EqualFold(node, cs.nodeId) {
-				log.V(2).Info("volume is on a different node, rejecting modification request",
-					"volumeId", req.GetVolumeId(), "targetNode", node, "currentNode", cs.nodeId)
-				span.SetStatus(otcodes.Error, "ControllerModifyVolume failed")
-				// Enhanced error message with target node info for potential smart routing
-				return nil, status.Error(codes.FailedPrecondition,
-					fmt.Sprintf("Volume is on node %s, current controller is on node %s. CSI-resizer should retry on correct node.",
-						node, cs.nodeId))
-			}
-		}
-	}
-
-	log.V(2).Info("ControllerModifyVolume validated node targeting",
-		"volumeId", req.GetVolumeId(), "node", cs.nodeId)
-
-	// For ControllerModifyVolume, we need to update the PersistentVolume's VolumeContext
-	// so the new throttling parameters are available during the next NodePublishVolume call
-	// This requires updating the PV object in the Kubernetes API
-	log.V(2).Info("ControllerModifyVolume updating PV with throttling parameters",
+	// Since we're reading throttling parameters directly from VolumeAttributesClass during NodePublishVolume,
+	// we don't need to store them as PV annotations anymore. The VAC is the single source of truth.
+	log.V(2).Info("ControllerModifyVolume using VAC as single source of truth for throttling parameters",
 		"volumeId", req.GetVolumeId(),
 		"throttleParams", throttleParams)
-	err = cs.updateVolumeContextWithThrottlingParams(ctx, req.GetVolumeId(), throttleParams)
-	if err != nil {
-		log.Error(err, "Failed to update volume context with throttling parameters", "volumeId", req.GetVolumeId())
-		span.SetStatus(otcodes.Error, "failed to update volume context")
-		span.RecordError(err)
-		return nil, status.Error(codes.Internal, fmt.Sprintf("Failed to update volume context: %v", err))
-	}
-
-	log.V(2).Info("ControllerModifyVolume successfully updated PV with throttling parameters", "volumeId", req.GetVolumeId())
 
 	// If we have a throttling updater (combined server mode), update running pods
+	// Pass the validated throttling parameters to avoid redundant VAC reads
 	if cs.throttlingUpdater != nil {
-		log.V(2).Info("ControllerModifyVolume updating running pods with new throttling parameters", "volumeId", req.GetVolumeId())
+		log.V(2).Info("ControllerModifyVolume updating running pods with validated throttling parameters", "volumeId", req.GetVolumeId())
 
 		if err := cs.throttlingUpdater.UpdateRunningPodsThrottling(req.GetVolumeId(), throttleParams); err != nil {
-			// Log the error but don't fail the request - the PV has been successfully updated
+			// Log the error but don't fail the request - the VAC has the correct parameters
 			// and new pods will get the correct parameters. This is a best-effort update for existing pods.
 			log.Error(err, "Failed to update running pods throttling parameters - new pods will get correct settings", "volumeId", req.GetVolumeId())
 			span.AddEvent("failed to update running pods throttling", trace.WithAttributes(
 				attribute.String("error", err.Error()),
 			))
 		} else {
-			log.V(2).Info("ControllerModifyVolume successfully updated running pods throttling", "volumeId", req.GetVolumeId())
-			span.AddEvent("running pods throttling updated")
+			log.V(2).Info("ControllerModifyVolume successfully updated running pods throttling with validated params", "volumeId", req.GetVolumeId())
+			span.AddEvent("running pods throttling updated with validated params")
 		}
 	} else {
 		log.V(2).Info("ControllerModifyVolume no throttling updater available - running pods will retain old throttling until restart", "volumeId", req.GetVolumeId())

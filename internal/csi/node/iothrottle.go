@@ -4,12 +4,15 @@
 package node
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"syscall"
+
+	"sigs.k8s.io/controller-runtime/pkg/log"
 )
 
 // IOThrottleParams represents the IO throttling parameters
@@ -22,7 +25,11 @@ type IOThrottleParams struct {
 
 // ThrottlingUpdater is an interface for updating running pod throttling settings
 // This allows the controller to trigger updates to running pods
+// ThrottlingUpdater interface for updating running pods' IO throttling
+// The implementation uses provided parameters when available, nil signals to clear throttling
 type ThrottlingUpdater interface {
+	// UpdateRunningPodsThrottling updates running pods' throttling with provided params
+	// If throttleParams is nil, it signals that throttling should be cleared
 	UpdateRunningPodsThrottling(volumeID string, throttleParams *IOThrottleParams) error
 }
 
@@ -33,10 +40,9 @@ func extractThrottlingParamsFromVolumeContext(volumeContext map[string]string) *
 	}
 
 	// Debug logging to see all available keys in volume context
-	fmt.Printf("Debug: extractThrottlingParamsFromVolumeContext - all volume context keys:\n")
-	for key, value := range volumeContext {
-		fmt.Printf("  %s = %s\n", key, value)
-	}
+	ctx := context.Background()
+	logger := log.FromContext(ctx).WithName("extractThrottlingParams")
+	logger.V(4).Info("Extracting throttling parameters from volume context", "volumeContextKeys", getVolumeContextKeys(volumeContext))
 
 	throttleParams := &IOThrottleParams{}
 	hasParams := false
@@ -78,6 +84,15 @@ func extractThrottlingParamsFromVolumeContext(volumeContext map[string]string) *
 	}
 
 	return throttleParams
+}
+
+// getVolumeContextKeys returns the keys from volume context for logging
+func getVolumeContextKeys(volumeContext map[string]string) []string {
+	keys := make([]string, 0, len(volumeContext))
+	for key := range volumeContext {
+		keys = append(keys, key)
+	}
+	return keys
 }
 
 // findDeviceForMountPath finds the underlying block device for a given mount path
@@ -172,6 +187,9 @@ func findCgroupPathForPodUID(podUID string) (string, error) {
 
 // configurePodCgroupIOMax configures cgroup v2 io.max for the pod with throttling parameters
 func (ns *Server) configurePodCgroupIOMax(devicePath string, params *IOThrottleParams, cgroupPath string) error {
+	ctx := context.Background()
+	logger := log.FromContext(ctx).WithName("configurePodCgroupIOMax")
+
 	if params == nil {
 		return nil // No throttling to configure
 	}
@@ -185,8 +203,7 @@ func (ns *Server) configurePodCgroupIOMax(devicePath string, params *IOThrottleP
 	// Construct the full cgroup io.max path
 	ioMaxPath := filepath.Join("/sys/fs/cgroup", cgroupPath, "io.max")
 
-	// Debug logging to show the constructed path
-	fmt.Printf("Debug: configurePodCgroupIOMax - ioMaxPath: %s\n", ioMaxPath)
+	logger.V(4).Info("Configuring cgroup io.max", "ioMaxPath", ioMaxPath, "deviceNumbers", deviceNumbers)
 
 	// Build the io.max configuration string
 	// Format: "major:minor rbps=value wbps=value riops=value wiops=value"
@@ -208,6 +225,7 @@ func (ns *Server) configurePodCgroupIOMax(devicePath string, params *IOThrottleP
 
 	// Write to io.max file
 	configStr := ioMaxConfig.String()
+	logger.V(4).Info("Writing io.max configuration", "ioMaxPath", ioMaxPath, "config", configStr)
 	err = os.WriteFile(ioMaxPath, []byte(configStr), 0644)
 	if err != nil {
 		return fmt.Errorf("failed to write io.max config '%s' to %s: %w", configStr, ioMaxPath, err)
@@ -218,8 +236,9 @@ func (ns *Server) configurePodCgroupIOMax(devicePath string, params *IOThrottleP
 
 // getDeviceMajorMinor gets the major:minor device numbers for a device path
 func getDeviceMajorMinor(devicePath string) (string, error) {
-	// Debug logging
-	fmt.Printf("Debug: getDeviceMajorMinor - input devicePath: %s\n", devicePath)
+	ctx := context.Background()
+	logger := log.FromContext(ctx).WithName("getDeviceMajorMinor")
+	logger.V(4).Info("Getting device major:minor numbers", "devicePath", devicePath)
 
 	// Resolve any symlinks to get the actual device
 	realPath, err := filepath.EvalSymlinks(devicePath)
@@ -227,7 +246,7 @@ func getDeviceMajorMinor(devicePath string) (string, error) {
 		return "", fmt.Errorf("failed to resolve device path %s: %w", devicePath, err)
 	}
 
-	fmt.Printf("Debug: getDeviceMajorMinor - resolved realPath: %s\n", realPath)
+	logger.V(4).Info("Resolved device path", "originalPath", devicePath, "realPath", realPath)
 
 	// For device-mapper devices (like LVM), we need to get the major:minor directly from the device file
 	if strings.Contains(realPath, "/dev/mapper/") || strings.Contains(realPath, "/dev/dm-") {
@@ -236,7 +255,7 @@ func getDeviceMajorMinor(devicePath string) (string, error) {
 
 	// Extract device name from path for regular block devices
 	deviceName := filepath.Base(realPath)
-	fmt.Printf("Debug: getDeviceMajorMinor - deviceName: %s\n", deviceName)
+	logger.V(4).Info("Extracted device name", "deviceName", deviceName)
 
 	// Get major:minor numbers from /proc/partitions
 	return getDeviceNumbers(deviceName)
@@ -266,7 +285,9 @@ func getDeviceNumbers(deviceName string) (string, error) {
 
 // getDeviceMajorMinorFromStat gets the major:minor numbers for a device using stat
 func getDeviceMajorMinorFromStat(devicePath string) (string, error) {
-	fmt.Printf("Debug: getDeviceMajorMinorFromStat - devicePath: %s\n", devicePath)
+	ctx := context.Background()
+	logger := log.FromContext(ctx).WithName("getDeviceMajorMinorFromStat")
+	logger.V(3).Info("Getting device major:minor from stat", "devicePath", devicePath)
 
 	// Get file info for the device
 	fileInfo, err := os.Stat(devicePath)
@@ -291,105 +312,76 @@ func getDeviceMajorMinorFromStat(devicePath string) (string, error) {
 	minor := stat.Rdev & 0xff
 
 	majorMinor := fmt.Sprintf("%d:%d", major, minor)
-	fmt.Printf("Debug: getDeviceMajorMinorFromStat - result: %s\n", majorMinor)
+	logger.V(3).Info("Device major:minor resolved", "devicePath", devicePath, "majorMinor", majorMinor)
 
 	return majorMinor, nil
 }
 
-// extractThrottlingParamsFromAnnotations extracts throttling parameters from PV annotations
-func extractThrottlingParamsFromAnnotations(annotations map[string]string) *IOThrottleParams {
-	if len(annotations) == 0 {
-		return nil
-	}
-
-	params := &IOThrottleParams{}
-	hasParams := false
-
-	// Parse RBPS from annotations
-	if rbpsStr, exists := annotations["csi.storage.k8s.io/throttle.rbps"]; exists {
-		if rbps, err := strconv.ParseInt(rbpsStr, 10, 64); err == nil {
-			params.RBPS = &rbps
-			hasParams = true
-		}
-	}
-
-	// Parse WBPS from annotations
-	if wbpsStr, exists := annotations["csi.storage.k8s.io/throttle.wbps"]; exists {
-		if wbps, err := strconv.ParseInt(wbpsStr, 10, 64); err == nil {
-			params.WBPS = &wbps
-			hasParams = true
-		}
-	}
-
-	// Parse RIOPS from annotations
-	if riopsStr, exists := annotations["csi.storage.k8s.io/throttle.riops"]; exists {
-		if riops, err := strconv.ParseInt(riopsStr, 10, 64); err == nil {
-			params.RIOPS = &riops
-			hasParams = true
-		}
-	}
-
-	// Parse WIOPS from annotations
-	if wiopsStr, exists := annotations["csi.storage.k8s.io/throttle.wiops"]; exists {
-		if wiops, err := strconv.ParseInt(wiopsStr, 10, 64); err == nil {
-			params.WIOPS = &wiops
-			hasParams = true
-		}
-	}
-
-	if !hasParams {
-		return nil
-	}
-
-	return params
-}
-
 // UpdateRunningPodsThrottling updates the IO throttling parameters for all running pods using a specific volume
-// If throttleParams is nil, it clears/removes all throttling
+// When throttleParams is nil, it signals that throttling should be cleared (no fallback to VAC)
+// When throttleParams is provided, it uses those parameters to avoid redundant VAC reads
 func (ns *Server) UpdateRunningPodsThrottling(volumeID string, throttleParams *IOThrottleParams) error {
-	fmt.Printf("Debug: UpdateRunningPodsThrottling called for volume %s with params %+v\n", volumeID, throttleParams)
+	ctx := context.Background()
+	log := log.FromContext(ctx).WithName("UpdateRunningPodsThrottling")
+	log.V(2).Info("UpdateRunningPodsThrottling called", "volumeID", volumeID)
 
-	// Find all active volume mounts for this volume ID
+	var currentThrottleParams *IOThrottleParams
+
+	// If throttleParams is nil, treat it as a signal to clear throttling
+	if throttleParams == nil {
+		currentThrottleParams = nil
+		log.V(2).Info("Clear throttling signal received (nil params)")
+	} else {
+		// Use provided parameters (from ControllerModifyVolume with validated VAC params)
+		currentThrottleParams = throttleParams
+		log.V(2).Info("Using provided throttling params", "throttleParams", currentThrottleParams)
+	} // Find all active volume mounts for this volume ID
 	activeMounts, err := ns.findActiveVolumeMounts(volumeID)
 	if err != nil {
 		return fmt.Errorf("failed to find active mounts for volume %s: %w", volumeID, err)
 	}
 
 	if len(activeMounts) == 0 {
-		fmt.Printf("Debug: No active mounts found for volume %s\n", volumeID)
+		log.V(2).Info("No active mounts found", "volumeID", volumeID)
 		return nil
 	}
 
-	fmt.Printf("Debug: Found %d active mounts for volume %s\n", len(activeMounts), volumeID)
+	log.V(2).Info("Found active mounts", "volumeID", volumeID, "mountCount", len(activeMounts))
 
-	// Update or clear throttling for each active mount
+	// Update or clear throttling for each active mount based on VAC parameters
 	var updateErrors []error
 	for _, mountInfo := range activeMounts {
 		var err error
-		if throttleParams == nil {
-			// Clear throttling when throttleParams is nil (no-throttle VAC applied)
-			fmt.Printf("Debug: Clearing throttling for mount %s, device %s, cgroup %s\n",
-				mountInfo.MountPath, mountInfo.DevicePath, mountInfo.CgroupPath)
+		if currentThrottleParams == nil {
+			// Clear throttling when no throttling params found in VAC (including no-throttle VAC)
+			log.V(3).Info("Clearing throttling for mount",
+				"mountPath", mountInfo.MountPath,
+				"devicePath", mountInfo.DevicePath,
+				"cgroupPath", mountInfo.CgroupPath)
 			err = ns.clearPodCgroupIOMax(mountInfo.DevicePath, mountInfo.CgroupPath)
 		} else {
-			// Set throttling parameters
-			fmt.Printf("Debug: Updating throttling for mount %s, device %s, cgroup %s\n",
-				mountInfo.MountPath, mountInfo.DevicePath, mountInfo.CgroupPath)
-			err = ns.configurePodCgroupIOMax(mountInfo.DevicePath, throttleParams, mountInfo.CgroupPath)
+			// Set throttling parameters from VAC
+			log.V(3).Info("Updating throttling for mount with VAC params",
+				"mountPath", mountInfo.MountPath,
+				"devicePath", mountInfo.DevicePath,
+				"cgroupPath", mountInfo.CgroupPath)
+			err = ns.configurePodCgroupIOMax(mountInfo.DevicePath, currentThrottleParams, mountInfo.CgroupPath)
 		}
 
 		if err != nil {
 			operation := "update"
-			if throttleParams == nil {
+			if currentThrottleParams == nil {
 				operation = "clear"
 			}
 			updateErrors = append(updateErrors, fmt.Errorf("failed to %s throttling for mount %s: %w", operation, mountInfo.MountPath, err))
 		} else {
 			operation := "updated"
-			if throttleParams == nil {
+			if currentThrottleParams == nil {
 				operation = "cleared"
 			}
-			fmt.Printf("Debug: Successfully %s throttling for mount %s\n", operation, mountInfo.MountPath)
+			log.V(3).Info("Successfully processed throttling for mount",
+				"operation", operation,
+				"mountPath", mountInfo.MountPath)
 		}
 	}
 
@@ -402,6 +394,9 @@ func (ns *Server) UpdateRunningPodsThrottling(volumeID string, throttleParams *I
 
 // clearPodCgroupIOMax clears all IO throttling limits for the pod's cgroup
 func (ns *Server) clearPodCgroupIOMax(devicePath string, cgroupPath string) error {
+	ctx := context.Background()
+	logger := log.FromContext(ctx).WithName("clearPodCgroupIOMax")
+
 	// Get device major:minor numbers
 	deviceNumbers, err := getDeviceMajorMinor(devicePath)
 	if err != nil {
@@ -411,8 +406,10 @@ func (ns *Server) clearPodCgroupIOMax(devicePath string, cgroupPath string) erro
 	// Construct the full cgroup io.max path
 	ioMaxPath := filepath.Join("/sys/fs/cgroup", cgroupPath, "io.max")
 
-	// Debug logging
-	fmt.Printf("Debug: clearPodCgroupIOMax - clearing throttling for device %s at path %s\n", deviceNumbers, ioMaxPath)
+	// Log the clearing operation
+	logger.V(3).Info("Clearing throttling for device",
+		"deviceNumbers", deviceNumbers,
+		"ioMaxPath", ioMaxPath)
 
 	// Clear throttling by writing device with "max" values (no limits)
 	// Format: "major:minor rbps=max wbps=max riops=max wiops=max"
@@ -423,7 +420,7 @@ func (ns *Server) clearPodCgroupIOMax(devicePath string, cgroupPath string) erro
 		return fmt.Errorf("failed to clear io.max throttling for device %s at %s: %w", deviceNumbers, ioMaxPath, err)
 	}
 
-	fmt.Printf("Debug: clearPodCgroupIOMax - successfully cleared throttling for device %s\n", deviceNumbers)
+	logger.V(3).Info("Successfully cleared throttling for device", "deviceNumbers", deviceNumbers)
 	return nil
 }
 
@@ -459,14 +456,18 @@ func (ns *Server) findActiveVolumeMounts(volumeID string) ([]VolumeMount, error)
 				// Extract pod cgroup path from mount path
 				cgroupPath, err := ns.findPodCgroupFromTargetPath(mountPath)
 				if err != nil {
-					fmt.Printf("Debug: Could not find cgroup for mount %s: %v\n", mountPath, err)
+					ctx := context.Background()
+					logger := log.FromContext(ctx).WithName("findActiveVolumeMounts")
+					logger.V(4).Info("Could not find cgroup for mount", "mountPath", mountPath, "error", err)
 					continue
 				}
 
 				// Resolve device path to actual device
 				realDevicePath, err := ns.findDeviceForMountPath(mountPath)
 				if err != nil {
-					fmt.Printf("Debug: Could not find device for mount %s: %v\n", mountPath, err)
+					ctx := context.Background()
+					logger := log.FromContext(ctx).WithName("findActiveVolumeMounts")
+					logger.V(4).Info("Could not find device for mount, using fallback", "mountPath", mountPath, "error", err)
 					// Fall back to the device path from /proc/mounts
 					realDevicePath = devicePath
 				}
@@ -477,8 +478,12 @@ func (ns *Server) findActiveVolumeMounts(volumeID string) ([]VolumeMount, error)
 					CgroupPath: cgroupPath,
 				})
 
-				fmt.Printf("Debug: Found active mount - path: %s, device: %s, cgroup: %s\n",
-					mountPath, realDevicePath, cgroupPath)
+				ctx := context.Background()
+				logger := log.FromContext(ctx).WithName("findActiveVolumeMounts")
+				logger.V(4).Info("Found active mount",
+					"mountPath", mountPath,
+					"devicePath", realDevicePath,
+					"cgroupPath", cgroupPath)
 			}
 		}
 	}

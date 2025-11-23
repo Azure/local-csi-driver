@@ -24,6 +24,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	"local-csi-driver/internal/csi/capability"
+	"local-csi-driver/internal/csi/controller"
 	"local-csi-driver/internal/csi/core"
 	"local-csi-driver/internal/csi/core/lvm"
 	"local-csi-driver/internal/csi/mounter"
@@ -173,7 +174,7 @@ func (ns *Server) NodePublishVolume(ctx context.Context, req *csi.NodePublishVol
 	log.V(2).Info("mount successful", "source", stagingTargetPath, "target", targetPath)
 
 	// Apply IO throttling configuration to the pod's cgroup if parameters are present
-	if err := ns.applyPodIOThrottling(ctx, req.GetVolumeContext(), targetPath, volumeID); err != nil {
+	if err := ns.applyPodIOThrottling(ctx, volumeContext, targetPath, volumeID); err != nil {
 		log.Error(err, "Failed to apply IO throttling to pod", "volumeId", volumeID, "targetPath", targetPath)
 		// Don't fail the mount if throttling configuration fails
 		span.AddEvent("IO throttling configuration failed", trace.WithAttributes(
@@ -650,8 +651,9 @@ func (ns *Server) EnsureMount(path string) (bool, error) {
 	return !notMnt, nil
 }
 
-// getThrottlingParamsFromPV fetches the latest throttling parameters from PV annotations
-func (ns *Server) getThrottlingParamsFromPV(ctx context.Context, volumeId string) *IOThrottleParams {
+// getThrottlingParamsFromVAC fetches the latest throttling parameters from VolumeAttributesClass
+// This ensures we always have current values and eliminates parameter duplication
+func (ns *Server) getThrottlingParamsFromVAC(ctx context.Context, volumeId string) *IOThrottleParams {
 	log := log.FromContext(ctx)
 
 	// Extract PV name from volume ID
@@ -666,25 +668,58 @@ func (ns *Server) getThrottlingParamsFromPV(ctx context.Context, volumeId string
 	// Get PV object from Kubernetes API
 	pv := &corev1.PersistentVolume{}
 	if err := ns.k8sClient.Get(ctx, client.ObjectKey{Name: pvName}, pv); err != nil {
-		log.V(3).Info("Failed to get PV for throttling parameters", "pvName", pvName, "error", err)
+		log.V(3).Info("Failed to get PV for VolumeAttributesClass lookup", "pvName", pvName, "error", err)
 		return nil
 	}
 
-	// Extract throttling parameters from PV annotations
-	return extractThrottlingParamsFromAnnotations(pv.Annotations)
+	// Check if PV references a VolumeAttributesClass
+	if pv.Spec.VolumeAttributesClassName == nil || *pv.Spec.VolumeAttributesClassName == "" {
+		log.V(3).Info("PV has no VolumeAttributesClass reference", "pvName", pvName)
+		return nil
+	}
+
+	vacName := *pv.Spec.VolumeAttributesClassName
+	log.V(2).Info("Found VolumeAttributesClass reference", "pvName", pvName, "vacName", vacName)
+
+	// Get throttling parameters directly from VAC
+	throttleParams, clearParams, err := controller.GetThrottlingParamsFromVAC(ctx, ns.k8sClient, vacName)
+	if err != nil {
+		log.V(2).Info("Failed to get throttling parameters from VAC", "vacName", vacName, "error", err)
+		return nil
+	}
+
+	// If clear throttling is requested, return nil to indicate no throttling should be applied
+	if clearParams != nil && clearParams.ShouldClear {
+		log.V(2).Info("Clear throttling requested via VAC", "vacName", vacName)
+		return nil
+	}
+
+	// Convert controller.IOThrottleParams to node.IOThrottleParams
+	if throttleParams == nil {
+		return nil
+	}
+
+	nodeThrottleParams := &IOThrottleParams{
+		RBPS:  throttleParams.RBPS,
+		WBPS:  throttleParams.WBPS,
+		RIOPS: throttleParams.RIOPS,
+		WIOPS: throttleParams.WIOPS,
+	}
+
+	return nodeThrottleParams
 }
 
 // applyPodIOThrottling applies IO throttling configuration to the pod's cgroup
-// based on the throttling parameters from PV annotations (latest) or volume context (fallback)
+// based on throttling parameters from volume context (fast) or VolumeAttributesClass (fallback with API call)
 func (ns *Server) applyPodIOThrottling(ctx context.Context, volumeContext map[string]string, targetPath string, volumeId string) error {
 	log := log.FromContext(ctx)
 
-	// Priority 1: Check PV annotations for latest parameters (from ControllerModifyVolume)
-	throttleParams := ns.getThrottlingParamsFromPV(ctx, volumeId)
+	// Priority 1: Check VolumeAttributesClass for throttling parameters (API call required)
+	throttleParams := ns.getThrottlingParamsFromVAC(ctx, volumeId)
 	if throttleParams != nil {
-		log.V(2).Info("Found throttling parameters in PV annotations", "throttleParams", throttleParams)
+		log.V(2).Info("Found throttling parameters in VolumeAttributesClass", "throttleParams", throttleParams)
 	} else {
-		// Priority 2: Fallback to volume context (original creation parameters)
+		// Priority 2: Check volume context for throttling parameters (fast)
 		throttleParams = extractThrottlingParamsFromVolumeContext(volumeContext)
 		if throttleParams != nil {
 			log.V(2).Info("Found throttling parameters in volume context", "throttleParams", throttleParams)
@@ -692,7 +727,7 @@ func (ns *Server) applyPodIOThrottling(ctx context.Context, volumeContext map[st
 	}
 
 	if throttleParams == nil {
-		log.V(3).Info("No throttling parameters found in PV annotations or volume context")
+		log.V(3).Info("No throttling parameters found in volume context or VolumeAttributesClass")
 		return nil
 	}
 

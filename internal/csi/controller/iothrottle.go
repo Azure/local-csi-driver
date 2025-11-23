@@ -4,13 +4,16 @@
 package controller
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
 
+	storagev1 "k8s.io/api/storage/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
 // IOThrottleParams represents the IO throttling parameters
@@ -159,6 +162,23 @@ func ValidateIOThrottleParams(params map[string]string) (*IOThrottleParams, *Cle
 	}
 
 	return throttleParams, nil, nil
+}
+
+// GetThrottlingParamsFromVAC retrieves IO throttling parameters from a VolumeAttributesClass
+// This is the preferred method as it reads the latest parameters directly from the VAC
+func GetThrottlingParamsFromVAC(ctx context.Context, k8sClient client.Client, vacName string) (*IOThrottleParams, *ClearThrottleParams, error) {
+	if vacName == "" {
+		return nil, nil, nil
+	}
+
+	// Get VolumeAttributesClass from Kubernetes API
+	vac := &storagev1.VolumeAttributesClass{}
+	if err := k8sClient.Get(ctx, client.ObjectKey{Name: vacName}, vac); err != nil {
+		return nil, nil, fmt.Errorf("failed to get VolumeAttributesClass %s: %w", vacName, err)
+	}
+
+	// Validate parameters from VAC
+	return ValidateIOThrottleParams(vac.Parameters)
 }
 
 // GetDeviceMajorMinor gets the major:minor device numbers for a device path

@@ -42,8 +42,10 @@ type ThrottlingAdapter struct {
 }
 
 // UpdateRunningPodsThrottling converts controller params to node params and calls node server
+// When throttleParams are provided, they're passed through to avoid redundant VAC reads
+// When throttleParams is nil, it signals that throttling should be cleared
 func (ta *ThrottlingAdapter) UpdateRunningPodsThrottling(volumeID string, throttleParams *controller.IOThrottleParams) error {
-	// Convert controller.IOThrottleParams to node.IOThrottleParams
+	// Convert controller.IOThrottleParams to node.IOThrottleParams if provided
 	var nodeParams *node.IOThrottleParams
 	if throttleParams != nil {
 		nodeParams = &node.IOThrottleParams{
@@ -53,6 +55,7 @@ func (ta *ThrottlingAdapter) UpdateRunningPodsThrottling(volumeID string, thrott
 			WIOPS: throttleParams.WIOPS,
 		}
 	}
+	// If throttleParams is nil, nodeParams will be nil which signals to clear throttling
 
 	return ta.nodeServer.UpdateRunningPodsThrottling(volumeID, nodeParams)
 }
