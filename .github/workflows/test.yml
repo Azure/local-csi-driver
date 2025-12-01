@@ -42,7 +42,7 @@ jobs:
           make test
 
       - name: Publish Test Results
-        uses: dorny/test-reporter@7b7927aa7da8b82e81e755810cb51f39941a2cc7 # v2.2.0
+        uses: dorny/test-reporter@fe45e9537387dac839af0d33ba56eed8e24189e8 # v2.3.0
         if: always()
         with:
           name: Unit Test Results
