@@ -78,13 +78,13 @@ func NewLVMOrphanScanner(
 func (r *LVMOrphanScanner) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	log := log.FromContext(ctx).WithName("lvm-orphan-scanner").WithValues("node", r.nodeID)
 
-	log.Info("Starting periodic LVM orphan scan")
+	log.V(3).Info("Starting periodic LVM orphan scan")
 
 	var orphanedVolumes []string
 	totalVolumes := 0
 
 	// First, list volume groups with the correct tag
-	log.V(2).Info("Listing volume groups with tag", "tag", lvm.DefaultVolumeGroupTag)
+	log.V(3).Info("Listing volume groups with tag", "tag", lvm.DefaultVolumeGroupTag)
 
 	vgs, err := r.lvmManager.ListVolumeGroups(ctx, &lvmMgr.ListVGOptions{
 		Select: fmt.Sprintf("vg_tags=%s", lvm.DefaultVolumeGroupTag),
@@ -97,7 +97,7 @@ func (r *LVMOrphanScanner) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 	// If no volume groups found with the tag, also check the default volume group
 	vgNamesToScan := []string{}
 	if len(vgs) == 0 {
-		log.V(2).Info("No volume groups found with tag, checking default volume group",
+		log.V(3).Info("No volume groups found with tag, checking default volume group",
 			"tag", lvm.DefaultVolumeGroupTag, "defaultVG", lvm.DefaultVolumeGroup)
 		vgNamesToScan = append(vgNamesToScan, lvm.DefaultVolumeGroup)
 	} else {
@@ -107,7 +107,7 @@ func (r *LVMOrphanScanner) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 	}
 
 	for _, vgName := range vgNamesToScan {
-		log.V(2).Info("Checking volume group for orphaned volumes", "vg", vgName)
+		log.V(3).Info("Checking volume group for orphaned volumes", "vg", vgName)
 
 		lvs, err := r.lvmManager.ListLogicalVolumes(ctx, &lvmMgr.ListLVOptions{
 			Select: fmt.Sprintf("vg_name=%s", vgName),
@@ -134,7 +134,7 @@ func (r *LVMOrphanScanner) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 		}
 	}
 
-	log.Info("Orphan scan completed", "totalVolumes", totalVolumes, "orphanedVolumes", len(orphanedVolumes))
+	log.V(3).Info("Orphan scan completed", "totalVolumes", totalVolumes, "orphanedVolumes", len(orphanedVolumes))
 
 	// Clean up orphaned volumes
 	if len(orphanedVolumes) > 0 {
@@ -256,29 +256,29 @@ func (r *LVMOrphanScanner) deleteOrphanedVolume(ctx context.Context, volumeID st
 // Start implements the manager.Runnable interface for periodic execution.
 func (r *LVMOrphanScanner) Start(ctx context.Context) error {
 	log := log.FromContext(ctx).WithName("lvm-orphan-scanner")
-	log.Info("Starting LVM orphan scan controller", "interval", r.reconcileInterval, "nextPeriodicRun", time.Now().Add(r.reconcileInterval))
+	log.V(3).Info("Starting LVM orphan scan controller", "interval", r.reconcileInterval, "nextPeriodicRun", time.Now().Add(r.reconcileInterval))
 
 	ticker := time.NewTicker(r.reconcileInterval)
 	defer ticker.Stop()
 
-	log.Info("Created periodic ticker", "interval", r.reconcileInterval)
+	log.V(3).Info("Created periodic ticker", "interval", r.reconcileInterval)
 
 	// Run initial cleanup
-	log.Info("Running initial LVM orphan cleanup")
+	log.V(3).Info("Running initial LVM orphan cleanup")
 	if _, err := r.Reconcile(ctx, ctrl.Request{}); err != nil {
 		log.Error(err, "Initial cleanup failed")
 	} else {
-		log.Info("Initial cleanup completed successfully")
+		log.V(3).Info("Initial cleanup completed successfully")
 	}
 
 	// Run periodic cleanup
 	for {
 		select {
 		case <-ctx.Done():
-			log.Info("Stopping LVM orphan cleanup controller")
+			log.V(3).Info("Stopping LVM orphan cleanup controller")
 			return nil
 		case <-ticker.C:
-			log.Info("Running periodic LVM orphan cleanup", "interval", r.reconcileInterval, "nextRun", time.Now().Add(r.reconcileInterval))
+			log.V(3).Info("Running periodic LVM orphan cleanup", "interval", r.reconcileInterval, "nextRun", time.Now().Add(r.reconcileInterval))
 			if _, err := r.Reconcile(ctx, ctrl.Request{}); err != nil {
 				log.Error(err, "Periodic cleanup failed")
 			}
@@ -313,7 +313,7 @@ func (r *LVMOrphanScanner) setupFieldIndexing(mgr ctrl.Manager) error {
 			// Only index PVs that use our CSI driver
 			if pv.Spec.CSI != nil && pv.Spec.CSI.Driver == lvm.DriverName {
 				log := log.FromContext(context.Background()).WithName("lvm-orphan-cleanup")
-				log.V(1).Info("Indexing PV by CSI volume handle", "volumeHandle", pv.Spec.CSI.VolumeHandle)
+				log.V(3).Info("Indexing PV by CSI volume handle", "volumeHandle", pv.Spec.CSI.VolumeHandle)
 				return []string{pv.Spec.CSI.VolumeHandle}
 			}
 
