@@ -63,7 +63,7 @@ var _ = BeforeSuite(func(ctx context.Context) {
 })
 
 var _ = AfterSuite(func(ctx context.Context) {
-	common.Teardown(ctx, namespace)
+	common.Teardown(ctx, namespace, *supportBundleDir)
 })
 
 var _ = AfterEach(func(ctx context.Context) {

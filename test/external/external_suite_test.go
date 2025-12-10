@@ -66,7 +66,7 @@ var _ = SynchronizedBeforeSuite(func(ctx context.Context) {
 	By("Installing csi driver and other required components")
 	common.Setup(ctx, namespace)
 	DeferCleanup(func(ctx context.Context) {
-		common.Teardown(ctx, namespace)
+		common.Teardown(ctx, namespace, *supportBundleDir)
 	})
 
 	for _, testConfig := range testConfigs {
