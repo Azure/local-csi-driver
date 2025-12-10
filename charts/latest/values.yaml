@@ -200,14 +200,14 @@ observability:
     enabled: true
   manager:
     log:
-      level: 6
+      level: 2
     metrics:
       port: 8080
     health:
       port: 8081
   driver:
     log:
-      level: 6
+      level: 2
     metrics:
       port: 8080
     health:
