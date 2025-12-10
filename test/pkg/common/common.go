@@ -200,7 +200,16 @@ func Setup(ctx context.Context, namespace string, helmArgs ...string) {
 }
 
 // Teardown undeploys the csi driver components and cleans up the cluster.
-func Teardown(ctx context.Context, namespace string) {
+func Teardown(ctx context.Context, namespace string, supportBundleDir string) {
+
+	if !skipSupportBundle {
+		By("collecting support bundle")
+		supportBundlePath := filepath.Join(supportBundleDir, "suite.tar.gz")
+		Eventually(func(g Gomega, ctx context.Context) {
+			output, err := utils.CollectSupportBundle(ctx, supportBundlePath, startTime)
+			g.Expect(err).NotTo(HaveOccurred(), "Failed to collect support bundle: %s\n", output)
+		}).WithContext(ctx).Should(Succeed(), "Failed to collect support bundle")
+	}
 
 	if skipUninstall {
 		_, _ = fmt.Fprintf(GinkgoWriter, "Skipping uninstall...\n")
@@ -346,10 +355,11 @@ func CollectSupportBundle(ctx context.Context, supportBundleDir string) {
 		By("Collecting support bundle for the test")
 		testFilePath := filePathRegex.ReplaceAllString(CurrentSpecReport().FullText(), "_") + ".tar.gz"
 		supportBundlePath := filepath.Join(supportBundleDir, testFilePath)
-
-		_, _ = fmt.Fprintf(GinkgoWriter, "Collecting support bundle for failed test to %s\n", supportBundlePath)
-		output, err := utils.CollectSupportBundle(ctx, supportBundlePath, CurrentSpecReport().StartTime)
-		Expect(err).NotTo(HaveOccurred(), "Failed to collect support bundle: %s", output)
+		_, _ = fmt.Fprintf(GinkgoWriter, "Collecting support bundle for to %s\n", supportBundlePath)
+		Eventually(func(g Gomega, ctx context.Context) {
+			output, err := utils.CollectSupportBundle(ctx, supportBundlePath, CurrentSpecReport().StartTime)
+			g.Expect(err).NotTo(HaveOccurred(), "Failed to collect support bundle: %s", output)
+		}).WithContext(ctx).Should(Succeed(), "Failed to collect support bundle")
 	}
 }
 
@@ -361,8 +371,10 @@ func CollectSuiteSupportBundle(ctx context.Context, supportBundleDir string) {
 		supportBundlePath := filepath.Join(supportBundleDir, "suite.tar.gz")
 
 		_, _ = fmt.Fprintf(GinkgoWriter, "Collecting support bundle for suite to %s\n", supportBundlePath)
-		output, err := utils.CollectSupportBundle(ctx, supportBundlePath, startTime)
-		Expect(err).NotTo(HaveOccurred(), "Failed to collect support bundle: %s", output)
+		Eventually(func(g Gomega, ctx context.Context) {
+			output, err := utils.CollectSupportBundle(ctx, supportBundlePath, startTime)
+			g.Expect(err).NotTo(HaveOccurred(), "Failed to collect support bundle: %s", output)
+		}).WithContext(ctx).Should(Succeed(), "Failed to collect support bundle")
 	}
 }
 
