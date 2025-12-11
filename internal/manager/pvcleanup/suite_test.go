@@ -21,6 +21,7 @@ import (
 	"k8s.io/client-go/tools/record"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	ctrlutil "sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/envtest"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
@@ -253,13 +254,16 @@ var _ = Describe("PV Cleanup Controller", func() {
 			Expect(k8sClient.Status().Update(ctx, pv)).To(Succeed())
 
 			// Wait a bit to ensure controller has time to process
-			time.Sleep(time.Second * 2)
-
-			// Verify finalizers are still present
-			var updatedPV corev1.PersistentVolume
-			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: pv.Name}, &updatedPV)).To(Succeed())
-			Expect(updatedPV.Finalizers).To(ContainElement(PVProtectionFinalizer))
-			Expect(updatedPV.Finalizers).To(ContainElement(ExternalProvisionerFinalizer))
+			Consistently(func() bool {
+				var updatedPV corev1.PersistentVolume
+				err := k8sClient.Get(ctx, types.NamespacedName{Name: pv.Name}, &updatedPV)
+				if err != nil {
+					return false
+				}
+				return len(updatedPV.Finalizers) == 2 &&
+					ctrlutil.ContainsFinalizer(&updatedPV, PVProtectionFinalizer) &&
+					ctrlutil.ContainsFinalizer(&updatedPV, ExternalProvisionerFinalizer)
+			}, time.Second*2, time.Millisecond*250).Should(BeTrue())
 
 			// Clean up
 			_ = k8sClient.Delete(ctx, pv)
@@ -311,13 +315,15 @@ var _ = Describe("PV Cleanup Controller", func() {
 			pv.Status.Phase = corev1.VolumeReleased
 			Expect(k8sClient.Status().Update(ctx, pv)).To(Succeed())
 
-			// Wait a bit to ensure controller has time to process
-			time.Sleep(time.Second * 2)
-
 			// Verify finalizers are still present (not removed)
-			var updatedPV corev1.PersistentVolume
-			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: pv.Name}, &updatedPV)).To(Succeed())
-			Expect(updatedPV.Finalizers).To(ContainElement(PVProtectionFinalizer))
+			Consistently(func() bool {
+				var updatedPV corev1.PersistentVolume
+				err := k8sClient.Get(ctx, types.NamespacedName{Name: pv.Name}, &updatedPV)
+				if err != nil {
+					return false
+				}
+				return ctrlutil.ContainsFinalizer(&updatedPV, PVProtectionFinalizer)
+			}, time.Second*2, time.Millisecond*250).Should(BeTrue())
 
 			// Clean up
 			_ = k8sClient.Delete(ctx, pv)
@@ -366,12 +372,14 @@ var _ = Describe("PV Cleanup Controller", func() {
 			Expect(k8sClient.Create(ctx, pv)).To(Succeed())
 
 			// Wait a bit to ensure controller has time to process
-			time.Sleep(time.Second * 2)
-
-			// Verify finalizers are still present (not removed)
-			var updatedPV corev1.PersistentVolume
-			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: pv.Name}, &updatedPV)).To(Succeed())
-			Expect(updatedPV.Finalizers).To(ContainElement(PVProtectionFinalizer))
+			Consistently(func() bool {
+				var updatedPV corev1.PersistentVolume
+				err := k8sClient.Get(ctx, types.NamespacedName{Name: pv.Name}, &updatedPV)
+				if err != nil {
+					return false
+				}
+				return ctrlutil.ContainsFinalizer(&updatedPV, PVProtectionFinalizer)
+			}, time.Second*2, time.Millisecond*250).Should(BeTrue())
 
 			// Clean up
 			_ = k8sClient.Delete(ctx, pv)
@@ -423,13 +431,15 @@ var _ = Describe("PV Cleanup Controller", func() {
 			pv.Status.Phase = corev1.VolumeReleased
 			Expect(k8sClient.Status().Update(ctx, pv)).To(Succeed())
 
-			// Wait a bit to ensure controller has time to process
-			time.Sleep(time.Second * 2)
-
 			// Verify finalizers are still present (not removed)
-			var updatedPV corev1.PersistentVolume
-			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: pv.Name}, &updatedPV)).To(Succeed())
-			Expect(updatedPV.Finalizers).To(ContainElement(PVProtectionFinalizer))
+			Consistently(func() bool {
+				var updatedPV corev1.PersistentVolume
+				err := k8sClient.Get(ctx, types.NamespacedName{Name: pv.Name}, &updatedPV)
+				if err != nil {
+					return false
+				}
+				return ctrlutil.ContainsFinalizer(&updatedPV, PVProtectionFinalizer)
+			}, time.Second*2, time.Millisecond*250).Should(BeTrue())
 
 			// Clean up
 			_ = k8sClient.Delete(ctx, pv)
@@ -483,13 +493,16 @@ var _ = Describe("PV Cleanup Controller", func() {
 			Expect(k8sClient.Status().Update(ctx, pv)).To(Succeed())
 
 			// Wait a bit to ensure controller has time to process
-			time.Sleep(time.Second * 2)
-
-			// Verify finalizers are still present (node is available)
-			var updatedPV corev1.PersistentVolume
-			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: pv.Name}, &updatedPV)).To(Succeed())
-			Expect(updatedPV.Finalizers).To(ContainElement(PVProtectionFinalizer))
-			Expect(updatedPV.Finalizers).To(ContainElement(ExternalProvisionerFinalizer))
+			Consistently(func() bool {
+				var updatedPV corev1.PersistentVolume
+				err := k8sClient.Get(ctx, types.NamespacedName{Name: pv.Name}, &updatedPV)
+				if err != nil {
+					return false
+				}
+				return len(updatedPV.Finalizers) == 2 &&
+					ctrlutil.ContainsFinalizer(&updatedPV, PVProtectionFinalizer) &&
+					ctrlutil.ContainsFinalizer(&updatedPV, ExternalProvisionerFinalizer)
+			}, time.Second*2, time.Millisecond*250).Should(BeTrue())
 
 			// Clean up
 			_ = k8sClient.Delete(ctx, pv)

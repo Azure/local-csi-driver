@@ -76,7 +76,7 @@ func main() {
 	var printVersionAndExit bool
 	var eventRecorderEnabled bool
 	var enableCleanup bool
-	var enablePVGarbageCollection bool
+	var enableLVGarbageCollection bool
 	var enableLVMOrphanCleanup bool
 	var lvmOrphanCleanupInterval time.Duration
 	var runAlongsideWebhook bool
@@ -109,8 +109,8 @@ func main() {
 	flag.BoolVar(&eventRecorderEnabled, "event-recorder-enabled", true,
 		"If enabled, the driver will use the event recorder to record events. This is useful for debugging and monitoring purposes.")
 	flag.BoolVar(&enableCleanup, "enable-cleanup", true, "If enabled, the driver will clean up the LVM volume groups and persistent volumes when not in use")
-	flag.BoolVar(&enablePVGarbageCollection, "enable-pv-garbage-collection", true,
-		"If enabled, the PV garbage collection controller will monitor PersistentVolumes for node annotation mismatches and clean up orphaned LVM volumes.")
+	flag.BoolVar(&enableLVGarbageCollection, "enable-lv-garbage-collection", true,
+		"If enabled, the LV garbage collection controller will monitor PersistentVolumes for node annotation mismatches and clean up orphaned LVM volumes.")
 	flag.BoolVar(&enableLVMOrphanCleanup, "enable-lvm-orphan-cleanup", true,
 		"If enabled, the LVM orphan cleanup controller will periodically scan and clean up orphaned LVM volumes on the node.")
 	flag.DurationVar(&lvmOrphanCleanupInterval, "lvm-orphan-cleanup-interval", 30*time.Minute,
@@ -251,8 +251,8 @@ func main() {
 
 	// Setup PV garbage collection controller to clean up orphaned LVM volumes
 	// when PV node annotations don't match the current node
-	if enablePVGarbageCollection {
-		pvGCController := gc.NewPVFailoverReconciler(
+	if enableLVGarbageCollection {
+		lvGCController := gc.NewPVFailoverReconciler(
 			mgr.GetClient(),
 			mgr.GetScheme(),
 			recorder,
@@ -264,12 +264,12 @@ func main() {
 			mounterInstance,
 		)
 
-		if err = pvGCController.SetupWithManager(mgr); err != nil {
-			logAndExit(err, "unable to create PV garbage collection controller")
+		if err = lvGCController.SetupWithManager(mgr); err != nil {
+			logAndExit(err, "unable to create LV garbage collection controller")
 		}
-		log.Info("PV garbage collection controller configured")
+		log.Info("LV garbage collection controller configured")
 	} else {
-		log.Info("PV garbage collection controller disabled")
+		log.Info("LV garbage collection controller disabled")
 	}
 
 	// Setup LVM orphan cleanup controller for periodic scanning and cleanup

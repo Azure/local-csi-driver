@@ -31,7 +31,7 @@ const (
 	// helmArgs is the environment variable used to pass extra arguments to
 	// helm during installation of the csi driver. We need to disable cleanup,
 	// PV garbage collection, and LVM orphan cleanup for the sanity tests.
-	helmArgs = "HELM_ARGS=--set cleanup.pvGarbageCollection.enabled=false --set cleanup.lvmOrphanCleanup.enabled=false"
+	helmArgs = "HELM_ARGS=--set cleanup.lvGarbageCollection.enabled=false --set cleanup.lvmOrphanCleanup.enabled=false"
 )
 
 var (

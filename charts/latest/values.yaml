@@ -77,17 +77,24 @@ cleanup:
   # Cleanup volume groups and physical volumes on pod termination if logical volume are not in use.
   enabled: true
 
-  # PV garbage collection configuration
-  pvGarbageCollection:
-    # Enable event-driven PV garbage collection for node annotation mismatches
+  # LVM logical volume garbage collection configuration driven by PV annotation mismatches.
+  lvGarbageCollection:
+    # Enable event-driven LV garbage collection for PV node annotation mismatches
     enabled: true
 
   # LVM orphan cleanup configuration
   lvmOrphanCleanup:
-    # Enable periodic LVM orphan cleanup scanning
+    # Enable periodic orphaned LVM Logical Volume cleanup scanning
     enabled: true
     # Interval for scanning and cleaning up orphaned LVM volumes
-    interval: 1m
+    interval: 5m
+
+  # PV cleanup controller configuration.
+  # This controller watches for Released PersistentVolumes and removes finalizers
+  # when nodes are unavailable, allowing PVs to be deleted.
+  pvCleanup:
+    # Enable the PV cleanup controller in the manager deployment
+    enabled: true
 
 # Webhook configuration.
 webhook:
