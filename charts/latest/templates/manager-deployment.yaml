@@ -1,3 +1,4 @@
+{{- if or .Values.webhook.enforceEphemeral.enabled .Values.webhook.hyperconverged.enabled .Values.cleanup.pvCleanup.enabled }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -52,11 +53,14 @@ spec:
         - --namespace=$(POD_NAMESPACE)
         - --health-probe-bind-address=:{{ .Values.observability.manager.health.port }}
         - --metrics-bind-address=:{{ .Values.observability.manager.metrics.port }}
+        {{- if or .Values.webhook.enforceEphemeral.enabled .Values.webhook.hyperconverged.enabled }}
         - --webhook-port={{ .Values.webhook.service.targetPort }}
         - --webhook-service-name={{ .Values.name }}-webhook-service
+        {{- end }}
         - --kube-api-qps={{ .Values.scalability.manager.kubeApi.qps }}
         - --kube-api-burst={{ .Values.scalability.manager.kubeApi.burst }}
         - --v={{ .Values.observability.manager.log.level }}
+        - --enable-pv-cleanup={{ .Values.cleanup.pvCleanup.enabled }}
         {{- if .Values.webhook.enforceEphemeral.enabled }}
         - --enforce-ephemeral-webhook-config={{ .Values.name }}-enforce-ephemeral
         {{- end }}
@@ -131,3 +135,4 @@ spec:
           defaultMode: 420
           secretName: {{ .Values.name }}-webhook-cert
       {{- end }}
+{{- end }}

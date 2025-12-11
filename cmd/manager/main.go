@@ -19,6 +19,7 @@ import (
 	_ "k8s.io/client-go/plugin/pkg/client/auth"
 	"k8s.io/klog/v2/textlogger"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/healthz"
 	"sigs.k8s.io/controller-runtime/pkg/metrics/filters"
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
@@ -69,6 +70,7 @@ func main() {
 	var tlsOpts []func(*tls.Config)
 	var printVersionAndExit bool
 	var eventRecorderEnabled bool
+	var enablePVCleanup bool
 
 	flag.StringVar(&namespace, "namespace", "default",
 		"The namespace to use for creating objects.")
@@ -105,6 +107,8 @@ func main() {
 	flag.BoolVar(&printVersionAndExit, "version", false, "Print version and exit")
 	flag.BoolVar(&eventRecorderEnabled, "event-recorder-enabled", true,
 		"If enabled, the webhook will use the event recorder to record events. This is useful for debugging and monitoring purposes.")
+	flag.BoolVar(&enablePVCleanup, "enable-pv-cleanup", true,
+		"If enabled, the PV cleanup controller will be registered to clean up PVs when nodes are unavailable.")
 
 	// Initialize logger flags config.
 	logConfig := textlogger.NewConfig(textlogger.VerbosityFlagName("v"))
@@ -123,14 +127,18 @@ func main() {
 	log.Info("starting webhook server")
 
 	// Validate required flags
-	if webhookSvcName == "" {
-		logAndExit(fmt.Errorf("--webhook-service-name is required"), "webhook service name must be set")
+	if enforceEphemeralWebhookConfig == "" && hyperconvergedWebhookConfig == "" && !enablePVCleanup {
+		logAndExit(fmt.Errorf("at least one feature must be enabled"), "no webhooks or PV cleanup controller configured")
 	}
-	if certSecretName == "" {
-		logAndExit(fmt.Errorf("--certificate-secret-name is required"), "certificate secret name must be set")
-	}
-	if enforceEphemeralWebhookConfig == "" && hyperconvergedWebhookConfig == "" {
-		logAndExit(fmt.Errorf("at least one webhook must be enabled"), "no webhooks configured")
+
+	// Only validate webhook flags if webhooks are enabled
+	if enforceEphemeralWebhookConfig != "" || hyperconvergedWebhookConfig != "" {
+		if webhookSvcName == "" {
+			logAndExit(fmt.Errorf("--webhook-service-name is required when webhooks are enabled"), "webhook service name must be set")
+		}
+		if certSecretName == "" {
+			logAndExit(fmt.Errorf("--certificate-secret-name is required when webhooks are enabled"), "certificate secret name must be set")
+		}
 	}
 
 	// Setup signal context
@@ -208,7 +216,7 @@ func main() {
 		logAndExit(err, "unable to start manager")
 	}
 
-	// Setup webhook certificates
+	// Setup webhook certificates if webhooks are enabled
 	webhooks := []rotator.WebhookInfo{}
 	if enforceEphemeralWebhookConfig != "" {
 		webhooks = append(webhooks, rotator.WebhookInfo{
@@ -224,34 +232,43 @@ func main() {
 	}
 
 	certSetupFinished := make(chan struct{})
-	log.Info("setting up cert rotation")
-	if err := rotator.AddRotator(mgr, &rotator.CertRotator{
-		SecretKey: types.NamespacedName{
-			Namespace: namespace,
-			Name:      certSecretName,
-		},
-		CertDir:        "/tmp/k8s-webhook-server/serving-certs",
-		CAName:         "local-csi-ca",
-		CAOrganization: "Local CSI Driver",
-		DNSName:        fmt.Sprintf("%s.%s.svc", webhookSvcName, namespace),
-		ExtraDNSNames: []string{
-			fmt.Sprintf("%s.%s.svc.cluster.local", webhookSvcName, namespace),
-			fmt.Sprintf("%s.%s", webhookSvcName, namespace),
-		},
-		Webhooks:             webhooks,
-		IsReady:              certSetupFinished,
-		EnableReadinessCheck: true,
-	}); err != nil {
-		logAndExit(err, "unable to set up cert rotation")
+	if len(webhooks) > 0 {
+		log.Info("setting up cert rotation")
+		if err := rotator.AddRotator(mgr, &rotator.CertRotator{
+			SecretKey: types.NamespacedName{
+				Namespace: namespace,
+				Name:      certSecretName,
+			},
+			CertDir:        "/tmp/k8s-webhook-server/serving-certs",
+			CAName:         "local-csi-ca",
+			CAOrganization: "Local CSI Driver",
+			DNSName:        fmt.Sprintf("%s.%s.svc", webhookSvcName, namespace),
+			ExtraDNSNames: []string{
+				fmt.Sprintf("%s.%s.svc.cluster.local", webhookSvcName, namespace),
+				fmt.Sprintf("%s.%s", webhookSvcName, namespace),
+			},
+			Webhooks:             webhooks,
+			IsReady:              certSetupFinished,
+			EnableReadinessCheck: true,
+		}); err != nil {
+			logAndExit(err, "unable to set up cert rotation")
+		}
+	} else {
+		log.Info("no webhooks configured, skipping cert rotation")
+		close(certSetupFinished)
 	}
 
-	// Setup health checks
-	checker := func(req *http.Request) error {
-		select {
-		case <-certSetupFinished:
-			return mgr.GetWebhookServer().StartedChecker()(req)
-		default:
-			return fmt.Errorf("certs are not ready yet")
+	// If webhooks are enabled, we need to ensure that the cert rotator
+	// has finished setting up the certificates before we can start the webhook server.
+	checker := healthz.Ping
+	if len(webhooks) > 0 {
+		checker = func(req *http.Request) error {
+			select {
+			case <-certSetupFinished:
+				return mgr.GetWebhookServer().StartedChecker()(req)
+			default:
+				return fmt.Errorf("certs are not ready yet")
+			}
 		}
 	}
 
@@ -268,15 +285,19 @@ func main() {
 		recorder = mgr.GetEventRecorderFor("local-csi-manager")
 	}
 
-	// Register PV cleanup controller
-	log.Info("registering PV cleanup controller")
-	if err := (&pvcleanup.PVCleanupReconciler{
-		Client:   mgr.GetClient(),
-		Recorder: mgr.GetEventRecorderFor("pvcleanup-controller"),
-	}).SetupWithManager(mgr); err != nil {
-		logAndExit(err, "unable to register PV cleanup controller")
+	// Register PV cleanup controller if enabled
+	if enablePVCleanup {
+		log.Info("registering PV cleanup controller")
+		if err := (&pvcleanup.PVCleanupReconciler{
+			Client:   mgr.GetClient(),
+			Recorder: mgr.GetEventRecorderFor("pvcleanup-controller"),
+		}).SetupWithManager(mgr); err != nil {
+			logAndExit(err, "unable to register PV cleanup controller")
+		}
+		log.Info("PV cleanup controller registered successfully")
+	} else {
+		log.Info("PV cleanup controller disabled")
 	}
-	log.Info("PV cleanup controller registered successfully")
 
 	// Register webhooks once certificates are ready
 	go func() {

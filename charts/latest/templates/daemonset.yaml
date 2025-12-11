@@ -184,7 +184,7 @@ spec:
         - --trace-service-id=$(POD_NAME)
         - --v={{ .Values.observability.driver.log.level }}
         - --enable-cleanup={{ .Values.cleanup.enabled }}
-        - --enable-pv-garbage-collection={{ .Values.cleanup.pvGarbageCollection.enabled }}
+        - --enable-lv-garbage-collection={{ .Values.cleanup.lvGarbageCollection.enabled }}
         - --enable-lvm-orphan-cleanup={{ .Values.cleanup.lvmOrphanCleanup.enabled }}
         - --lvm-orphan-cleanup-interval={{ .Values.cleanup.lvmOrphanCleanup.interval }}
         - --run-alongside-webhook={{ .Values.webhook.hyperconverged.enabled | default false }}
