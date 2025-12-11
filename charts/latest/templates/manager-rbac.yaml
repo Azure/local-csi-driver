@@ -39,6 +39,8 @@ rules:
   - get
   - list
   - watch
+{{- end }}
+{{- if or .Values.webhook.enforceEphemeral.enabled .Values.webhook.hyperconverged.enabled }}
 - apiGroups:
   - storage.k8s.io
   resources:
