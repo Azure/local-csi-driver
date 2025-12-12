@@ -10,7 +10,7 @@ set -e
 
 echo "⚠️  WARNING: This script will delete ALL LVM resources (LVs, PVs, VGs) on ALL nodes ⚠️"
 echo "This is a destructive operation that cannot be undone and may result in data loss."
-read -p "Are you absolutely sure you want to continue? [n/Y]: " confirmation
+read -rp "Are you absolutely sure you want to continue? [n/Y]: " confirmation
 if [ "$confirmation" != "Y" ]; then
     echo "Operation cancelled."
     exit 1

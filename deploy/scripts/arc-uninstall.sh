@@ -31,5 +31,5 @@ if [ -z "${RESOURCE_GROUP:-}" ] && [ -z "${CLUSTER_NAME:-}" ]; then
     echo "Resource Group: ${RESOURCE_GROUP}"
     echo "Cluster Name: ${CLUSTER_NAME}"
 fi
-az k8s-extension delete --cluster-type managedClusters --cluster-name ${CLUSTER_NAME} \
-    --resource-group ${RESOURCE_GROUP} --name cns
+az k8s-extension delete --cluster-type managedClusters --cluster-name "${CLUSTER_NAME}" \
+    --resource-group "${RESOURCE_GROUP}" --name cns

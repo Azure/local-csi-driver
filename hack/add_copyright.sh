@@ -29,15 +29,15 @@ for type in "${!FILE_TYPES[@]}"; do
 
   # Handle special case for Makefile
   if [ "$type" == "Makefile" ]; then
-    find_pattern="-name Makefile"
+    find_pattern=(-name Makefile)
   else
-    find_pattern="-name *.$type"
+    find_pattern=(-name "*.$type")
   fi
 
   echo "Processing $type files..."
 
   # Find and process each file
-  find "$SOURCE_ROOT" -type f $find_pattern | while read -r file; do
+  find "$SOURCE_ROOT" -type f "${find_pattern[@]}" | while read -r file; do
     # Skip if header already exists
     if grep -q "Copyright (c) Microsoft Corporation" "$file"; then
       continue

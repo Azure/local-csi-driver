@@ -38,6 +38,6 @@ if [ -z "${RESOURCE_GROUP:-}" ] && [ -z "${CLUSTER_NAME:-}" ]; then
     echo "Cluster Name: ${CLUSTER_NAME}"
 fi
 
-az k8s-extension create --cluster-type managedClusters --cluster-name ${CLUSTER_NAME} \
-    --resource-group ${RESOURCE_GROUP} --name cns --extension-type microsoft.azstor \
-    --scope cluster --release-train ${RELEASE_TRAIN} --release-namespace kube-system
+az k8s-extension create --cluster-type managedClusters --cluster-name "${CLUSTER_NAME}" \
+    --resource-group "${RESOURCE_GROUP}" --name cns --extension-type microsoft.azstor \
+    --scope cluster --release-train "${RELEASE_TRAIN}" --release-namespace kube-system
