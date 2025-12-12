@@ -126,8 +126,8 @@ spec:
 
 When the webhook is enabled, instead of setting node affinity on the
 PersistentVolume (PV), the driver adds a
-`localdisk.csi.acstor.io/selected-initial-node` parameter to the volume context of
-the PV. This parameter is later used by the mutation webhook to modify the
+`localdisk.csi.acstor.io/selected-initial-node` parameter to the volume
+context of the PV. This parameter is later used by the mutation webhook to modify
 workload Pods to include preferred node affinity rules to the specified node
 ensuring that the workload and the PV are scheduled on the same node.
 

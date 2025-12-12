@@ -62,11 +62,13 @@ spec:
           set -e
           set -o pipefail
 
-          RAID_DEVICE="/dev/md0"
+          RAID_NAME="local-csi"
           VOLUME_GROUP="{{ .Values.raid.volumeGroup }}"
 
-          ALL_NVME_DEVICES=$(ls /dev/nvme*n* 2>/dev/null)
-          UNUSED_DEVICES=()
+          if vgdisplay "${VOLUME_GROUP}" &> /dev/null; then
+                  echo "Volume group ${VOLUME_GROUP} already exists. Nothing to do."
+                  exit 0
+          fi
 
           if ! command -v mdadm &> /dev/null; then
                   echo "mdadm not found, installing..."
@@ -79,6 +81,25 @@ spec:
                           exit 1
                   fi
           fi
+
+          # Try to assemble any existing RAID arrays (needed after reboot)
+          mdadm --assemble --scan 2>/dev/null || true
+
+          # Look for existing RAID device with our name
+          # Check /dev/md0 and /dev/md127 using mdadm --detail
+          RAID_DEVICE=""
+          if [ -b /dev/md0 ] && mdadm --detail /dev/md0 2>/dev/null | grep -q "Name.*${RAID_NAME}"; then
+                  RAID_DEVICE="/dev/md0"
+          elif [ -b /dev/md127 ] && mdadm --detail /dev/md127 2>/dev/null | grep -q "Name.*${RAID_NAME}"; then
+                  RAID_DEVICE="/dev/md127"
+          fi
+
+          if [ -n "${RAID_DEVICE}" ]; then
+                  echo "Found existing RAID device ${RAID_DEVICE} with name ${RAID_NAME}"
+          fi
+
+          ALL_NVME_DEVICES=$(ls /dev/nvme*n* 2>/dev/null)
+          UNUSED_DEVICES=()
 
           for device in $ALL_NVME_DEVICES; do
                   if mdadm --examine "$device" | grep -q 'RAID superblock'; then
@@ -98,13 +119,13 @@ spec:
                   DEVICE="${UNUSED_DEVICES[0]}"
                   echo "Creating LVM volume group ${VOLUME_GROUP} on ${DEVICE}"
                   pvcreate "${DEVICE}"
-                  vgcreate --addtag "local-csi" "${VOLUME_GROUP}" "${DEVICE}"
+                  vgcreate --addtag "${RAID_NAME}" "${VOLUME_GROUP}" "${DEVICE}"
                   echo "LVM volume group ${VOLUME_GROUP} created successfully."
                   exit 0
           fi
 
-          if [ -e "${RAID_DEVICE}" ]; then
-                  echo "RAID device already exists"
+          if [ -n "${RAID_DEVICE}" ]; then
+                  echo "RAID device ${RAID_DEVICE} already exists"
           else
                   if [ "${#UNUSED_DEVICES[@]}" -lt 2 ]; then
                           # We shouldn't reach here because of the earlier
@@ -120,8 +141,9 @@ spec:
                   done
                   echo ""
 
-                  mdadm --create "$RAID_DEVICE" \
-                          --name="local-csi" \
+                  RAID_DEVICE="/dev/md0"
+                  mdadm --create "${RAID_DEVICE}" \
+                          --name="${RAID_NAME}" \
                           --level=0 \
                           --raid-devices="${#UNUSED_DEVICES[@]}" \
                           "${UNUSED_DEVICES[@]}" \
@@ -139,13 +161,18 @@ spec:
 
                   mkdir -p /etc/mdadm
                   mdadm --detail --scan | tee -a /etc/mdadm/mdadm.conf
+
+                  # Update initramfs on Ubuntu to persist RAID config across reboots
+                  if command -v update-initramfs &> /dev/null; then
+                          update-initramfs -u
+                  fi
           fi
 
           if [ ! -e "${RAID_DEVICE}" ]; then
                   echo "Error: RAID device ${RAID_DEVICE} not found after creation."
                   exit 1
           fi
-          if ! mdadm -D "${RAID_DEVICE}" | grep -q "Name : local-csi"; then
+          if ! mdadm -D "${RAID_DEVICE}" | grep -q "Name.*${RAID_NAME}"; then
                   echo "Error: RAID device ${RAID_DEVICE} was not created by us, aborting."
                   exit 1
           fi
@@ -157,7 +184,7 @@ spec:
 
           echo "Creating LVM volume group ${VOLUME_GROUP} on ${RAID_DEVICE}"
           pvcreate "${RAID_DEVICE}"
-          vgcreate --addtag "local-csi" "${VOLUME_GROUP}" "${RAID_DEVICE}"
+          vgcreate --addtag "${RAID_NAME}" "${VOLUME_GROUP}" "${RAID_DEVICE}"
           echo "LVM volume group ${VOLUME_GROUP} created successfully."
           exit 0
 
