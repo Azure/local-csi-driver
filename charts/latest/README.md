@@ -49,7 +49,7 @@ and their default values.
 | `daemonset.nodeSelector`                      | Node selector for the DaemonSet. If empty, all nodes are selected.                                                                                                          |                                                                                                                          |
 | `daemonset.tolerations`                       | Tolerations for the DaemonSet. If empty, no tolerations are applied.                                                                                                        | <code>- effect: NoSchedule<br>&nbsp;&nbsp;operator: Exists<br>- effect: NoExecute<br>&nbsp;&nbsp;operator: Exists</code> |
 | `daemonset.serviceAccount.annotations`        | Annotations for the service account. If empty, no annotations are applied.                                                                                                  |                                                                                                                          |
-| `raid.enabled`                                | Enables RAID 0 setup using mdadm. When enabled, an init container will combine unused NVMe devices into a RAID 0 array and create an LVM volume group on it.                | `false`                                                                                                                  |
+| `raid.enabled`                                | **EXPERIMENTAL**: Enables mdadm RAID 0 setup. Combines unused NVMe devices into a RAID 0 array with LVM on top. When disabled, LVM raid is used. Migration not supported.   | `false`                                                                                                                  |
 | `raid.volumeGroup`                            | The volume group name to create on the RAID device. Must match the `volumeGroup` parameter in StorageClass if using a custom name.                                          | `containerstorage`                                                                                                       |
 | `cleanup.enabled`                             | Cleanup volume groups and physical volumes on pod termination if logical volumes are not in use.                                                                            | `true`                                                                                                                   |
 | `cleanup.lvGarbageCollection.enabled`         | Enable event-driven LV garbage collection for node annotation mismatches.                                                                                                   | `true`                                                                                                                   |
@@ -106,7 +106,7 @@ driver starts:
 2. **Single Device**: If only one unused device is found, it creates an LVM
    volume group directly on that device
 3. **Multiple Devices**: If two or more unused devices are found:
-   - Installs `mdadm` if not already present (supports tdnf and apt-get package managers)
+   - Installs `mdadm` if not present (supports tdnf and apt-get)
    - Creates a RAID 0 array at `/dev/md0` using all unused devices
    - Saves the RAID configuration to `/etc/mdadm/mdadm.conf`
    - Creates an LVM physical volume on the RAID device

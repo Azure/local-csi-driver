@@ -60,9 +60,15 @@ daemonset:
     annotations: {}
 
 # RAID configuration.
+# EXPERIMENTAL: This feature is experimental and may change in future releases.
+# When raid.enabled is true, mdadm is used to create a RAID 0 array from unused
+# NVMe devices, with LVM layered on top. When raid.enabled is false, the driver
+# uses individual NVMe devices directly with LVM (no RAID striping across devices).
+# Note: Migrating from mdadm-based RAID to non-RAID is not currently supported.
 raid:
-  # Enables mdadm-based software RAID 0 on the nodes. If disabled, the driver
-  # will use the raw NVMe devices with LVM striping.
+  # Enables mdadm-based software RAID 0 on the nodes.
+  # EXPERIMENTAL: Use with caution. Once enabled, migrating away from mdadm
+  # RAID is not straightforward and may require manual intervention.
   enabled: false
 
   # The volume group name to create on the nodes. This volume group will be used

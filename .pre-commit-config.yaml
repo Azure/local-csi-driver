@@ -12,7 +12,7 @@ repos:
   - id: check-xml
   - id: check-json
 - repo: https://github.com/golangci/golangci-lint
-  rev: v2.6.2
+  rev: v2.7.2
   hooks:
   - id: golangci-lint-full
 - repo: https://github.com/hadolint/hadolint
@@ -20,9 +20,9 @@ repos:
   hooks:
     - id: hadolint-docker
 - repo: https://github.com/igorshubovych/markdownlint-cli
-  rev: v0.46.0
+  rev: v0.47.0
   hooks:
-  - id: markdownlint-fix
+  - id: markdownlint-fix-docker
 - repo: https://github.com/pycqa/flake8
   rev: 7.3.0
   hooks:
@@ -34,7 +34,7 @@ repos:
     args:
     - --config=.codespellrc
 - repo: https://github.com/rhysd/actionlint
-  rev: v1.7.8
+  rev: v1.7.9
   hooks:
   - id: actionlint-docker
 - repo: https://github.com/tcort/markdown-link-check
@@ -62,3 +62,7 @@ repos:
     language: system
     files: ^charts/latest
     pass_filenames: false
+- repo: https://github.com/koalaman/shellcheck-precommit
+  rev: v0.11.0
+  hooks:
+  - id: shellcheck

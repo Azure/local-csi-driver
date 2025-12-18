@@ -38,12 +38,13 @@ For details on how to set up your development environment, see the
 
 ## Testing
 
-See [/test/README.md](./test/README.md) for details on test coverage and how to run.
+See [/test/README.md](./test/README.md) for details on test coverage and
+how to run.
 
 ## Contributing
 
-Please read our [contribution guide](CONTRIBUTING.md) which outlines all of our policies,
-procedures, and requirements for contributing to this project.
+Please read our [contribution guide](CONTRIBUTING.md) which outlines all of
+our policies, procedures, and requirements for contributing to this project.
 
 ## License
 

@@ -33,20 +33,29 @@ Only one instance of local-csi-driver can be installed per cluster.
 Helm chart values are documented in: [Helm chart
 README](../charts/latest/README.md).
 
-### Installing with RAID Support
+### RAID Configuration
 
-For improved performance, you can enable automatic RAID 0 array creation across
-multiple NVMe devices:
+By default, the driver uses **LVM RAID** to create a striped (RAID 0) logical
+volume across all available NVMe devices. This provides excellent performance
+without additional configuration.
+
+Alternatively, you can enable **mdadm-based RAID** (experimental) which creates
+a traditional software RAID 0 array with LVM layered on top:
+
+> [!WARNING]
+> mdadm RAID support is **experimental** and may change in future releases.
+> Once enabled, migrating away from mdadm-based RAID is not straightforward
+> and may require manual intervention.
 
 ```sh
 helm install local-csi-driver oci://localcsidriver.azurecr.io/acstor/charts/local-csi-driver --version <release> --namespace kube-system --set raid.enabled=true
 ```
 
-When RAID is enabled, an init container will automatically:
+When `raid.enabled=true`, an init container will automatically:
 
 - Detect unused NVMe devices on each node
-- Create a RAID 0 array using mdadm (if 2+ devices are available)
-- Create an LVM volume group on the RAID device
+- Create a RAID 0 array using **mdadm** (if 2+ devices are available)
+- Layer LVM on top of the RAID device for volume management
 
 For more details on RAID configuration, see the [Helm chart README](../charts/latest/README.md#raid-configuration).
 
