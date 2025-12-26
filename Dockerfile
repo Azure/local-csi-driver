@@ -63,6 +63,7 @@ FROM mcr.microsoft.com/azurelinux/distroless/minimal:3.0@sha256:c8917363fff9f808
 WORKDIR /
 COPY --from=builder /workspace/local-csi-driver .
 COPY --from=dependency-install /staging /
+COPY NOTICE.txt /
 
 # Set the environment variable to disable udev and just use lvm.
 ENV DM_DISABLE_UDEV=1

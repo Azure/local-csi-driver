@@ -4,6 +4,9 @@ fileExistenceTests:
     path: '/local-csi-driver'
     shouldExist: true
     permissions: '-rwxr-xr-x'
+  - name: 'Check /NOTICE.txt exists'
+    path: '/NOTICE.txt'
+    shouldExist: true
 commandTests:
   - name: 'Check /local-csi-driver --version'
     command: /local-csi-driver
