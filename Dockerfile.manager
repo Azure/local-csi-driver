@@ -59,5 +59,6 @@ FROM mcr.microsoft.com/azurelinux/distroless/minimal:3.0@sha256:c8917363fff9f808
 WORKDIR /
 COPY --from=builder /workspace/local-csi-manager .
 COPY --from=dependency-install /staging /
+COPY NOTICE.txt /
 
 ENTRYPOINT ["/local-csi-manager"]
