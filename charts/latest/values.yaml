@@ -150,6 +150,9 @@ manager:
     - key: "CriticalAddonsOnly"
       operator: "Exists"
       effect: "NoSchedule"
+    - key: "CriticalAddonsOnly"
+      operator: "Exists"
+      effect: "NoExecute"
     # Affinity for webhook pods (anti-affinity recommended for HA)
     affinity:
       podAntiAffinity:
