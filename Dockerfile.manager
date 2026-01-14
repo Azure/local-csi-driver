@@ -47,7 +47,7 @@ RUN --mount=type=cache,target=/go/pkg/mod \
     CGO_ENABLED=1 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} go build -v -ldflags "${LDFLAGS}" -o local-csi-manager cmd/manager/main.go
 
 
-FROM mcr.microsoft.com/azurelinux/base/core:3.0@sha256:72b38469d220910172d0f52dcb029b3cbbb226c63522103c955778ad7ace06a8 AS dependency-install
+FROM mcr.microsoft.com/azurelinux/base/core:3.0@sha256:94ad614201891509f6680b8d392f519df0274460417dfe6662643800822e380d AS dependency-install
 RUN tdnf install -y --releasever 3.0 --installroot /staging \
     # ensure that libcrypto.so.X is available for dlopen for fips builds
     openssl-libs \
@@ -55,7 +55,7 @@ RUN tdnf install -y --releasever 3.0 --installroot /staging \
     && rm -rf /staging/run /staging/var/log /staging/var/cache/tdnf
 
 # Use distroless as minimal base image to package the driver binary.
-FROM mcr.microsoft.com/azurelinux/distroless/minimal:3.0@sha256:c8917363fff9f80859b0e4140cf1d3677fb29cc8f48c0337e53dd58797e9f3ee
+FROM mcr.microsoft.com/azurelinux/distroless/minimal:3.0@sha256:138fe2905465e384b232ffe8ba3147de04c633a83f29d8df00d6817e3eacb0d2
 WORKDIR /
 COPY --from=builder /workspace/local-csi-manager .
 COPY --from=dependency-install /staging /
