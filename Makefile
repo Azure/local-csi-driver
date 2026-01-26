@@ -195,8 +195,11 @@ lint-fix: golangci-lint ## Run golangci-lint linter and perform fixes.
 ##@ Build
 
 .PHONY: build
-build: fmt vet ## Build binary.
-	go build -ldflags "$(LDFLAGS)" -o bin/local-csi-driver cmd/main.go
+build: build-driver build-manager ## Build driver and manager binaries.
+
+.PHONY: build-driver
+build-driver: fmt vet ## Build driver binary.
+	go build -ldflags "$(LDFLAGS)" -o bin/local-csi-driver cmd/driver/main.go
 
 .PHONY: build-manager
 build-manager: fmt vet ## Build manager binary.
@@ -204,7 +207,7 @@ build-manager: fmt vet ## Build manager binary.
 
 .PHONY: run
 run: fmt vet ## Run the local CSI driver from your host.
-	go run ./cmd/main.go
+	go run ./cmd/driver/main.go
 
 .PHONY: docker-build
 docker-build: docker-build-driver docker-build-manager

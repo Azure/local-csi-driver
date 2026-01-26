@@ -31,6 +31,17 @@ var (
 	pvcAnnotator = path.Join("test", "external", "fixtures", "pvc_annotator.yaml")
 )
 
+func init() {
+	// Add testsuite for xfs on generic ephemeral volumes. By default, this isn't included
+	testsuites.CSISuites = append(testsuites.CSISuites, func() storageframework.TestSuite {
+		return testsuites.InitCustomEphemeralTestSuite(genericEphemeralXfsTestPatterns())
+	})
+	// Add testsuite for capacity tests on generic ephemeral volumes. By default, this isn't included
+	testsuites.CSISuites = append(testsuites.CSISuites, func() storageframework.TestSuite {
+		return testsuites.InitCustomCapacityTestSuite(genericEphemeralXfsTestPatterns())
+	})
+}
+
 // testConfig is a struct that holds the driver and storagepool paths.
 type testConfig struct {
 	// driverPath is the path to the driver yaml file
@@ -113,15 +124,6 @@ func (t *testConfig) registerTests() {
 		os.Exit(1)
 	}
 	absDriverPath := path.Join(parentDir, t.driverPath)
-
-	// Add testsuite for xfs on generic ephemeral volumes. By default, this isn't included
-	testsuites.CSISuites = append(testsuites.CSISuites, func() storageframework.TestSuite {
-		return testsuites.InitCustomEphemeralTestSuite(genericEphemeralXfsTestPatterns())
-	})
-	// Add testsuite for capacity tests on generic ephemeral volumes. By default, this isn't included
-	testsuites.CSISuites = append(testsuites.CSISuites, func() storageframework.TestSuite {
-		return testsuites.InitCustomCapacityTestSuite(genericEphemeralXfsTestPatterns())
-	})
 
 	var _ = Context(t.testSuiteName, t.labels, t.additionalArgs, func() {
 		BeforeEach(func(ctx context.Context) {
