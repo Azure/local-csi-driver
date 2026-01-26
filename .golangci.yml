@@ -45,6 +45,8 @@ linters:
      dot-import-whitelist:
         - github.com/onsi/ginkgo/v2
         - github.com/onsi/gomega
+     checks:
+        - "-SA1019"  # Ignore deprecation warnings for GetEventRecorderFor
   exclusions:
     generated: lax
     rules:
