@@ -206,7 +206,7 @@ jobs:
             if [[ -n "$secret_value" ]]; then
               for file in $FILES; do
                 if [[ -f "$file" ]]; then
-                  sed -i "s/${secret_value}/<REDACTED>/g" "$file" || true
+                  sed -i "s/${secret_value}/[REDACTED]/g" "$file" || true
                 fi
               done
             fi
