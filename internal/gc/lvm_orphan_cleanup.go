@@ -11,7 +11,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
-	"k8s.io/client-go/tools/record"
+	"k8s.io/client-go/tools/events"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
@@ -29,7 +29,7 @@ const CSIVolumeHandleIndex = "spec.csi.volumeHandle"
 type LVMOrphanScanner struct {
 	client.Client
 	scheme                   *runtime.Scheme
-	recorder                 record.EventRecorder
+	recorder                 events.EventRecorder
 	nodeID                   string
 	lvmManager               LVMVolumeManager
 	selectedNodeAnnotation   string
@@ -48,7 +48,7 @@ type LVMOrphanScannerConfig struct {
 func NewLVMOrphanScanner(
 	client client.Client,
 	scheme *runtime.Scheme,
-	recorder record.EventRecorder,
+	recorder events.EventRecorder,
 	nodeID string,
 	selectedNodeAnnotation string,
 	selectedInitialNodeParam string,
@@ -213,8 +213,8 @@ func (r *LVMOrphanScanner) deleteOrphanedVolume(ctx context.Context, volumeID st
 	log.Info("Deleting orphaned LVM volume", "volumeID", volumeID)
 
 	// Create a dummy event for logging purposes (since we don't have a specific PV object)
-	r.recorder.Eventf(&corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: r.nodeID}},
-		corev1.EventTypeNormal, "CleaningUpOrphanedLV",
+	r.recorder.Eventf(&corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: r.nodeID}}, nil,
+		corev1.EventTypeNormal, "CleaningUpOrphanedLV", "CleaningUpOrphanedLV",
 		"Cleaning up orphaned LVM logical volume %s on node %s (no corresponding PV found)", volumeID, r.nodeID)
 
 	// Get device path and unmount before deletion
@@ -239,15 +239,15 @@ func (r *LVMOrphanScanner) deleteOrphanedVolume(ctx context.Context, volumeID st
 			return nil
 		}
 
-		r.recorder.Eventf(&corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: r.nodeID}},
-			corev1.EventTypeWarning, "OrphanCleanupFailed",
+		r.recorder.Eventf(&corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: r.nodeID}}, nil,
+			corev1.EventTypeWarning, "OrphanCleanupFailed", "OrphanCleanupFailed",
 			"Failed to cleanup orphaned LVM logical volume %s on node %s: %v", volumeID, r.nodeID, err)
 
 		return fmt.Errorf("failed to remove logical volume %s: %w", volumeID, err)
 	}
 
-	r.recorder.Eventf(&corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: r.nodeID}},
-		corev1.EventTypeNormal, "CleanedUpOrphanedLV",
+	r.recorder.Eventf(&corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: r.nodeID}}, nil,
+		corev1.EventTypeNormal, "CleanedUpOrphanedLV", "CleanedUpOrphanedLV",
 		"Successfully cleaned up orphaned LVM logical volume %s on node %s", volumeID, r.nodeID)
 
 	return nil

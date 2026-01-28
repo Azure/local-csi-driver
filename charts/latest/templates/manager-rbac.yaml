@@ -81,7 +81,7 @@ rules:
   - watch
 {{- end }}
 - apiGroups:
-  - ""
+  - events.k8s.io
   resources:
   - events
   verbs:
@@ -121,7 +121,7 @@ rules:
   - patch
   - delete
 - apiGroups:
-  - ""
+  - events.k8s.io
   resources:
   - events
   verbs:

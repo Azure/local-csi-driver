@@ -9,7 +9,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime"
-	"k8s.io/client-go/tools/record"
+	"k8s.io/client-go/tools/events"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/event"
@@ -18,7 +18,7 @@ import (
 
 	"local-csi-driver/internal/csi/core/lvm"
 	"local-csi-driver/internal/csi/mounter"
-	"local-csi-driver/internal/pkg/events"
+	pkgevents "local-csi-driver/internal/pkg/events"
 	lvmMgr "local-csi-driver/internal/pkg/lvm"
 )
 
@@ -27,7 +27,7 @@ import (
 type PVFailoverReconciler struct {
 	client.Client
 	scheme                   *runtime.Scheme
-	recorder                 record.EventRecorder
+	recorder                 events.EventRecorder
 	nodeID                   string
 	selectedNodeAnnotation   string
 	selectedInitialNodeParam string
@@ -38,7 +38,7 @@ type PVFailoverReconciler struct {
 func NewPVFailoverReconciler(
 	client client.Client,
 	scheme *runtime.Scheme,
-	recorder record.EventRecorder,
+	recorder events.EventRecorder,
 	nodeID string,
 	selectedNodeAnnotation string,
 	selectedInitialNodeParam string,
@@ -93,7 +93,7 @@ func (r *PVFailoverReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 	}
 
 	// Add events context for this PV
-	ctx = events.WithObjectIntoContext(ctx, r.recorder, pv)
+	ctx = pkgevents.WithObjectIntoContext(ctx, r.recorder, pv)
 
 	// Check for node annotation mismatch
 	if hasNodeAnnotationMismatch(pv, r.nodeID, r.selectedNodeAnnotation, r.selectedInitialNodeParam) {
@@ -116,7 +116,7 @@ func (r *PVFailoverReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 			"volumeID", volumeID, "devicePath", devicePath)
 
 		// Record event before deletion
-		r.recorder.Eventf(pv, corev1.EventTypeNormal, "CleaningUpOrphanedVolume",
+		r.recorder.Eventf(pv, nil, corev1.EventTypeNormal, "CleaningUpOrphanedVolume", "CleaningUpOrphanedVolume",
 			"Cleaning up LVM volume %s from node %s due to node annotation mismatch", volumeID, r.nodeID)
 
 		// Unmount the volume before deletion
@@ -133,14 +133,14 @@ func (r *PVFailoverReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 		// Delete the LVM volume
 		if err := r.lvmManager.DeleteVolume(ctx, volumeID); err != nil {
 			log.Error(err, "Failed to delete orphaned LVM volume", "volumeID", volumeID)
-			r.recorder.Eventf(pv, corev1.EventTypeWarning, "CleanupFailed",
+			r.recorder.Eventf(pv, nil, corev1.EventTypeWarning, "CleanupFailed", "CleanupFailed",
 				"Failed to cleanup orphaned LVM volume %s from node %s: %v", volumeID, r.nodeID, err)
 			// Requeue for retry
 			return ctrl.Result{}, err
 		}
 
 		log.Info("Successfully cleaned up orphaned LVM volume", "volumeID", volumeID)
-		r.recorder.Eventf(pv, corev1.EventTypeNormal, "CleanedUpOrphanedVolume",
+		r.recorder.Eventf(pv, nil, corev1.EventTypeNormal, "CleanedUpOrphanedVolume", "CleanedUpOrphanedVolume",
 			"Successfully cleaned up orphaned LVM volume %s from node %s", volumeID, r.nodeID)
 	}
 
