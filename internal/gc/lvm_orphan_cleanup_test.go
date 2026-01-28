@@ -11,7 +11,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
-	"k8s.io/client-go/tools/record"
+	kevents "k8s.io/client-go/tools/events"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
@@ -148,7 +148,7 @@ func TestLVMOrphanScanner_shouldCleanupVolume(t *testing.T) {
 					return nil
 				}).
 				Build()
-			recorder := record.NewFakeRecorder(10)
+			recorder := kevents.NewFakeRecorder(10)
 
 			cleanup := &LVMOrphanScanner{
 				Client:                   client,
@@ -210,7 +210,7 @@ func TestLVMOrphanScanner_Reconcile(t *testing.T) {
 			return nil
 		}).
 		Build()
-	recorder := record.NewFakeRecorder(10)
+	recorder := kevents.NewFakeRecorder(10)
 
 	// Set up the fake LVM manager with test data
 	fakeLVM := lvmMgr.NewFake()

@@ -16,7 +16,7 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	corev1 "k8s.io/api/core/v1"
-	"k8s.io/client-go/tools/record"
+	kevents "k8s.io/client-go/tools/events"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
@@ -37,7 +37,7 @@ type Server struct {
 	selectedNodeAnnotation   string
 	selectedInitialNodeParam string
 	removePvNodeAffinity     bool
-	recorder                 record.EventRecorder
+	recorder                 kevents.EventRecorder
 	tracer                   trace.Tracer
 
 	// Embed for forward compatibility.
@@ -47,7 +47,7 @@ type Server struct {
 // Server must implement the csi.ControllerServer interface.
 var _ csi.ControllerServer = &Server{}
 
-func New(volume core.ControllerInterface, caps []*csi.ControllerServiceCapability, modes []*csi.VolumeCapability_AccessMode, mounter mounter.Interface, k8sClient client.Client, nodeID, selectedNodeAnnotation string, selectedInitialNodeParam string, removePvNodeAffinity bool, recorder record.EventRecorder, tp trace.TracerProvider) *Server {
+func New(volume core.ControllerInterface, caps []*csi.ControllerServiceCapability, modes []*csi.VolumeCapability_AccessMode, mounter mounter.Interface, k8sClient client.Client, nodeID, selectedNodeAnnotation string, selectedInitialNodeParam string, removePvNodeAffinity bool, recorder kevents.EventRecorder, tp trace.TracerProvider) *Server {
 	return &Server{
 		caps:                     caps,
 		modes:                    modes,

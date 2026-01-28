@@ -246,7 +246,7 @@ func main() {
 	recorder := events.NewNoopRecorder()
 	if eventRecorderEnabled {
 		log.Info("event recorder enabled")
-		recorder = mgr.GetEventRecorderFor("local-csi-driver")
+		recorder = mgr.GetEventRecorder("local-csi-driver")
 	}
 
 	// Setup PV garbage collection controller to clean up orphaned LVM volumes
