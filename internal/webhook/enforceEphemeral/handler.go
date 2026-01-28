@@ -14,7 +14,7 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
-	"k8s.io/client-go/tools/events"
+	kevents "k8s.io/client-go/tools/events"
 	"k8s.io/client-go/util/retry"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -27,7 +27,7 @@ type Handler struct {
 	driverName string
 	client     client.Client
 	decoder    admission.Decoder
-	recorder   events.EventRecorder
+	recorder   kevents.EventRecorder
 }
 
 // opType is they type of request being processed.
@@ -42,7 +42,7 @@ const (
 // Handler implements admission.Handler.
 var _ admission.Handler = &Handler{}
 
-func NewHandler(driverName string, client client.Client, scheme *runtime.Scheme, recorder events.EventRecorder) (*Handler, error) {
+func NewHandler(driverName string, client client.Client, scheme *runtime.Scheme, recorder kevents.EventRecorder) (*Handler, error) {
 	return &Handler{
 		driverName: driverName,
 		client:     client,

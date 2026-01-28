@@ -8,7 +8,7 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
-	"k8s.io/client-go/tools/events"
+	kevents "k8s.io/client-go/tools/events"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	ctrlutil "sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
@@ -30,7 +30,7 @@ const (
 // PVCleanupReconciler watches PV delete events and removes finalizer if node doesn't exist.
 type PVCleanupReconciler struct {
 	client.Client
-	Recorder events.EventRecorder
+	Recorder kevents.EventRecorder
 }
 
 // Reconcile handles PV reconciliation.

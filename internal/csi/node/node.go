@@ -18,7 +18,7 @@ import (
 	"google.golang.org/grpc/status"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
-	"k8s.io/client-go/tools/events"
+	kevents "k8s.io/client-go/tools/events"
 	"k8s.io/kubernetes/pkg/volume"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
@@ -27,7 +27,7 @@ import (
 	"local-csi-driver/internal/csi/core"
 	"local-csi-driver/internal/csi/core/lvm"
 	"local-csi-driver/internal/csi/mounter"
-	pkgevents "local-csi-driver/internal/pkg/events"
+	"local-csi-driver/internal/pkg/events"
 )
 
 const (
@@ -44,7 +44,7 @@ type Server struct {
 	selectedNodeAnnotation   string
 	selectedInitialNodeParam string
 	removePvNodeAffinity     bool
-	recorder                 events.EventRecorder
+	recorder                 kevents.EventRecorder
 	tracer                   trace.Tracer
 
 	// Embed for forward compatibility.
@@ -54,7 +54,7 @@ type Server struct {
 // Server must implement the csi.NodeServer interface.
 var _ csi.NodeServer = &Server{}
 
-func New(volume core.NodeInterface, nodeID, selectedNodeAnnotation, selectedInitialNodeParam string, driver string, caps []*csi.NodeServiceCapability, mounter mounter.Interface, k8sClient client.Client, removeNodeAffinity bool, recorder events.EventRecorder, tp trace.TracerProvider) *Server {
+func New(volume core.NodeInterface, nodeID, selectedNodeAnnotation, selectedInitialNodeParam string, driver string, caps []*csi.NodeServiceCapability, mounter mounter.Interface, k8sClient client.Client, removeNodeAffinity bool, recorder kevents.EventRecorder, tp trace.TracerProvider) *Server {
 	return &Server{
 		nodeID:                   nodeID,
 		driver:                   driver,
@@ -372,7 +372,7 @@ func (ns *Server) NodeStageVolume(ctx context.Context, req *csi.NodeStageVolumeR
 	}
 
 	if pv.Spec.ClaimRef != nil {
-		ctx = pkgevents.WithObjectIntoContext(ctx, ns.recorder, pv.Spec.ClaimRef)
+		ctx = events.WithObjectIntoContext(ctx, ns.recorder, pv.Spec.ClaimRef)
 	}
 
 	// When removing node affinity from the PV, add the selected-node annotation to it.
@@ -576,7 +576,7 @@ func (ns *Server) NodeExpandVolume(ctx context.Context, req *csi.NodeExpandVolum
 	}
 
 	if pv.Spec.ClaimRef != nil {
-		ctx = pkgevents.WithObjectIntoContext(ctx, ns.recorder, pv.Spec.ClaimRef)
+		ctx = events.WithObjectIntoContext(ctx, ns.recorder, pv.Spec.ClaimRef)
 	}
 
 	resp, err := ns.volume.NodeExpandVolume(ctx, req)

@@ -7,7 +7,7 @@ import (
 	"context"
 
 	"k8s.io/apimachinery/pkg/runtime"
-	"k8s.io/client-go/tools/events"
+	kevents "k8s.io/client-go/tools/events"
 )
 
 // contextKey is a private type for context keys to prevent collisions.
@@ -31,6 +31,6 @@ func FromContext(ctx context.Context) ObjectRecorder {
 }
 
 // WithObjectIntoContext creates a bound recorder and stores it in context.
-func WithObjectIntoContext(ctx context.Context, base events.EventRecorder, obj runtime.Object) context.Context {
+func WithObjectIntoContext(ctx context.Context, base kevents.EventRecorder, obj runtime.Object) context.Context {
 	return IntoContext(ctx, WithObject(base, obj))
 }

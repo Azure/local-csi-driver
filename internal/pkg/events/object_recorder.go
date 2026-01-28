@@ -5,7 +5,7 @@ package events
 
 import (
 	"k8s.io/apimachinery/pkg/runtime"
-	"k8s.io/client-go/tools/events"
+	kevents "k8s.io/client-go/tools/events"
 	"k8s.io/klog/v2"
 )
 
@@ -20,7 +20,7 @@ type ObjectRecorder interface {
 
 // defaultObjectRecorder is the standard implementation that records events to the bound object.
 type defaultObjectRecorder struct {
-	base events.EventRecorder
+	base kevents.EventRecorder
 	obj  runtime.Object
 }
 
@@ -46,7 +46,7 @@ func (n *noopObjectRecorder) Event(eventtype, reason, message string) {}
 func (n *noopObjectRecorder) Eventf(eventtype, reason, messageFmt string, args ...any) {}
 
 // WithObject creates a new BoundRecorder for the given object.
-func WithObject(base events.EventRecorder, obj runtime.Object) ObjectRecorder {
+func WithObject(base kevents.EventRecorder, obj runtime.Object) ObjectRecorder {
 	if base == nil {
 		klog.Warning("base recorder is nil, using no-op recorder")
 		return NewNoopObjectRecorder()

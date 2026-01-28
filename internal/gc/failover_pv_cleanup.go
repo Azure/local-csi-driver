@@ -9,7 +9,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime"
-	"k8s.io/client-go/tools/events"
+	kevents "k8s.io/client-go/tools/events"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/event"
@@ -18,7 +18,7 @@ import (
 
 	"local-csi-driver/internal/csi/core/lvm"
 	"local-csi-driver/internal/csi/mounter"
-	pkgevents "local-csi-driver/internal/pkg/events"
+	"local-csi-driver/internal/pkg/events"
 	lvmMgr "local-csi-driver/internal/pkg/lvm"
 )
 
@@ -27,7 +27,7 @@ import (
 type PVFailoverReconciler struct {
 	client.Client
 	scheme                   *runtime.Scheme
-	recorder                 events.EventRecorder
+	recorder                 kevents.EventRecorder
 	nodeID                   string
 	selectedNodeAnnotation   string
 	selectedInitialNodeParam string
@@ -38,7 +38,7 @@ type PVFailoverReconciler struct {
 func NewPVFailoverReconciler(
 	client client.Client,
 	scheme *runtime.Scheme,
-	recorder events.EventRecorder,
+	recorder kevents.EventRecorder,
 	nodeID string,
 	selectedNodeAnnotation string,
 	selectedInitialNodeParam string,
@@ -93,7 +93,7 @@ func (r *PVFailoverReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 	}
 
 	// Add events context for this PV
-	ctx = pkgevents.WithObjectIntoContext(ctx, r.recorder, pv)
+	ctx = events.WithObjectIntoContext(ctx, r.recorder, pv)
 
 	// Check for node annotation mismatch
 	if hasNodeAnnotationMismatch(pv, r.nodeID, r.selectedNodeAnnotation, r.selectedInitialNodeParam) {

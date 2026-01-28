@@ -16,7 +16,7 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	corev1 "k8s.io/api/core/v1"
-	"k8s.io/client-go/tools/events"
+	kevents "k8s.io/client-go/tools/events"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
@@ -24,7 +24,7 @@ import (
 	"local-csi-driver/internal/csi/core"
 	"local-csi-driver/internal/csi/core/lvm"
 	"local-csi-driver/internal/csi/mounter"
-	pkgevents "local-csi-driver/internal/pkg/events"
+	"local-csi-driver/internal/pkg/events"
 )
 
 type Server struct {
@@ -37,7 +37,7 @@ type Server struct {
 	selectedNodeAnnotation   string
 	selectedInitialNodeParam string
 	removePvNodeAffinity     bool
-	recorder                 events.EventRecorder
+	recorder                 kevents.EventRecorder
 	tracer                   trace.Tracer
 
 	// Embed for forward compatibility.
@@ -47,7 +47,7 @@ type Server struct {
 // Server must implement the csi.ControllerServer interface.
 var _ csi.ControllerServer = &Server{}
 
-func New(volume core.ControllerInterface, caps []*csi.ControllerServiceCapability, modes []*csi.VolumeCapability_AccessMode, mounter mounter.Interface, k8sClient client.Client, nodeID, selectedNodeAnnotation string, selectedInitialNodeParam string, removePvNodeAffinity bool, recorder events.EventRecorder, tp trace.TracerProvider) *Server {
+func New(volume core.ControllerInterface, caps []*csi.ControllerServiceCapability, modes []*csi.VolumeCapability_AccessMode, mounter mounter.Interface, k8sClient client.Client, nodeID, selectedNodeAnnotation string, selectedInitialNodeParam string, removePvNodeAffinity bool, recorder kevents.EventRecorder, tp trace.TracerProvider) *Server {
 	return &Server{
 		caps:                     caps,
 		modes:                    modes,
@@ -108,7 +108,7 @@ func (cs *Server) CreateVolume(ctx context.Context, req *csi.CreateVolumeRequest
 			log.Error(err, "failed to get pvc", "name", req.Parameters[core.PVCNameParam], "namespace", req.Parameters[core.PVCNamespaceParam])
 			return nil, status.Error(codes.Internal, err.Error())
 		}
-		ctx = pkgevents.WithObjectIntoContext(ctx, cs.recorder, pvc)
+		ctx = events.WithObjectIntoContext(ctx, cs.recorder, pvc)
 	}
 
 	// Create using the volume api.
@@ -235,7 +235,7 @@ func (cs *Server) DeleteVolume(ctx context.Context, req *csi.DeleteVolumeRequest
 	}
 
 	// The PVC is deleted by this point, so use events on PV.
-	ctx = pkgevents.WithObjectIntoContext(ctx, cs.recorder, pv)
+	ctx = events.WithObjectIntoContext(ctx, cs.recorder, pv)
 
 	// Since NodeUnstageVolume is a no-op to preserve the page cache between
 	// pods using the same volume, we need to unmount the device here if it is

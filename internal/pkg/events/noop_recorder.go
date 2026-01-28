@@ -5,13 +5,13 @@ package events
 
 import (
 	"k8s.io/apimachinery/pkg/runtime"
-	"k8s.io/client-go/tools/events"
+	kevents "k8s.io/client-go/tools/events"
 	"k8s.io/klog/v2"
 )
 
-var _ events.EventRecorder = &NoopRecorder{}
+var _ kevents.EventRecorder = &NoopRecorder{}
 
-// NoopRecorder is a no-op implementation of events.EventRecorder.
+// NoopRecorder is a no-op implementation of kevents.EventRecorder.
 type NoopRecorder struct{}
 
 // Eventf logs an event for the given object.
@@ -19,11 +19,11 @@ func (n *NoopRecorder) Eventf(regarding runtime.Object, related runtime.Object, 
 }
 
 // WithLogger returns the same NoopRecorder as it doesn't use logging.
-func (n *NoopRecorder) WithLogger(logger klog.Logger) events.EventRecorderLogger {
+func (n *NoopRecorder) WithLogger(logger klog.Logger) kevents.EventRecorderLogger {
 	return n
 }
 
 // NewNoopRecorder creates a new NoopEventRecorder.
-func NewNoopRecorder() events.EventRecorder {
+func NewNoopRecorder() kevents.EventRecorder {
 	return &NoopRecorder{}
 }
