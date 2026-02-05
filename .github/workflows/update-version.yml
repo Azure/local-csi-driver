@@ -1,0 +1,72 @@
+name: Update Version on Release
+
+on:
+  push:
+    tags:
+      - 'v[0-9]+.[0-9]+.[0-9]+'
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  update-version:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@e3f713f2d8f53843e71c69a996d56f51aa9adfb9 # v2.14.1
+        with:
+          egress-policy: audit
+
+      - name: Check out the code
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Extract version from tag
+        id: extract-version
+        run: |
+          TAG="${GITHUB_REF#refs/tags/}"
+          # Remove 'v' prefix if present
+          VERSION="${TAG#v}"
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "Extracted version: ${VERSION}"
+
+      - name: Update README.md install command
+        run: |
+          VERSION="${{ steps.extract-version.outputs.version }}"
+
+          # Verify that the expected version pattern exists before attempting replacement
+          if ! grep -qE '--version [0-9]+\.[0-9]+\.[0-9]+[^ ]*' README.md; then
+            echo "Expected version pattern not found in README.md; aborting version update."
+            exit 1
+          fi
+
+          sed -i -E "s/--version [0-9]+\.[0-9]+\.[0-9]+[^ ]*/--version ${VERSION}/" README.md
+      - name: Create Pull Request
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          VERSION="${{ steps.extract-version.outputs.version }}"
+          RANDOM_SUFFIX=$(shuf -i 1000-9999 -n 1)
+          BRANCH="chore/update-version-${VERSION}-${RANDOM_SUFFIX}"
+
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          git checkout -b "${BRANCH}"
+          git add README.md
+
+          if git diff --staged --quiet; then
+            echo "No changes to commit"
+            exit 0
+          fi
+
+          git commit -m "docs: update version to ${VERSION} in README.md"
+          git push origin "${BRANCH}"
+
+          gh pr create \
+            --base main \
+            --title "docs: update version to ${VERSION} in README.md" \
+            --body "This PR updates the version in the README.md install command to ${VERSION}."
