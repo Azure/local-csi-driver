@@ -33,18 +33,44 @@ jobs:
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
           echo "Extracted version: ${VERSION}"
 
-      - name: Update README.md install command
+      - name: Extract current version from README.md
+        id: current-version
         run: |
-          VERSION="${{ steps.extract-version.outputs.version }}"
-
-          # Verify that the expected version pattern exists before attempting replacement
-          if ! grep -qE '--version [0-9]+\.[0-9]+\.[0-9]+[^ ]*' README.md; then
-            echo "Expected version pattern not found in README.md; aborting version update."
+          # Extract the current version from README.md
+          CURRENT_VERSION=$(grep -oE -- '--version [0-9]+\.[0-9]+\.[0-9]+[^ ]*' README.md | head -1 | sed -E 's/--version //')
+          
+          if [ -z "$CURRENT_VERSION" ]; then
+            echo "Failed to extract current version from README.md"
             exit 1
           fi
+          
+          echo "current_version=${CURRENT_VERSION}" >> "$GITHUB_OUTPUT"
+          echo "Current version in README.md: ${CURRENT_VERSION}"
 
+      - name: Compare versions using semver
+        id: compare-versions
+        run: |
+          NEW_VERSION="${{ steps.extract-version.outputs.version }}"
+          CURRENT_VERSION="${{ steps.current-version.outputs.current_version }}"
+          
+          echo "Comparing versions: current=${CURRENT_VERSION}, new=${NEW_VERSION}"
+          
+          # Use Python script to compare versions
+          if python3 .github/workflows/scripts/compare_versions.py --current "${CURRENT_VERSION}" --new "${NEW_VERSION}"; then
+            echo "should_update=true" >> "$GITHUB_OUTPUT"
+            echo "New version is higher, will update README.md"
+          else
+            echo "should_update=false" >> "$GITHUB_OUTPUT"
+            echo "New version is not higher, skipping README.md update"
+          fi
+
+      - name: Update README.md install command
+        if: steps.compare-versions.outputs.should_update == 'true'
+        run: |
+          VERSION="${{ steps.extract-version.outputs.version }}"
           sed -i -E "s/--version [0-9]+\.[0-9]+\.[0-9]+[^ ]*/--version ${VERSION}/" README.md
       - name: Create Pull Request
+        if: steps.compare-versions.outputs.should_update == 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
