@@ -37,13 +37,57 @@ jobs:
         run: |
           VERSION="${{ steps.extract-version.outputs.version }}"
 
-          # Verify that the expected version pattern exists before attempting replacement
-          if ! grep -qE '--version [0-9]+\.[0-9]+\.[0-9]+[^ ]*' README.md; then
+          # Extract current version from README.md
+          CURRENT_VERSION=$(grep -oE -- '--version [0-9]+\.[0-9]+\.[0-9]+[^ ]*' README.md | grep -oE '[0-9]+\.[0-9]+\.[0-9]+[^ ]*' | head -1)
+          
+          if [ -z "$CURRENT_VERSION" ]; then
             echo "Expected version pattern not found in README.md; aborting version update."
             exit 1
           fi
+          
+          echo "Current version in README: ${CURRENT_VERSION}"
+          echo "New version from tag: ${VERSION}"
 
-          sed -i -E "s/--version [0-9]+\.[0-9]+\.[0-9]+[^ ]*/--version ${VERSION}/" README.md
+          # Function to compare semantic versions
+          # Returns 0 if $1 > $2, 1 otherwise
+          version_gt() {
+            local ver1=$1
+            local ver2=$2
+            
+            # Split versions into components (major.minor.patch)
+            IFS='.' read -r -a ver1_parts <<< "$ver1"
+            IFS='.' read -r -a ver2_parts <<< "$ver2"
+            
+            # Compare major version
+            if [ "${ver1_parts[0]}" -gt "${ver2_parts[0]}" ]; then
+              return 0
+            elif [ "${ver1_parts[0]}" -lt "${ver2_parts[0]}" ]; then
+              return 1
+            fi
+            
+            # Compare minor version
+            if [ "${ver1_parts[1]}" -gt "${ver2_parts[1]}" ]; then
+              return 0
+            elif [ "${ver1_parts[1]}" -lt "${ver2_parts[1]}" ]; then
+              return 1
+            fi
+            
+            # Compare patch version
+            if [ "${ver1_parts[2]}" -gt "${ver2_parts[2]}" ]; then
+              return 0
+            else
+              return 1
+            fi
+          }
+
+          # Check if new version is greater than current version
+          if version_gt "$VERSION" "$CURRENT_VERSION"; then
+            echo "New version ${VERSION} is greater than current version ${CURRENT_VERSION}. Proceeding with update."
+            sed -i -E "s/--version [0-9]+\.[0-9]+\.[0-9]+[^ ]*/--version ${VERSION}/" README.md
+          else
+            echo "New version ${VERSION} is not greater than current version ${CURRENT_VERSION}. Skipping update."
+            exit 0
+          fi
       - name: Create Pull Request
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
