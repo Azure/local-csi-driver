@@ -36,7 +36,9 @@ jobs:
       - name: Extract current version from README.md
         id: current-version
         run: |
-          # Extract the current version from README.md
+          # Extract the current version from the install command in README.md
+          # Using head -1 to get the first occurrence, which is the canonical
+          # installation command in the "Install" section
           CURRENT_VERSION=$(grep -oE -- \
             '--version [0-9]+\.[0-9]+\.[0-9]+[^ ]*' README.md \
             | head -1 | sed -E 's/--version //')

@@ -79,8 +79,40 @@ def compare_versions(current: str, new: str) -> bool:
         # current is prerelease, new is stable -> new is higher
         return True
     elif current_prerelease and new_prerelease:
-        # Both are prereleases, compare lexicographically
-        return new_prerelease > current_prerelease
+        # Both are prereleases, compare according to semver spec
+        # Split on dots and compare segments
+        current_segments = current_prerelease.split('.')
+        new_segments = new_prerelease.split('.')
+
+        for i in range(min(len(current_segments), len(new_segments))):
+            curr_seg = current_segments[i]
+            new_seg = new_segments[i]
+
+            # Try to compare as integers if both are numeric
+            curr_is_num = curr_seg.isdigit()
+            new_is_num = new_seg.isdigit()
+
+            if curr_is_num and new_is_num:
+                # Both numeric - compare numerically
+                if int(new_seg) > int(curr_seg):
+                    return True
+                elif int(new_seg) < int(curr_seg):
+                    return False
+            elif curr_is_num and not new_is_num:
+                # Numeric < alphanumeric
+                return True
+            elif not curr_is_num and new_is_num:
+                # Alphanumeric > numeric
+                return False
+            else:
+                # Both alphanumeric - compare lexicographically
+                if new_seg > curr_seg:
+                    return True
+                elif new_seg < curr_seg:
+                    return False
+
+        # All compared segments are equal, longer version is higher
+        return len(new_segments) > len(current_segments)
 
     # Versions are equal
     return False
