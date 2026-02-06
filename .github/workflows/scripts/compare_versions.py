@@ -68,11 +68,11 @@ def main():
         print(f"  Current version: {current_version_str} (parsed as {current_version})")
         
         if new_version > current_version:
-            print(f"✓ New version {new_version} is greater than current version {current_version}")
+            print(f"Result: New version {new_version} is greater than current version {current_version}")
             print("  → Proceeding with update")
             sys.exit(0)
         else:
-            print(f"✗ New version {new_version} is not greater than current version {current_version}")
+            print(f"Result: New version {new_version} is not greater than current version {current_version}")
             print("  → Skipping update")
             sys.exit(1)
     
