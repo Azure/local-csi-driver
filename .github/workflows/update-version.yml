@@ -24,6 +24,9 @@ jobs:
           ref: main
           fetch-depth: 0
 
+      - name: Install semver library
+        run: pip3 install semver --quiet
+
       - name: Extract version from tag
         id: extract-version
         run: |
