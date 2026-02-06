@@ -38,17 +38,20 @@ jobs:
           VERSION="${{ steps.extract-version.outputs.version }}"
 
           # Extract current version from README.md
-          CURRENT_VERSION=$(grep -oE -- '--version [0-9]+\.[0-9]+\.[0-9]+[^ ]*' README.md | grep -oE '[0-9]+\.[0-9]+\.[0-9]+[^ ]*' | head -1)
+          CURRENT_VERSION_RAW=$(grep -oE -- '--version [0-9]+\.[0-9]+\.[0-9]+[^ ]*' README.md | grep -oE '[0-9]+\.[0-9]+\.[0-9]+[^ ]*' | head -1)
           
-          if [ -z "$CURRENT_VERSION" ]; then
+          if [ -z "$CURRENT_VERSION_RAW" ]; then
             echo "Expected version pattern not found in README.md; aborting version update."
             exit 1
           fi
           
-          echo "Current version in README: ${CURRENT_VERSION}"
+          # Extract only the numeric major.minor.patch for comparison (ignore pre-release suffixes)
+          CURRENT_VERSION=$(echo "$CURRENT_VERSION_RAW" | grep -oE '^[0-9]+\.[0-9]+\.[0-9]+')
+          
+          echo "Current version in README: ${CURRENT_VERSION_RAW} (comparing: ${CURRENT_VERSION})"
           echo "New version from tag: ${VERSION}"
 
-          # Function to compare semantic versions
+          # Function to compare semantic versions (major.minor.patch only)
           # Returns 0 if $1 > $2, 1 otherwise
           version_gt() {
             local ver1=$1
@@ -57,6 +60,20 @@ jobs:
             # Split versions into components (major.minor.patch)
             IFS='.' read -r -a ver1_parts <<< "$ver1"
             IFS='.' read -r -a ver2_parts <<< "$ver2"
+            
+            # Validate that we have exactly 3 numeric components
+            if [ "${#ver1_parts[@]}" -ne 3 ] || [ "${#ver2_parts[@]}" -ne 3 ]; then
+              echo "Error: Invalid version format. Expected major.minor.patch"
+              return 1
+            fi
+            
+            # Validate that all components are numeric
+            for part in "${ver1_parts[@]}" "${ver2_parts[@]}"; do
+              if ! [[ "$part" =~ ^[0-9]+$ ]]; then
+                echo "Error: Non-numeric version component: $part"
+                return 1
+              fi
+            done
             
             # Compare major version
             if [ "${ver1_parts[0]}" -gt "${ver2_parts[0]}" ]; then
