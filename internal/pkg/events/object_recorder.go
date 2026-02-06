@@ -5,7 +5,7 @@ package events
 
 import (
 	"k8s.io/apimachinery/pkg/runtime"
-	"k8s.io/client-go/tools/record"
+	kevents "k8s.io/client-go/tools/events"
 	"k8s.io/klog/v2"
 )
 
@@ -16,27 +16,26 @@ type ObjectRecorder interface {
 
 	// Eventf logs an event with a formatted message for the bound object.
 	Eventf(eventtype, reason, messageFmt string, args ...any)
-
-	// AnnotatedEventf logs an event with annotations and a formatted message for the bound object.
-	AnnotatedEventf(annotations map[string]string, eventtype, reason, messageFmt string, args ...any)
 }
 
 // defaultObjectRecorder is the standard implementation that records events to the bound object.
 type defaultObjectRecorder struct {
-	base record.EventRecorder
+	base kevents.EventRecorder
 	obj  runtime.Object
 }
 
 func (b *defaultObjectRecorder) Event(eventtype, reason, message string) {
-	b.base.Event(b.obj, eventtype, reason, message)
+	// The new events API uses Eventf with different parameters:
+	// Eventf(regarding, related, eventtype, reason, action, note, args...)
+	// We map: reason -> action, message -> note
+	b.base.Eventf(b.obj, nil, eventtype, reason, reason, message)
 }
 
 func (b *defaultObjectRecorder) Eventf(eventtype, reason, messageFmt string, args ...any) {
-	b.base.Eventf(b.obj, eventtype, reason, messageFmt, args...)
-}
-
-func (b *defaultObjectRecorder) AnnotatedEventf(annotations map[string]string, eventtype, reason, messageFmt string, args ...any) {
-	b.base.AnnotatedEventf(b.obj, annotations, eventtype, reason, messageFmt, args...)
+	// The new events API uses Eventf with different parameters:
+	// Eventf(regarding, related, eventtype, reason, action, note, args...)
+	// We map: reason -> action, messageFmt -> note
+	b.base.Eventf(b.obj, nil, eventtype, reason, reason, messageFmt, args...)
 }
 
 // noopObjectRecorder is an implementation that doesn't actually record events.
@@ -46,11 +45,8 @@ func (n *noopObjectRecorder) Event(eventtype, reason, message string) {}
 
 func (n *noopObjectRecorder) Eventf(eventtype, reason, messageFmt string, args ...any) {}
 
-func (n *noopObjectRecorder) AnnotatedEventf(annotations map[string]string, eventtype, reason, messageFmt string, args ...any) {
-}
-
 // WithObject creates a new BoundRecorder for the given object.
-func WithObject(base record.EventRecorder, obj runtime.Object) ObjectRecorder {
+func WithObject(base kevents.EventRecorder, obj runtime.Object) ObjectRecorder {
 	if base == nil {
 		klog.Warning("base recorder is nil, using no-op recorder")
 		return NewNoopObjectRecorder()
