@@ -14,12 +14,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Harden the runner (Audit all outbound calls)
-        uses: step-security/harden-runner@e3f713f2d8f53843e71c69a996d56f51aa9adfb9 # v2.14.1
+        uses: step-security/harden-runner@e3f713f2d8f53843e71c69a996d56f51aa9adfb9  # v2.14.1
         with:
           egress-policy: audit
 
       - name: Check out the code
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
         with:
           ref: main
           fetch-depth: 0
@@ -37,13 +37,15 @@ jobs:
         id: current-version
         run: |
           # Extract the current version from README.md
-          CURRENT_VERSION=$(grep -oE -- '--version [0-9]+\.[0-9]+\.[0-9]+[^ ]*' README.md | head -1 | sed -E 's/--version //')
-          
+          CURRENT_VERSION=$(grep -oE -- \
+            '--version [0-9]+\.[0-9]+\.[0-9]+[^ ]*' README.md \
+            | head -1 | sed -E 's/--version //')
+
           if [ -z "$CURRENT_VERSION" ]; then
             echo "Failed to extract current version from README.md"
             exit 1
           fi
-          
+
           echo "current_version=${CURRENT_VERSION}" >> "$GITHUB_OUTPUT"
           echo "Current version in README.md: ${CURRENT_VERSION}"
 
@@ -52,11 +54,15 @@ jobs:
         run: |
           NEW_VERSION="${{ steps.extract-version.outputs.version }}"
           CURRENT_VERSION="${{ steps.current-version.outputs.current_version }}"
-          
-          echo "Comparing versions: current=${CURRENT_VERSION}, new=${NEW_VERSION}"
-          
+
+          echo "Comparing versions: current=${CURRENT_VERSION}, \
+          new=${NEW_VERSION}"
+
           # Use Python script to compare versions
-          if python3 .github/workflows/scripts/compare_versions.py --current "${CURRENT_VERSION}" --new "${NEW_VERSION}"; then
+          SCRIPT=".github/workflows/scripts/compare_versions.py"
+          if python3 ${SCRIPT} \
+              --current "${CURRENT_VERSION}" \
+              --new "${NEW_VERSION}"; then
             echo "should_update=true" >> "$GITHUB_OUTPUT"
             echo "New version is higher, will update README.md"
           else
@@ -68,7 +74,10 @@ jobs:
         if: steps.compare-versions.outputs.should_update == 'true'
         run: |
           VERSION="${{ steps.extract-version.outputs.version }}"
-          sed -i -E "s/--version [0-9]+\.[0-9]+\.[0-9]+[^ ]*/--version ${VERSION}/" README.md
+          sed -i -E \
+            "s/--version [0-9]+\.[0-9]+\.[0-9]+[^ ]*/--version ${VERSION}/" \
+            README.md
+
       - name: Create Pull Request
         if: steps.compare-versions.outputs.should_update == 'true'
         env:
@@ -95,4 +104,5 @@ jobs:
           gh pr create \
             --base main \
             --title "docs: update version to ${VERSION} in README.md" \
-            --body "This PR updates the version in the README.md install command to ${VERSION}."
+            --body "This PR updates the version in the README.md \
+          install command to ${VERSION}."
