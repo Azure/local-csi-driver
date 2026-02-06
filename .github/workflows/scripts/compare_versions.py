@@ -22,14 +22,20 @@ def compare_versions(current: str, new: str) -> bool:
 
     Returns:
         True if new > current, False otherwise
+
+    Raises:
+        ValueError: If version strings are invalid
     """
     # Remove 'v' prefix if present
     current = current.lstrip('v')
     new = new.lstrip('v')
 
-    # Parse versions using semver library
-    current_ver = semver.Version.parse(current)
-    new_ver = semver.Version.parse(new)
+    try:
+        # Parse versions using semver library
+        current_ver = semver.Version.parse(current)
+        new_ver = semver.Version.parse(new)
+    except ValueError as e:
+        raise ValueError(f"Invalid version format: {e}") from e
 
     # Use built-in comparison
     return new_ver > current_ver
