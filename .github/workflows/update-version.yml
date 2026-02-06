@@ -57,7 +57,7 @@ jobs:
           if git ls-remote --exit-code --heads origin "${BRANCH}" >/dev/null 2>&1; then
             echo "Branch ${BRANCH} already exists remotely, deleting it"
             # Ignore errors if branch was already deleted by another process
-            git push origin --delete "${BRANCH}" 2>/dev/null || echo "Branch may have been already deleted"
+            git push origin --delete "${BRANCH}" 2>/dev/null || echo "Failed to delete remote branch or branch was already deleted"
           fi
 
           git checkout -b "${BRANCH}"
