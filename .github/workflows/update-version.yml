@@ -53,9 +53,11 @@ jobs:
             git branch -D "${BRANCH}"
           fi
 
-          if git ls-remote --heads origin "${BRANCH}" | grep -q "refs/heads/${BRANCH}$"; then
+          # Check if branch exists remotely and delete it
+          if git ls-remote --exit-code --heads origin "${BRANCH}" >/dev/null 2>&1; then
             echo "Branch ${BRANCH} already exists remotely, deleting it"
-            git push origin --delete "${BRANCH}"
+            # Ignore errors if branch was already deleted by another process
+            git push origin --delete "${BRANCH}" 2>/dev/null || echo "Branch may have been already deleted"
           fi
 
           git checkout -b "${BRANCH}"
