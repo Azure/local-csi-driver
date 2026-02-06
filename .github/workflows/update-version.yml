@@ -47,6 +47,17 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
+          # Delete the branch if it already exists (both locally and remotely)
+          if git rev-parse --verify "${BRANCH}" >/dev/null 2>&1; then
+            echo "Branch ${BRANCH} already exists locally, deleting it"
+            git branch -D "${BRANCH}"
+          fi
+
+          if git ls-remote --heads origin "${BRANCH}" | grep -q "${BRANCH}"; then
+            echo "Branch ${BRANCH} already exists remotely, deleting it"
+            git push origin --delete "${BRANCH}" || true
+          fi
+
           git checkout -b "${BRANCH}"
           git add README.md
 
