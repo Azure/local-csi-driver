@@ -38,72 +38,26 @@ jobs:
           VERSION="${{ steps.extract-version.outputs.version }}"
 
           # Extract current version from README.md
-          CURRENT_VERSION_RAW=$(grep -oE -- '--version [0-9]+\.[0-9]+\.[0-9]+[^ ]*' README.md | grep -oE '[0-9]+\.[0-9]+\.[0-9]+[^ ]*' | head -1)
+          CURRENT_VERSION=$(grep -oE -- '--version [0-9]+\.[0-9]+\.[0-9]+[^ ]*' README.md | grep -oE '[0-9]+\.[0-9]+\.[0-9]+[^ ]*' | head -1)
           
-          if [ -z "$CURRENT_VERSION_RAW" ]; then
+          if [ -z "$CURRENT_VERSION" ]; then
             echo "Expected version pattern not found in README.md; aborting version update."
             exit 1
           fi
-          
-          # Extract only the numeric major.minor.patch for comparison (ignore pre-release suffixes)
-          CURRENT_VERSION=$(echo "$CURRENT_VERSION_RAW" | grep -oE '^[0-9]+\.[0-9]+\.[0-9]+')
-          
-          echo "Current version in README: ${CURRENT_VERSION_RAW} (comparing: ${CURRENT_VERSION})"
-          echo "New version from tag: ${VERSION}"
 
-          # Function to compare semantic versions (major.minor.patch only)
-          # Returns 0 if $1 > $2, 1 otherwise
-          version_gt() {
-            local ver1=$1
-            local ver2=$2
-            
-            # Split versions into components (major.minor.patch)
-            IFS='.' read -r -a ver1_parts <<< "$ver1"
-            IFS='.' read -r -a ver2_parts <<< "$ver2"
-            
-            # Validate that we have exactly 3 numeric components
-            if [ "${#ver1_parts[@]}" -ne 3 ] || [ "${#ver2_parts[@]}" -ne 3 ]; then
-              echo "Error: Invalid version format. Expected major.minor.patch"
-              return 1
-            fi
-            
-            # Validate that all components are numeric
-            for part in "${ver1_parts[@]}" "${ver2_parts[@]}"; do
-              if ! [[ "$part" =~ ^[0-9]+$ ]]; then
-                echo "Error: Non-numeric version component: $part"
-                return 1
-              fi
-            done
-            
-            # Compare major version
-            if [ "${ver1_parts[0]}" -gt "${ver2_parts[0]}" ]; then
-              return 0
-            elif [ "${ver1_parts[0]}" -lt "${ver2_parts[0]}" ]; then
-              return 1
-            fi
-            
-            # Compare minor version
-            if [ "${ver1_parts[1]}" -gt "${ver2_parts[1]}" ]; then
-              return 0
-            elif [ "${ver1_parts[1]}" -lt "${ver2_parts[1]}" ]; then
-              return 1
-            fi
-            
-            # Compare patch version
-            if [ "${ver1_parts[2]}" -gt "${ver2_parts[2]}" ]; then
-              return 0
-            else
-              return 1
-            fi
-          }
-
-          # Check if new version is greater than current version
-          if version_gt "$VERSION" "$CURRENT_VERSION"; then
-            echo "New version ${VERSION} is greater than current version ${CURRENT_VERSION}. Proceeding with update."
+          # Use Python script to compare versions
+          if python3 .github/workflows/scripts/compare_versions.py "$VERSION" "$CURRENT_VERSION"; then
+            echo "Updating README.md with new version ${VERSION}"
             sed -i -E "s/--version [0-9]+\.[0-9]+\.[0-9]+[^ ]*/--version ${VERSION}/" README.md
           else
-            echo "New version ${VERSION} is not greater than current version ${CURRENT_VERSION}. Skipping update."
-            exit 0
+            exit_code=$?
+            if [ $exit_code -eq 1 ]; then
+              echo "Skipping update - new version is not greater than current version"
+              exit 0
+            else
+              echo "Error comparing versions (exit code: $exit_code)"
+              exit $exit_code
+            fi
           fi
       - name: Create Pull Request
         env:
