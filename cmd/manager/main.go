@@ -282,7 +282,7 @@ func main() {
 	recorder := events.NewNoopRecorder()
 	if eventRecorderEnabled {
 		log.Info("event recorder enabled")
-		recorder = mgr.GetEventRecorderFor("local-csi-manager")
+		recorder = mgr.GetEventRecorder("local-csi-manager")
 	}
 
 	// Register PV cleanup controller if enabled
@@ -290,7 +290,7 @@ func main() {
 		log.Info("registering PV cleanup controller")
 		if err := (&pvcleanup.PVCleanupReconciler{
 			Client:   mgr.GetClient(),
-			Recorder: mgr.GetEventRecorderFor("pvcleanup-controller"),
+			Recorder: mgr.GetEventRecorder("pvcleanup-controller"),
 		}).SetupWithManager(mgr); err != nil {
 			logAndExit(err, "unable to register PV cleanup controller")
 		}

@@ -8,7 +8,7 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
-	"k8s.io/client-go/tools/record"
+	kevents "k8s.io/client-go/tools/events"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	ctrlutil "sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
@@ -30,7 +30,7 @@ const (
 // PVCleanupReconciler watches PV delete events and removes finalizer if node doesn't exist.
 type PVCleanupReconciler struct {
 	client.Client
-	Recorder record.EventRecorder
+	Recorder kevents.EventRecorder
 }
 
 // Reconcile handles PV reconciliation.
@@ -109,12 +109,12 @@ func (r *PVCleanupReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	if pv.DeletionTimestamp.IsZero() {
 		logger.Info("PV deletion timestamp not set, issuing delete request", "pv", pv.Name)
 		if err := r.Delete(ctx, &pv); err != nil {
-			r.Recorder.Eventf(&pv, corev1.EventTypeWarning, "DeleteFailed",
+			r.Recorder.Eventf(&pv, nil, corev1.EventTypeWarning, "DeleteFailed", "DeleteFailed",
 				"Failed to delete PV: %v", err)
 			return ctrl.Result{}, err
 		}
 		logger.V(2).Info("Successfully issued PV delete request", "pv", pv.Name)
-		r.Recorder.Event(&pv, corev1.EventTypeNormal, "DeleteIssued",
+		r.Recorder.Eventf(&pv, nil, corev1.EventTypeNormal, "DeleteIssued", "DeleteIssued",
 			"Issued PV delete request because no hostname nodes are available")
 
 		// Requeue to handle finalizer removal after deletion timestamp is set
@@ -143,13 +143,13 @@ func (r *PVCleanupReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 			logger.Info("PV not found during finalizer removal, assuming already deleted", "pv", pv.Name)
 			return ctrl.Result{}, nil
 		}
-		r.Recorder.Eventf(&pv, corev1.EventTypeWarning, "FinalizerRemovalFailed",
+		r.Recorder.Eventf(&pv, nil, corev1.EventTypeWarning, "FinalizerRemovalFailed", "FinalizerRemovalFailed",
 			"Failed to remove finalizers: %v", err)
 		return ctrl.Result{}, err
 	}
 
 	logger.Info("Successfully removed PV finalizers", "pv", pv.Name, "finalizers", finalizersToRemove)
-	r.Recorder.Event(&pv, corev1.EventTypeNormal, "FinalizersRemoved",
+	r.Recorder.Eventf(&pv, nil, corev1.EventTypeNormal, "FinalizersRemoved", "FinalizersRemoved",
 		"Removed PV finalizers because no hostname nodes are available")
 
 	return ctrl.Result{}, nil
