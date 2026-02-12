@@ -160,16 +160,16 @@ require (
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 	k8s.io/apiserver v0.35.1 // indirect
 	k8s.io/cloud-provider v0.0.0 // indirect
-	k8s.io/controller-manager v0.35.0 // indirect
-	k8s.io/cri-api v0.35.0 // indirect
+	k8s.io/controller-manager v0.35.1 // indirect
+	k8s.io/cri-api v0.35.1 // indirect
 	k8s.io/cri-client v0.0.0 // indirect
 	k8s.io/csi-translation-lib v0.0.0 // indirect
-	k8s.io/dynamic-resource-allocation v0.35.0 // indirect
+	k8s.io/dynamic-resource-allocation v0.35.1 // indirect
 	k8s.io/kms v0.35.1 // indirect
 	k8s.io/kube-openapi v0.0.0-20250910181357-589584f1c912 // indirect
 	k8s.io/kube-scheduler v0.0.0 // indirect
 	k8s.io/kubectl v0.0.0 // indirect
-	k8s.io/kubelet v0.35.0 // indirect
+	k8s.io/kubelet v0.35.1 // indirect
 	k8s.io/pod-security-admission v0.0.0 // indirect
 	sigs.k8s.io/apiserver-network-proxy/konnectivity-client v0.31.2 // indirect
 	sigs.k8s.io/json v0.0.0-20250730193827-2d320260d730 // indirect
@@ -179,21 +179,21 @@ require (
 
 // Override for kubernetes to find the staging repos.
 replace (
-	k8s.io/cloud-provider v0.0.0 => k8s.io/cloud-provider v0.35.0
-	k8s.io/cluster-bootstrap v0.0.0 => k8s.io/cluster-bootstrap v0.35.0
-	k8s.io/component-helpers v0.0.0 => k8s.io/component-helpers v0.35.0
-	k8s.io/cri-client v0.0.0 => k8s.io/cri-client v0.35.0
-	k8s.io/csi-translation-lib v0.0.0 => k8s.io/csi-translation-lib v0.35.0
-	k8s.io/dynamic-resource-allocation v0.0.0 => k8s.io/dynamic-resource-allocation v0.35.0
-	k8s.io/endpointslice v0.0.0 => k8s.io/endpointslice v0.35.0
-	k8s.io/externaljwt v0.0.0 => k8s.io/externaljwt v0.35.0
-	k8s.io/kube-aggregator v0.0.0 => k8s.io/kube-aggregator v0.35.0
-	k8s.io/kube-controller-manager v0.0.0 => k8s.io/kube-controller-manager v0.35.0
-	k8s.io/kube-proxy v0.0.0 => k8s.io/kube-proxy v0.35.0
-	k8s.io/kube-scheduler v0.0.0 => k8s.io/kube-scheduler v0.35.0
-	k8s.io/kubectl v0.0.0 => k8s.io/kubectl v0.35.0
-	k8s.io/kubelet v0.0.0 => k8s.io/kubelet v0.35.0
-	k8s.io/mount-utils v0.0.0 => k8s.io/mount-utils v0.35.0
-	k8s.io/pod-security-admission v0.0.0 => k8s.io/pod-security-admission v0.35.0
-	k8s.io/sample-apiserver v0.0.0 => k8s.io/sample-apiserver v0.35.0
+	k8s.io/cloud-provider v0.0.0 => k8s.io/cloud-provider v0.35.1
+	k8s.io/cluster-bootstrap v0.0.0 => k8s.io/cluster-bootstrap v0.35.1
+	k8s.io/component-helpers v0.0.0 => k8s.io/component-helpers v0.35.1
+	k8s.io/cri-client v0.0.0 => k8s.io/cri-client v0.35.1
+	k8s.io/csi-translation-lib v0.0.0 => k8s.io/csi-translation-lib v0.35.1
+	k8s.io/dynamic-resource-allocation v0.0.0 => k8s.io/dynamic-resource-allocation v0.35.1
+	k8s.io/endpointslice v0.0.0 => k8s.io/endpointslice v0.35.1
+	k8s.io/externaljwt v0.0.0 => k8s.io/externaljwt v0.35.1
+	k8s.io/kube-aggregator v0.0.0 => k8s.io/kube-aggregator v0.35.1
+	k8s.io/kube-controller-manager v0.0.0 => k8s.io/kube-controller-manager v0.35.1
+	k8s.io/kube-proxy v0.0.0 => k8s.io/kube-proxy v0.35.1
+	k8s.io/kube-scheduler v0.0.0 => k8s.io/kube-scheduler v0.35.1
+	k8s.io/kubectl v0.0.0 => k8s.io/kubectl v0.35.1
+	k8s.io/kubelet v0.0.0 => k8s.io/kubelet v0.35.1
+	k8s.io/mount-utils v0.0.0 => k8s.io/mount-utils v0.35.1
+	k8s.io/pod-security-admission v0.0.0 => k8s.io/pod-security-admission v0.35.1
+	k8s.io/sample-apiserver v0.0.0 => k8s.io/sample-apiserver v0.35.1
 )
