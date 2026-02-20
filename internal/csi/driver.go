@@ -10,7 +10,7 @@ import (
 	"github.com/container-storage-interface/spec/lib/go/csi"
 	"go.opentelemetry.io/otel/trace"
 	storagev1 "k8s.io/api/storage/v1"
-	"k8s.io/client-go/tools/record"
+	kevents "k8s.io/client-go/tools/events"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"local-csi-driver/internal/csi/controller"
@@ -43,12 +43,12 @@ type Driver struct {
 
 	client   client.Client
 	volume   core.Interface
-	recorder record.EventRecorder
+	recorder kevents.EventRecorder
 	tp       trace.TracerProvider
 }
 
 // NewCombined creates a new CSI driver with controller and node capabilities.
-func NewCombined(nodeID string, volumeClient core.Interface, client client.Client, removePvNodeAffinity bool, recorder record.EventRecorder, tp trace.TracerProvider) *Driver {
+func NewCombined(nodeID string, volumeClient core.Interface, client client.Client, removePvNodeAffinity bool, recorder kevents.EventRecorder, tp trace.TracerProvider) *Driver {
 	d := &Driver{
 		is:       identity.New(volumeClient.GetDriverName(), Version),
 		cs:       controller.New(volumeClient, volumeClient.GetControllerDriverCapabilities(), volumeClient.GetNodeAccessModes(), mounter.New(tp), client, nodeID, SelectedNodeAnnotation, SelectedInitialNodeParam, removePvNodeAffinity, recorder, tp),
@@ -63,7 +63,7 @@ func NewCombined(nodeID string, volumeClient core.Interface, client client.Clien
 }
 
 // NewController creates a new CSI driver for the controller service.
-func NewController(volumeClient core.Interface, client client.Client, removePvNodeAffinity bool, recorder record.EventRecorder, tp trace.TracerProvider) *Driver {
+func NewController(volumeClient core.Interface, client client.Client, removePvNodeAffinity bool, recorder kevents.EventRecorder, tp trace.TracerProvider) *Driver {
 	return &Driver{
 		is:       identity.New(volumeClient.GetDriverName(), Version),
 		cs:       controller.New(volumeClient, volumeClient.GetControllerDriverCapabilities(), volumeClient.GetNodeAccessModes(), mounter.New(tp), client, "", SelectedNodeAnnotation, SelectedInitialNodeParam, removePvNodeAffinity, events.NewNoopRecorder(), tp),
@@ -76,7 +76,7 @@ func NewController(volumeClient core.Interface, client client.Client, removePvNo
 }
 
 // NewNode creates a new CSI driver for the node service.
-func NewNode(nodeID string, volumeClient core.Interface, client client.Client, removePvNodeAffinity bool, recorder record.EventRecorder, tp trace.TracerProvider) *Driver {
+func NewNode(nodeID string, volumeClient core.Interface, client client.Client, removePvNodeAffinity bool, recorder kevents.EventRecorder, tp trace.TracerProvider) *Driver {
 	return &Driver{
 		is:       identity.New(volumeClient.GetDriverName(), Version),
 		cs:       nil,

@@ -18,7 +18,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/rest"
-	"k8s.io/client-go/tools/record"
+	kevents "k8s.io/client-go/tools/events"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	ctrlutil "sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
@@ -33,7 +33,7 @@ var (
 	cfg       *rest.Config
 	testEnv   *envtest.Environment
 	k8sClient client.Client
-	recorder  *record.FakeRecorder
+	recorder  *kevents.FakeRecorder
 	ctx       context.Context
 	cancel    context.CancelFunc
 )
@@ -65,7 +65,7 @@ var _ = BeforeSuite(func() {
 	Expect(err).NotTo(HaveOccurred())
 	Expect(k8sClient).NotTo(BeNil())
 
-	recorder = record.NewFakeRecorder(100)
+	recorder = kevents.NewFakeRecorder(100)
 
 	// Start the controller
 	k8sManager, err := ctrl.NewManager(cfg, ctrl.Options{

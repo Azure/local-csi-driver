@@ -18,7 +18,7 @@ import (
 	"google.golang.org/grpc/status"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
-	"k8s.io/client-go/tools/record"
+	kevents "k8s.io/client-go/tools/events"
 	"k8s.io/kubernetes/pkg/volume"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
@@ -44,7 +44,7 @@ type Server struct {
 	selectedNodeAnnotation   string
 	selectedInitialNodeParam string
 	removePvNodeAffinity     bool
-	recorder                 record.EventRecorder
+	recorder                 kevents.EventRecorder
 	tracer                   trace.Tracer
 
 	// Embed for forward compatibility.
@@ -54,7 +54,7 @@ type Server struct {
 // Server must implement the csi.NodeServer interface.
 var _ csi.NodeServer = &Server{}
 
-func New(volume core.NodeInterface, nodeID, selectedNodeAnnotation, selectedInitialNodeParam string, driver string, caps []*csi.NodeServiceCapability, mounter mounter.Interface, k8sClient client.Client, removeNodeAffinity bool, recorder record.EventRecorder, tp trace.TracerProvider) *Server {
+func New(volume core.NodeInterface, nodeID, selectedNodeAnnotation, selectedInitialNodeParam string, driver string, caps []*csi.NodeServiceCapability, mounter mounter.Interface, k8sClient client.Client, removeNodeAffinity bool, recorder kevents.EventRecorder, tp trace.TracerProvider) *Server {
 	return &Server{
 		nodeID:                   nodeID,
 		driver:                   driver,

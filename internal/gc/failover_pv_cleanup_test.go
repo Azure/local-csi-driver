@@ -11,7 +11,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
-	"k8s.io/client-go/tools/record"
+	kevents "k8s.io/client-go/tools/events"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
@@ -44,7 +44,7 @@ func TestPVFailoverReconciler(t *testing.T) {
 	}
 
 	client := fake.NewClientBuilder().WithScheme(scheme).WithObjects(testPV).Build()
-	recorder := record.NewFakeRecorder(10)
+	recorder := kevents.NewFakeRecorder(10)
 	mockLVM := NewMockLVMVolumeManager()
 	mockLVM.AddVolume("containerstorage#test-volume") // Volume exists on this node
 
