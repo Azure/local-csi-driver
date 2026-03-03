@@ -61,7 +61,7 @@ jobs:
           load: true
 
       - name: Run Trivy vulnerability scanner on driver
-        uses: aquasecurity/trivy-action@e368e328979b113139d6f9068e03accaed98a518 # 0.34.1
+        uses: aquasecurity/trivy-action@97e0b3872f55f89b95b2f65b3dbab56962816478 # 0.34.2
         env:
           TRIVY_DB_REPOSITORY: "public.ecr.aws/aquasecurity/trivy-db:2"
         with:
@@ -73,7 +73,7 @@ jobs:
           severity: 'CRITICAL,HIGH,MEDIUM,LOW,UNKNOWN'
 
       - name: Run Trivy vulnerability scanner on manager
-        uses: aquasecurity/trivy-action@e368e328979b113139d6f9068e03accaed98a518 # 0.34.1
+        uses: aquasecurity/trivy-action@97e0b3872f55f89b95b2f65b3dbab56962816478 # 0.34.2
         env:
           TRIVY_DB_REPOSITORY: "public.ecr.aws/aquasecurity/trivy-db:2"
         with:
