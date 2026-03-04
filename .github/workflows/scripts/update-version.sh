@@ -70,7 +70,7 @@ if git diff --staged --quiet; then
 fi
 
 git commit -m "docs: update version to ${VERSION} in README.md"
-# git push origin "${BRANCH}"
+git push origin "${BRANCH}"
 
 # # Create pull request
 gh pr create \
