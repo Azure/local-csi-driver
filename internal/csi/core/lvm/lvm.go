@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/container-storage-interface/spec/lib/go/csi"
-	"github.com/gotidy/ptr"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
@@ -102,10 +101,10 @@ var csiDriver = &storagev1.CSIDriver{
 		Name: DriverName,
 	},
 	Spec: storagev1.CSIDriverSpec{
-		AttachRequired:  ptr.Of(false),
-		PodInfoOnMount:  ptr.Of(true),
-		StorageCapacity: ptr.Of(true),
-		FSGroupPolicy:   ptr.Of(storagev1.FileFSGroupPolicy),
+		AttachRequired:  new(false),
+		PodInfoOnMount:  new(true),
+		StorageCapacity: new(true),
+		FSGroupPolicy:   new(storagev1.FileFSGroupPolicy),
 		VolumeLifecycleModes: []storagev1.VolumeLifecycleMode{
 			storagev1.VolumeLifecyclePersistent,
 			storagev1.VolumeLifecycleEphemeral,
@@ -526,7 +525,7 @@ func (l *LVM) EnsureVolume(ctx context.Context, volumeId string, capacity int64,
 	// linear volume. We can't create a raid0 volume with only one PV.
 	if vg.PVCount > 1 {
 		createOps.Type = raid0LvType
-		createOps.Stripes = ptr.Of(int(vg.PVCount))
+		createOps.Stripes = new(int(vg.PVCount))
 	}
 
 	allocatedSize, err := l.lvm.CreateLogicalVolume(ctx, createOps)

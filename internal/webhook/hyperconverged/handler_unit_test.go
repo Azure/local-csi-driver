@@ -5,6 +5,7 @@ package hyperconverged
 
 import (
 	"math/rand"
+	"slices"
 	"testing"
 
 	corev1 "k8s.io/api/core/v1"
@@ -199,13 +200,7 @@ func findRequiredAffinityNodes(requiredTerms []corev1.NodeSelectorTerm, expected
 
 func validateNodeList(expectedNodes, actualNodes []string) bool {
 	for _, expectedNode := range expectedNodes {
-		found := false
-		for _, actualNode := range actualNodes {
-			if actualNode == expectedNode {
-				found = true
-				break
-			}
-		}
+		found := slices.Contains(actualNodes, expectedNode)
 		if !found {
 			return false
 		}

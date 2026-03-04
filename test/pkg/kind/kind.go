@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"slices"
 	"strings"
 
 	"local-csi-driver/test/pkg/docker"
@@ -32,12 +33,7 @@ func IsClusterCreated() bool {
 		return false
 	}
 	clusters := utils.GetNonEmptyLines(output)
-	for _, cluster := range clusters {
-		if cluster == "kind" {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(clusters, "kind")
 }
 
 // SetKubeContext sets the kube context to the kind cluster.

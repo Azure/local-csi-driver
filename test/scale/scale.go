@@ -12,7 +12,6 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/gotidy/ptr"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
@@ -117,7 +116,7 @@ func statefulSetEphemeralDiskScaleTest(storageClass string, scale int32) {
 
 		// Modify the StatefulSet as needed
 		ss.Namespace = "scale-" + utils.RandomTag()
-		ss.Spec.Replicas = ptr.Of(scale)
+		ss.Spec.Replicas = new(scale)
 		for i := range ss.Spec.Template.Spec.Volumes {
 			if ss.Spec.Template.Spec.Volumes[i].Ephemeral != nil {
 				ss.Spec.Template.Spec.Volumes[i].Ephemeral.VolumeClaimTemplate.Spec.StorageClassName = &storageClass

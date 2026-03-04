@@ -48,7 +48,7 @@ func (f *Fake) RemovePhysicalVolume(ctx context.Context, opts RemovePVOptions) e
 
 // GetPhysicalVolume returns the list of PVs.
 func (f *Fake) ListPhysicalVolumes(ctx context.Context, opts *ListPVOptions) ([]PhysicalVolume, error) {
-	pvs := []PhysicalVolume{}
+	pvs := make([]PhysicalVolume, 0, len(f.PVs))
 	for _, pv := range f.PVs {
 		pvs = append(pvs, pv)
 	}
@@ -75,7 +75,7 @@ func (f *Fake) CreateVolumeGroup(ctx context.Context, opts CreateVGOptions) erro
 
 // ListVolumeGroups list the specified VGs.
 func (f *Fake) ListVolumeGroups(ctx context.Context, opts *ListVGOptions) ([]VolumeGroup, error) {
-	vgs := []VolumeGroup{}
+	vgs := make([]VolumeGroup, 0, len(f.VGs))
 	for _, vg := range f.VGs {
 		vgs = append(vgs, vg)
 	}
@@ -130,7 +130,7 @@ func (f *Fake) RemoveLogicalVolume(ctx context.Context, opts RemoveLVOptions) er
 
 // ListLogicalVolumes lists the specified LVs.
 func (f *Fake) ListLogicalVolumes(ctx context.Context, opts *ListLVOptions) ([]LogicalVolume, error) {
-	lvs := []LogicalVolume{}
+	lvs := make([]LogicalVolume, 0, len(f.LVs))
 	for _, lv := range f.LVs {
 		lvs = append(lvs, lv)
 	}
