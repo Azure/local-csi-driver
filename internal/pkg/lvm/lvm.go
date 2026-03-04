@@ -217,8 +217,10 @@ func (c *Client) CreatePhysicalVolume(ctx context.Context, opts CreatePVOptions)
 
 	// We won't provide --yes to the pvcreate command as we want to confirm the creation of the PV.
 	// This can be dangerous in production environments, as it overwrites existing filesystem.
-	cmdArgs := []string{"pvcreate"}
-	cmdArgs = append(cmdArgs, args.Marshal(opts)...)
+	marshaledOpts := args.Marshal(opts)
+	cmdArgs := make([]string, 0, 1+len(marshaledOpts))
+	cmdArgs = append(cmdArgs, "pvcreate")
+	cmdArgs = append(cmdArgs, marshaledOpts...)
 
 	_, err = c.run(ctx, cmdArgs...)
 	if err != nil {
@@ -234,8 +236,10 @@ func (c *Client) UpdatePhysicalVolume(ctx context.Context, opts UpdatePVOptions)
 	))
 	defer span.End()
 
-	cmdArgs := []string{"pvchange", "--yes"}
-	cmdArgs = append(cmdArgs, args.Marshal(opts)...)
+	marshaledOpts := args.Marshal(opts)
+	cmdArgs := make([]string, 0, 2+len(marshaledOpts))
+	cmdArgs = append(cmdArgs, "pvchange", "--yes")
+	cmdArgs = append(cmdArgs, marshaledOpts...)
 
 	_, err := c.run(ctx, cmdArgs...)
 	if err != nil {
@@ -251,8 +255,10 @@ func (c *Client) RemovePhysicalVolume(ctx context.Context, opts RemovePVOptions)
 	))
 	defer span.End()
 
-	cmdArgs := []string{"pvremove", "--yes"}
-	cmdArgs = append(cmdArgs, args.Marshal(opts)...)
+	marshaledOpts := args.Marshal(opts)
+	cmdArgs := make([]string, 0, 2+len(marshaledOpts))
+	cmdArgs = append(cmdArgs, "pvremove", "--yes")
+	cmdArgs = append(cmdArgs, marshaledOpts...)
 
 	_, err := c.run(ctx, cmdArgs...)
 	if err != nil {
@@ -268,8 +274,10 @@ func (c *Client) CheckPhysicalVolume(ctx context.Context, opts CheckPVOptions) e
 	))
 	defer span.End()
 
-	cmdArgs := []string{"pvck", "--yes"}
-	cmdArgs = append(cmdArgs, args.Marshal(opts)...)
+	marshaledOpts := args.Marshal(opts)
+	cmdArgs := make([]string, 0, 2+len(marshaledOpts))
+	cmdArgs = append(cmdArgs, "pvck", "--yes")
+	cmdArgs = append(cmdArgs, marshaledOpts...)
 
 	_, err := c.run(ctx, cmdArgs...)
 	return err
@@ -282,8 +290,10 @@ func (c *Client) MovePhysicalExtents(ctx context.Context, opts MovePEOptions) er
 	))
 	defer span.End()
 
-	cmdArgs := []string{"pvmove", "--yes"}
-	cmdArgs = append(cmdArgs, args.Marshal(opts)...)
+	marshaledOpts := args.Marshal(opts)
+	cmdArgs := make([]string, 0, 2+len(marshaledOpts))
+	cmdArgs = append(cmdArgs, "pvmove", "--yes")
+	cmdArgs = append(cmdArgs, marshaledOpts...)
 
 	_, err := c.run(ctx, cmdArgs...)
 	return err
@@ -296,8 +306,10 @@ func (c *Client) ResizePhysicalVolume(ctx context.Context, opts ResizePVOptions)
 	))
 	defer span.End()
 
-	cmdArgs := []string{"pvresize", "--yes"}
-	cmdArgs = append(cmdArgs, args.Marshal(opts)...)
+	marshaledOpts := args.Marshal(opts)
+	cmdArgs := make([]string, 0, 2+len(marshaledOpts))
+	cmdArgs = append(cmdArgs, "pvresize", "--yes")
+	cmdArgs = append(cmdArgs, marshaledOpts...)
 
 	_, err := c.run(ctx, cmdArgs...)
 	return err
@@ -375,8 +387,10 @@ func (c *Client) CreateVolumeGroup(ctx context.Context, opts CreateVGOptions) er
 	))
 	defer span.End()
 
-	cmdArgs := []string{"vgcreate", "--yes"}
-	cmdArgs = append(cmdArgs, args.Marshal(opts)...)
+	marshaledOpts := args.Marshal(opts)
+	cmdArgs := make([]string, 0, 2+len(marshaledOpts))
+	cmdArgs = append(cmdArgs, "vgcreate", "--yes")
+	cmdArgs = append(cmdArgs, marshaledOpts...)
 
 	_, err := c.run(ctx, cmdArgs...)
 	if err != nil {
@@ -392,8 +406,10 @@ func (c *Client) UpdateVolumeGroup(ctx context.Context, opts UpdateVGOptions) er
 	))
 	defer span.End()
 
-	cmdArgs := []string{"vgchange", "--yes"}
-	cmdArgs = append(cmdArgs, args.Marshal(opts)...)
+	marshaledOpts := args.Marshal(opts)
+	cmdArgs := make([]string, 0, 2+len(marshaledOpts))
+	cmdArgs = append(cmdArgs, "vgchange", "--yes")
+	cmdArgs = append(cmdArgs, marshaledOpts...)
 
 	_, err := c.run(ctx, cmdArgs...)
 	return err
@@ -406,8 +422,10 @@ func (c *Client) RemoveVolumeGroup(ctx context.Context, opts RemoveVGOptions) er
 	))
 	defer span.End()
 
-	cmdArgs := []string{"vgremove", "--yes"}
-	cmdArgs = append(cmdArgs, args.Marshal(opts)...)
+	marshaledOpts := args.Marshal(opts)
+	cmdArgs := make([]string, 0, 2+len(marshaledOpts))
+	cmdArgs = append(cmdArgs, "vgremove", "--yes")
+	cmdArgs = append(cmdArgs, marshaledOpts...)
 
 	_, err := c.run(ctx, cmdArgs...)
 	if err != nil {
@@ -423,8 +441,10 @@ func (c *Client) CheckVolumeGroup(ctx context.Context, opts CheckVGOptions) erro
 	))
 	defer span.End()
 
-	cmdArgs := []string{"vgck", "--yes"}
-	cmdArgs = append(cmdArgs, args.Marshal(opts)...)
+	marshaledOpts := args.Marshal(opts)
+	cmdArgs := make([]string, 0, 2+len(marshaledOpts))
+	cmdArgs = append(cmdArgs, "vgck", "--yes")
+	cmdArgs = append(cmdArgs, marshaledOpts...)
 
 	_, err := c.run(ctx, cmdArgs...)
 	return err
@@ -437,8 +457,10 @@ func (c *Client) ExportVolumeGroup(ctx context.Context, opts ExportVGOptions) er
 	))
 	defer span.End()
 
-	cmdArgs := []string{"vgexport", "--yes"}
-	cmdArgs = append(cmdArgs, args.Marshal(opts)...)
+	marshaledOpts := args.Marshal(opts)
+	cmdArgs := make([]string, 0, 2+len(marshaledOpts))
+	cmdArgs = append(cmdArgs, "vgexport", "--yes")
+	cmdArgs = append(cmdArgs, marshaledOpts...)
 
 	_, err := c.run(ctx, cmdArgs...)
 	return err
@@ -451,8 +473,10 @@ func (c *Client) ImportVolumeGroup(ctx context.Context, opts ImportVGOptions) er
 	))
 	defer span.End()
 
-	cmdArgs := []string{"vgimport", "--yes"}
-	cmdArgs = append(cmdArgs, args.Marshal(opts)...)
+	marshaledOpts := args.Marshal(opts)
+	cmdArgs := make([]string, 0, 2+len(marshaledOpts))
+	cmdArgs = append(cmdArgs, "vgimport", "--yes")
+	cmdArgs = append(cmdArgs, marshaledOpts...)
 
 	_, err := c.run(ctx, cmdArgs...)
 	return err
@@ -465,8 +489,10 @@ func (c *Client) ImportVolumeGroupFromCloned(ctx context.Context, opts ImportVGF
 	))
 	defer span.End()
 
-	cmdArgs := []string{"vgimportclone", "--yes"}
-	cmdArgs = append(cmdArgs, args.Marshal(opts)...)
+	marshaledOpts := args.Marshal(opts)
+	cmdArgs := make([]string, 0, 2+len(marshaledOpts))
+	cmdArgs = append(cmdArgs, "vgimportclone", "--yes")
+	cmdArgs = append(cmdArgs, marshaledOpts...)
 
 	_, err := c.run(ctx, cmdArgs...)
 	return err
@@ -480,8 +506,10 @@ func (c *Client) MergeVolumeGroups(ctx context.Context, opts MergeVGOptions) err
 	))
 	defer span.End()
 
-	cmdArgs := []string{"vgmerge", "--yes"}
-	cmdArgs = append(cmdArgs, args.Marshal(opts)...)
+	marshaledOpts := args.Marshal(opts)
+	cmdArgs := make([]string, 0, 2+len(marshaledOpts))
+	cmdArgs = append(cmdArgs, "vgmerge", "--yes")
+	cmdArgs = append(cmdArgs, marshaledOpts...)
 
 	_, err := c.run(ctx, cmdArgs...)
 	return err
@@ -494,8 +522,10 @@ func (c *Client) ExtendVolumeGroup(ctx context.Context, opts ExtendVGOptions) er
 	))
 	defer span.End()
 
-	cmdArgs := []string{"vgextend", "--yes"}
-	cmdArgs = append(cmdArgs, args.Marshal(opts)...)
+	marshaledOpts := args.Marshal(opts)
+	cmdArgs := make([]string, 0, 2+len(marshaledOpts))
+	cmdArgs = append(cmdArgs, "vgextend", "--yes")
+	cmdArgs = append(cmdArgs, marshaledOpts...)
 
 	_, err := c.run(ctx, cmdArgs...)
 	return err
@@ -508,8 +538,10 @@ func (c *Client) ReduceVolumeGroup(ctx context.Context, opts ReduceVGOptions) er
 	))
 	defer span.End()
 
-	cmdArgs := []string{"vgreduce", "--yes"}
-	cmdArgs = append(cmdArgs, args.Marshal(opts)...)
+	marshaledOpts := args.Marshal(opts)
+	cmdArgs := make([]string, 0, 2+len(marshaledOpts))
+	cmdArgs = append(cmdArgs, "vgreduce", "--yes")
+	cmdArgs = append(cmdArgs, marshaledOpts...)
 
 	_, err := c.run(ctx, cmdArgs...)
 	return err
@@ -523,8 +555,10 @@ func (c *Client) RenameVolumeGroup(ctx context.Context, opts RenameVGOptions) er
 	))
 	defer span.End()
 
-	cmdArgs := []string{"vgrename", "--yes"}
-	cmdArgs = append(cmdArgs, args.Marshal(opts)...)
+	marshaledOpts := args.Marshal(opts)
+	cmdArgs := make([]string, 0, 2+len(marshaledOpts))
+	cmdArgs = append(cmdArgs, "vgrename", "--yes")
+	cmdArgs = append(cmdArgs, marshaledOpts...)
 
 	_, err := c.run(ctx, cmdArgs...)
 	return err
@@ -538,8 +572,10 @@ func (c *Client) MovePhysicalVolumes(ctx context.Context, opts MovePVOptions) er
 	))
 	defer span.End()
 
-	cmdArgs := []string{"vgsplit", "--yes"}
-	cmdArgs = append(cmdArgs, args.Marshal(opts)...)
+	marshaledOpts := args.Marshal(opts)
+	cmdArgs := make([]string, 0, 2+len(marshaledOpts))
+	cmdArgs = append(cmdArgs, "vgsplit", "--yes")
+	cmdArgs = append(cmdArgs, marshaledOpts...)
 
 	_, err := c.run(ctx, cmdArgs...)
 	return err
@@ -552,8 +588,10 @@ func (c *Client) MakeVolumeGroupDeviceNodes(ctx context.Context, opts MakeVGDevi
 	))
 	defer span.End()
 
-	cmdArgs := []string{"vgmknodes", "--yes"}
-	cmdArgs = append(cmdArgs, args.Marshal(opts)...)
+	marshaledOpts := args.Marshal(opts)
+	cmdArgs := make([]string, 0, 2+len(marshaledOpts))
+	cmdArgs = append(cmdArgs, "vgmknodes", "--yes")
+	cmdArgs = append(cmdArgs, marshaledOpts...)
 
 	_, err := c.run(ctx, cmdArgs...)
 	return err
@@ -636,8 +674,10 @@ func (c *Client) CreateLogicalVolume(ctx context.Context, opts CreateLVOptions) 
 	))
 	defer span.End()
 
-	cmdArgs := []string{"lvcreate", "--yes"}
-	cmdArgs = append(cmdArgs, args.Marshal(opts)...)
+	marshaledOpts := args.Marshal(opts)
+	cmdArgs := make([]string, 0, 2+len(marshaledOpts))
+	cmdArgs = append(cmdArgs, "lvcreate", "--yes")
+	cmdArgs = append(cmdArgs, marshaledOpts...)
 
 	_, err := c.run(ctx, cmdArgs...)
 	if err != nil {
@@ -670,8 +710,10 @@ func (c *Client) UpdateLogicalVolume(ctx context.Context, opts UpdateLVOptions) 
 	))
 	defer span.End()
 
-	cmdArgs := []string{"lvchange", "--yes"}
-	cmdArgs = append(cmdArgs, args.Marshal(opts)...)
+	marshaledOpts := args.Marshal(opts)
+	cmdArgs := make([]string, 0, 2+len(marshaledOpts))
+	cmdArgs = append(cmdArgs, "lvchange", "--yes")
+	cmdArgs = append(cmdArgs, marshaledOpts...)
 
 	_, err := c.run(ctx, cmdArgs...)
 	return err
@@ -692,8 +734,10 @@ func (c *Client) RemoveLogicalVolume(ctx context.Context, opts RemoveLVOptions) 
 		return ErrInvalidInput
 	}
 
-	cmdArgs := []string{"lvremove", "--yes"}
-	cmdArgs = append(cmdArgs, args.Marshal(opts)...)
+	marshaledOpts := args.Marshal(opts)
+	cmdArgs := make([]string, 0, 2+len(marshaledOpts))
+	cmdArgs = append(cmdArgs, "lvremove", "--yes")
+	cmdArgs = append(cmdArgs, marshaledOpts...)
 
 	_, err := c.run(ctx, cmdArgs...)
 	if err != nil {
@@ -709,8 +753,10 @@ func (c *Client) ConvertLogicalVolumeLayout(ctx context.Context, opts ConvertLVL
 	))
 	defer span.End()
 
-	cmdArgs := []string{"lvconvert", "--yes"}
-	cmdArgs = append(cmdArgs, args.Marshal(opts)...)
+	marshaledOpts := args.Marshal(opts)
+	cmdArgs := make([]string, 0, 2+len(marshaledOpts))
+	cmdArgs = append(cmdArgs, "lvconvert", "--yes")
+	cmdArgs = append(cmdArgs, marshaledOpts...)
 
 	_, err := c.run(ctx, cmdArgs...)
 	return err
@@ -736,8 +782,10 @@ func (c *Client) ExtendLogicalVolume(ctx context.Context, opts ExtendLVOptions) 
 		opts.ResizeFS = false
 	}
 
-	cmdArgs := []string{"lvextend", "--yes"}
-	cmdArgs = append(cmdArgs, args.Marshal(opts)...)
+	marshaledOpts := args.Marshal(opts)
+	cmdArgs := make([]string, 0, 2+len(marshaledOpts))
+	cmdArgs = append(cmdArgs, "lvextend", "--yes")
+	cmdArgs = append(cmdArgs, marshaledOpts...)
 
 	_, err = c.run(ctx, cmdArgs...)
 	if err != nil {
@@ -754,8 +802,10 @@ func (c *Client) ReduceLogicalVolume(ctx context.Context, opts ReduceLVOptions) 
 	))
 	defer span.End()
 
-	cmdArgs := []string{"lvreduce", "--yes"}
-	cmdArgs = append(cmdArgs, args.Marshal(opts)...)
+	marshaledOpts := args.Marshal(opts)
+	cmdArgs := make([]string, 0, 2+len(marshaledOpts))
+	cmdArgs = append(cmdArgs, "lvreduce", "--yes")
+	cmdArgs = append(cmdArgs, marshaledOpts...)
 
 	_, err := c.run(ctx, cmdArgs...)
 	return err
@@ -769,8 +819,10 @@ func (c *Client) RenameLogicalVolume(ctx context.Context, opts RenameLVOptions) 
 	))
 	defer span.End()
 
-	cmdArgs := []string{"lvrename", "--yes"}
-	cmdArgs = append(cmdArgs, args.Marshal(opts)...)
+	marshaledOpts := args.Marshal(opts)
+	cmdArgs := make([]string, 0, 2+len(marshaledOpts))
+	cmdArgs = append(cmdArgs, "lvrename", "--yes")
+	cmdArgs = append(cmdArgs, marshaledOpts...)
 
 	_, err := c.run(ctx, cmdArgs...)
 	return err

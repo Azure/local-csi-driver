@@ -8,7 +8,6 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/gotidy/ptr"
 	"go.opentelemetry.io/otel/trace"
 	"go.uber.org/mock/gomock"
 
@@ -582,7 +581,7 @@ func TestEnsureVolume(t *testing.T) {
 					VGName:  "vg",
 					Size:    "1073741824B",
 					Type:    "raid0",
-					Stripes: ptr.Of(4),
+					Stripes: new(4),
 				}
 				m.EXPECT().GetLogicalVolume(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, nil)
 				m.EXPECT().GetVolumeGroup(gomock.Any(), gomock.Any()).Return(stripedVg, nil)

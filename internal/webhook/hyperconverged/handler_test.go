@@ -556,7 +556,7 @@ var _ = Describe("When Hyperconverged controller is running", Serial, func() {
 
 // Generate Node Affinity.
 func GenNodeAffinity(nodeNames map[string]int) *corev1.Affinity {
-	schedulingTerms := []corev1.PreferredSchedulingTerm{}
+	schedulingTerms := make([]corev1.PreferredSchedulingTerm, 0, len(nodeNames))
 	for nodeName, weight := range nodeNames {
 		schedulingTerm := corev1.PreferredSchedulingTerm{
 			Weight: int32(weight),

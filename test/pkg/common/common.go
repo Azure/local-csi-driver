@@ -179,7 +179,8 @@ func Setup(ctx context.Context, namespace string, helmArgs ...string) {
 
 	if useLocalHelmCharts {
 		By("installing csi driver with local helm charts")
-		args := []string{"deploy"}
+		args := make([]string, 0, 1+len(helmArgs))
+		args = append(args, "deploy")
 		args = append(args, helmArgs...)
 		cmd = exec.CommandContext(ctx, "make", args...)
 		_, err = utils.Run(cmd)
@@ -187,7 +188,8 @@ func Setup(ctx context.Context, namespace string, helmArgs ...string) {
 	} else {
 		By("installing csi driver with helm")
 		Eventually(func(g Gomega, ctx context.Context) {
-			args := []string{"helm-install"}
+			args := make([]string, 0, 1+len(helmArgs))
+			args = append(args, "helm-install")
 			args = append(args, helmArgs...)
 			cmd = exec.CommandContext(ctx, "make", args...)
 			_, err = utils.Run(cmd)

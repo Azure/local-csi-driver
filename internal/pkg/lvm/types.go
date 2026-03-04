@@ -90,8 +90,8 @@ func (i *Int64String) UnmarshalJSON(data []byte) error {
 type YesNo bool
 
 var (
-	Yes = PtrTo(YesNo(true))
-	No  = PtrTo(YesNo(false))
+	Yes = new(YesNo(true))
+	No  = new(YesNo(false))
 )
 
 func (yn *YesNo) MarshalArg() string {
@@ -99,10 +99,6 @@ func (yn *YesNo) MarshalArg() string {
 		return "y"
 	}
 	return "n"
-}
-
-func PtrTo[T any](v T) *T {
-	return &v
 }
 
 // PhysicalVolume represents an LVM2 Physical Volume (PV).
