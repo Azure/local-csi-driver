@@ -26,7 +26,7 @@ require (
 	go.opentelemetry.io/otel/trace v1.41.0
 	go.uber.org/mock v0.6.0
 	golang.org/x/mod v0.33.0
-	google.golang.org/grpc v1.79.1
+	google.golang.org/grpc v1.79.2
 	google.golang.org/protobuf v1.36.11
 	k8s.io/api v0.35.2
 	k8s.io/apiextensions-apiserver v0.35.2
@@ -39,7 +39,7 @@ require (
 	k8s.io/mount-utils v0.35.2
 	k8s.io/utils v0.0.0-20251002143259-bc988d571ff4
 	pault.ag/go/loopback v0.1.4
-	sigs.k8s.io/controller-runtime v0.23.2
+	sigs.k8s.io/controller-runtime v0.23.3
 	sigs.k8s.io/yaml v1.6.0
 )
 
