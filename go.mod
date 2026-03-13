@@ -11,7 +11,7 @@ require (
 	github.com/kubernetes-csi/csi-test/v5 v5.4.0
 	github.com/onsi/ginkgo/v2 v2.28.1
 	github.com/onsi/gomega v1.39.1
-	github.com/open-policy-agent/cert-controller v0.15.0
+	github.com/open-policy-agent/cert-controller v0.16.0
 	github.com/prometheus/client_golang v1.23.2
 	go.opentelemetry.io/contrib/bridges/prometheus v0.67.0
 	go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc v0.67.0
