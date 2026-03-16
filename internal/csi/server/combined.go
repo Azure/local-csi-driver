@@ -130,7 +130,7 @@ func getLogLevel(method string) int {
 }
 
 // LoggingInterceptor for unary gRPC calls.
-func LoggingInterceptor(ctx context.Context, req interface{}, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (interface{}, error) {
+func LoggingInterceptor(ctx context.Context, req any, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (any, error) {
 	log := log.FromContext(ctx)
 	level := getLogLevel(info.FullMethod)
 	log.V(level).Info("gRPC request", "method", info.FullMethod, "request", protosanitizer.StripSecrets(req))

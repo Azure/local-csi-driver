@@ -5,6 +5,7 @@ package gc
 
 import (
 	"context"
+	"slices"
 	"testing"
 	"time"
 
@@ -276,13 +277,7 @@ func TestLVMOrphanScanner_Reconcile(t *testing.T) {
 	}
 
 	for _, expected := range expectedDeleted {
-		found := false
-		for _, deleted := range testLVM.DeletedLVs {
-			if deleted == expected {
-				found = true
-				break
-			}
-		}
+		found := slices.Contains(testLVM.DeletedLVs, expected)
 		if !found {
 			t.Errorf("Expected volume '%s' to be deleted, but it wasn't", expected)
 		}

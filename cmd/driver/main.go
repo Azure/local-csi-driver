@@ -249,6 +249,13 @@ func main() {
 		recorder = mgr.GetEventRecorder("local-csi-driver")
 	}
 
+	// Run startup diagnostic to check disk availability and emit a Warning
+	// event on the pod if no disks are available for volume group creation.
+	startupDiag := lvm.NewStartupDiagnostic(deviceProbe, blockDevUtils, probe.EphemeralDiskFilter, recorder, mgr.GetClient(), podName, namespace)
+	if err := mgr.Add(startupDiag); err != nil {
+		logAndExit(err, "unable to add startup diagnostic to manager")
+	}
+
 	// Setup PV garbage collection controller to clean up orphaned LVM volumes
 	// when PV node annotations don't match the current node
 	if enableLVGarbageCollection {

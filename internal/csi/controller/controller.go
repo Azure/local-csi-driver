@@ -349,7 +349,7 @@ func (cs *Server) ListVolumes(ctx context.Context, req *csi.ListVolumesRequest) 
 }
 
 func (cs *Server) GetCapacity(ctx context.Context, req *csi.GetCapacityRequest) (*csi.GetCapacityResponse, error) {
-	paramSlice := []string{}
+	paramSlice := make([]string, 0, len(req.Parameters))
 	for k, v := range req.Parameters {
 		paramSlice = append(paramSlice, k+"="+v)
 	}

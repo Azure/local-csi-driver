@@ -51,8 +51,8 @@ func (m *MockLVMVolumeManager) ListLogicalVolumes(ctx context.Context, opts *lvm
 	// If there's a select option for VG filtering, handle it
 	if opts != nil && opts.Select != "" {
 		// Parse "vg_name=<name>" from select
-		if strings.HasPrefix(opts.Select, "vg_name=") {
-			vgName := strings.TrimPrefix(opts.Select, "vg_name=")
+		if after, ok := strings.CutPrefix(opts.Select, "vg_name="); ok {
+			vgName := after
 
 			// Get LVs for this VG
 			lvNames, exists := m.VGToLVs[vgName]
@@ -124,7 +124,7 @@ func (m *MockLVMVolumeManager) UnmountVolume(ctx context.Context, devicePath str
 // ListVolumeGroups implements the LVMVolumeManager interface.
 func (m *MockLVMVolumeManager) ListVolumeGroups(ctx context.Context, opts *lvmMgr.ListVGOptions) ([]lvmMgr.VolumeGroup, error) {
 	// For testing, return VGs from our tracked VGToLVs
-	vgs := make([]lvmMgr.VolumeGroup, 0)
+	vgs := make([]lvmMgr.VolumeGroup, 0, len(m.VGToLVs))
 	for vgName := range m.VGToLVs {
 		vgs = append(vgs, lvmMgr.VolumeGroup{Name: vgName})
 	}

@@ -95,6 +95,10 @@ mocks: mockgen ## Generate mocks for the interfaces.
 fmt: ## Run go fmt against code.
 	go fmt ./...
 
+.PHONY: fix
+fix: ## Run go fix against code.
+	go fix ./...
+
 .PHONY: vet
 vet: ## Run go vet against code.
 	go vet ./...
@@ -198,15 +202,15 @@ lint-fix: golangci-lint ## Run golangci-lint linter and perform fixes.
 build: build-driver build-manager ## Build driver and manager binaries.
 
 .PHONY: build-driver
-build-driver: fmt vet ## Build driver binary.
+build-driver: fmt fix vet ## Build driver binary.
 	go build -ldflags "$(LDFLAGS)" -o bin/local-csi-driver cmd/driver/main.go
 
 .PHONY: build-manager
-build-manager: fmt vet ## Build manager binary.
+build-manager: fmt fix vet ## Build manager binary.
 	go build -ldflags "$(LDFLAGS)" -o bin/local-csi-manager cmd/manager/main.go
 
 .PHONY: run
-run: fmt vet ## Run the local CSI driver from your host.
+run: fmt fix vet ## Run the local CSI driver from your host.
 	go run ./cmd/driver/main.go
 
 .PHONY: docker-build
