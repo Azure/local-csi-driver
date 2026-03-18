@@ -22,7 +22,7 @@ import (
 	"k8s.io/client-go/kubernetes"
 	kscheme "k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/rest"
-	"k8s.io/client-go/tools/record"
+	kevents "k8s.io/client-go/tools/events"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/envtest"
@@ -42,7 +42,7 @@ var (
 	testEnv                 *envtest.Environment
 	k8sClient               client.Client
 	k8sClientSet            kubernetes.Clientset
-	recorder                *record.FakeRecorder
+	recorder                *kevents.FakeRecorder
 	ctx                     context.Context
 	cancel                  context.CancelFunc
 	enforceEphemeralHandler *Handler
@@ -150,7 +150,7 @@ var _ = BeforeSuite(func() {
 	Expect(err).NotTo(HaveOccurred(), "failed to create manager")
 
 	// Controller setup using fake clients.
-	recorder = record.NewFakeRecorder(10)
+	recorder = kevents.NewFakeRecorder(10)
 
 	enforceEphemeralHandler, err = NewHandler(DriverName, mgr.GetClient(), mgr.GetScheme(), recorder)
 	Expect(err).NotTo(HaveOccurred(), "failed to create enforce ephemeral handler")
