@@ -10,7 +10,7 @@ import (
 	"strings"
 
 	corev1 "k8s.io/api/core/v1"
-	"k8s.io/client-go/tools/record"
+	kevents "k8s.io/client-go/tools/events"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
@@ -32,7 +32,7 @@ type StartupDiagnostic struct {
 	probe     probe.Interface
 	block     block.Interface
 	filter    *probe.Filter
-	recorder  record.EventRecorder
+	recorder  kevents.EventRecorder
 	k8sClient client.Client
 	podName   string
 	namespace string
@@ -43,7 +43,7 @@ func NewStartupDiagnostic(
 	p probe.Interface,
 	b block.Interface,
 	filter *probe.Filter,
-	recorder record.EventRecorder,
+	recorder kevents.EventRecorder,
 	k8sClient client.Client,
 	podName string,
 	namespace string,
@@ -84,13 +84,13 @@ func (s *StartupDiagnostic) Start(ctx context.Context) error {
 	if devices == nil || len(devices.Devices) == 0 {
 		log.Info("no available disks found", "totalNVMeDisks", summary.total, "nonLVM2FormattedDisks", summary.nonLVM2Formatted)
 		msg := buildNoDiskMessage(summary)
-		s.recorder.Event(&pod, corev1.EventTypeWarning, noDiskAvailable, msg)
+		s.recorder.Eventf(&pod, nil, corev1.EventTypeWarning, noDiskAvailable, noDiskAvailable, msg)
 		return nil
 	}
 
 	log.Info("startup disk discovery complete", "availableDisks", len(devices.Devices))
 	msg := buildDiskDiscoveryMessage(devices.Devices, summary)
-	s.recorder.Event(&pod, corev1.EventTypeNormal, diskDiscoveryComplete, msg)
+	s.recorder.Eventf(&pod, nil, corev1.EventTypeNormal, diskDiscoveryComplete, diskDiscoveryComplete, msg)
 	return nil
 }
 
