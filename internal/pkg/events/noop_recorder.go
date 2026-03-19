@@ -15,7 +15,7 @@ var _ kevents.EventRecorder = &NoopRecorder{}
 type NoopRecorder struct{}
 
 // Eventf logs an event for the given object.
-func (n *NoopRecorder) Eventf(regarding runtime.Object, related runtime.Object, eventtype, reason, action, note string, args ...interface{}) {
+func (n *NoopRecorder) Eventf(regarding runtime.Object, related runtime.Object, eventtype, reason, action, note string, args ...any) {
 }
 
 // WithLogger returns the same NoopRecorder as it doesn't use logging.
