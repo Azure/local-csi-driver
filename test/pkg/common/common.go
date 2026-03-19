@@ -426,3 +426,18 @@ func VerifyDriverUp(ctx context.Context, namespace string) {
 	}
 	Eventually(verifyNodeUp).WithTimeout(5 * time.Minute).WithContext(ctx).Should(Succeed())
 }
+
+// VerifyWebhookServing confirms the validating webhook is actually serving
+// by using --dry-run=server to submit a PVC that should be rejected. The VWC
+// has failurePolicy: Ignore, so if the webhook isn't reachable the API server
+// silently accepts the request. This check must run after the storageclass
+// is created (the webhook allows PVCs whose storageclass doesn't exist).
+func VerifyWebhookServing(ctx context.Context, pvcFixture string) {
+	By("verifying that the validating webhook is serving")
+	Eventually(func(g Gomega) {
+		cmd := exec.CommandContext(ctx, "kubectl", "apply", "--dry-run=server", "-f", pvcFixture)
+		output, err := utils.Run(cmd)
+		g.Expect(err).To(HaveOccurred(), "Webhook is not yet serving - dry-run was accepted instead of rejected")
+		g.Expect(output).To(ContainSubstring("denied the request"), "Error is not a webhook rejection - webhook may not be serving")
+	}).WithContext(ctx).WithTimeout(5*time.Minute).WithPolling(5*time.Second).Should(Succeed(), "Validating webhook did not start serving within timeout")
+}
