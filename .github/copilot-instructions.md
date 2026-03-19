@@ -236,3 +236,18 @@ mgr.GetWebhookServer().Register(
 OpenTelemetry tracing is opt-in via `--trace-address` and
 `--trace-sample-rate` flags. Prometheus metrics are served
 on configurable ports with auth filters.
+
+### Code style
+
+Use only ASCII characters in source code (strings, comments). Do not use unicode dashes, quotes, or other non-ASCII punctuation.
+
+### Commit messages
+
+This project uses [Conventional Commits](https://www.conventionalcommits.org/en/v1.0.0/). Format: `<type>(<scope>): <description>`, e.g.:
+
+- `fix(e2e): wait for webhook before testing rejection`
+- `feat(csi): add volume expansion support`
+- `test(lvm): add hyperconverged node affinity test`
+- `docs: update copilot instructions`
+
+Common types: `feat`, `fix`, `test`, `docs`, `refactor`, `chore`, `ci`.

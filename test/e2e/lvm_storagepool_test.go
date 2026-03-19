@@ -34,6 +34,11 @@ var testLvmStoragePool = func() {
 
 		lvmStatefulsetTest("should create statefulset with local storagepool", common.LvmStatefulSetFixture)
 		lvmStatefulsetTest("should create annotation statefulset with local storagepool", common.LvmAnnotationStatefulSetFixture)
+
+		It("should have webhook serving", func(ctx context.Context) {
+			common.VerifyWebhookServing(ctx, common.LvmPvcNoAnnotationFixture)
+		})
+
 		lvmWebhookRejectTest("should reject statefulset with non-ephemeral local storagepool", common.LvmPvcNoAnnotationFixture)
 		lvmHyperconvergedTest("should create hyperconverged pod with local storagepool", common.LvmPvcAnnotationFixure, common.LvmPodAnnotationFixture)
 	})
