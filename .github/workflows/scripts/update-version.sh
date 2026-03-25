@@ -72,8 +72,16 @@ fi
 git commit -m "docs: update version to ${VERSION} in README.md"
 git push origin "${BRANCH}"
 
-# # Create pull request
-gh pr create \
+# Create pull request
+# Note: This requires the repository setting "Allow GitHub Actions to create
+# and approve pull requests" to be enabled under Settings > Actions > General.
+REPO_URL=$(gh repo view --json url -q '.url')
+if ! gh pr create \
   --base main \
   --title "docs: update version to ${VERSION} in README.md" \
-  --body "This PR updates the version in the README.md install command to ${VERSION}."
+  --body "This PR updates the version in the README.md install command to ${VERSION}."; then
+  echo "::warning::Failed to create PR automatically. The branch '${BRANCH}' has been pushed."
+  echo "::warning::Please create the PR manually: ${REPO_URL}/compare/main...${BRANCH}"
+  echo "::warning::If this persists, ensure 'Allow GitHub Actions to create and approve pull requests' is enabled in repository Settings > Actions > General."
+  exit 1
+fi
