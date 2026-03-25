@@ -1,0 +1,58 @@
+name: Check Sidecar Image Updates
+
+on:
+  schedule:
+    - cron: '0 9 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  check-updates:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Harden the runner
+        uses: step-security/harden-runner@fa2e9d605c4eeb9fcad4c99c224cee0c6c7f3594 # v2.16.0
+        with:
+          egress-policy: audit
+
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: main
+
+      - name: Check for sidecar image updates
+        id: check
+        run: |
+          set -euo pipefail
+          VALUES="charts/latest/values.yaml"
+          BASE=$(yq '.image.baseRepo' "$VALUES")
+          BODY="" UPDATED=false
+          for key in csiProvisioner csiResizer nodeDriverRegistrar; do
+            repo=$(yq ".image.${key}.repository" "$VALUES")
+            current=$(yq ".image.${key}.tag" "$VALUES")
+            latest=$(curl -sf "https://${BASE}/v2${repo}/tags/list" \
+              | jq -r '.tags[]' | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' \
+              | sort -V | tail -1) || true
+            if [[ -n "$latest" && "$current" != "$latest" ]]; then
+              newer=$(printf '%s\n%s' "$current" "$latest" | sort -V | tail -1)
+              if [[ "$newer" == "$latest" ]]; then
+                yq -i ".image.${key}.tag = \"${latest}\"" "$VALUES"
+                BODY+="- **${key}**: \`${current}\` -> \`${latest}\`\n"
+                UPDATED=true
+              fi
+            fi
+          done
+          echo "updated=${UPDATED}" >> "$GITHUB_OUTPUT"
+          { echo "pr_body<<EOF"; echo -e "$BODY"; echo "EOF"; } >> "$GITHUB_OUTPUT"
+
+      - name: Create pull request
+        if: steps.check.outputs.updated == 'true'
+        uses: peter-evans/create-pull-request@c0f553fe549906ede9cf27b5156039d195d2ece0 # v8.1.0
+        with:
+          commit-message: "chore(helm): update sidecar image tags"
+          branch: chore/update-sidecar-images
+          title: "chore(helm): update sidecar image tags"
+          body: ${{ steps.check.outputs.pr_body }}
+          labels: dependencies
