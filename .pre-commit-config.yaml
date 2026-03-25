@@ -38,7 +38,7 @@ repos:
   hooks:
   - id: actionlint-docker
 - repo: https://github.com/tcort/markdown-link-check
-  rev: 3c9471faae7aafc589288f56648a435de10ae1e0 # v3.14.1 - Use older version as current version has 0 exit code for broken links
+  rev: 3c9471faae7aafc589288f56648a435de10ae1e0 # v3.14.1
   hooks:
     - id: markdown-link-check
       args: [--verbose, --config, .markdown-links-config.json]
