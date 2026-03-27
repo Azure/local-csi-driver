@@ -45,3 +45,6 @@ support-bundles-*/**
 # ignore dist directory
 dist/**
 config/controller/generated_config.yaml
+
+# Generated NOTICE file (regenerated during docker build)
+NOTICE.txt
