@@ -7,6 +7,12 @@ fileExistenceTests:
   - name: 'Check /NOTICE.txt exists'
     path: '/NOTICE.txt'
     shouldExist: true
+fileContentTests:
+  - name: 'Check /NOTICE.txt is non-empty and has Microsoft header'
+    path: '/NOTICE.txt'
+    expectedContents:
+      - 'NOTICES AND INFORMATION'
+      - 'Microsoft Corporation'
 commandTests:
   - name: 'Check /local-csi-manager --version'
     command: /local-csi-manager

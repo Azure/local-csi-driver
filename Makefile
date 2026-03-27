@@ -217,11 +217,11 @@ run: fmt fix vet ## Run the local CSI driver from your host.
 docker-build: docker-build-driver docker-build-manager
 
 .PHONY: docker-build-driver
-docker-build-driver: docker-buildx ## Build the docker image.
+docker-build-driver: docker-buildx notice ## Build the docker image.
 	$(call docker-build,Dockerfile,${DRIVER_IMG})
 
 .PHONY: docker-build-manager
-docker-build-manager: ## Build the manager docker image.
+docker-build-manager: notice ## Build the manager docker image.
 	$(call docker-build,Dockerfile.manager,${MANAGER_IMG})
 
 # buildx builder arguments
@@ -469,6 +469,7 @@ CONTAINER_STRUCTURE_TEST ?= $(LOCALBIN)/container-structure-test
 SUPPORT_BUNDLE ?= $(LOCALBIN)/support-bundle
 BICEP ?= $(LOCALBIN)/bicep
 HELM ?= $(LOCALBIN)/helm
+GO_LICENSES ?= $(LOCALBIN)/go-licenses
 
 ## Tool Versions
 GOMOCK_VERSION ?= $(shell go list -m -f '{{.Version}}' go.uber.org/mock)
@@ -486,6 +487,7 @@ SUPPORT_BUNDLE_VERSION ?= v0.121.2
 BICEP_VERSION ?= v0.37.4
 HELM_VERSION ?= v3.18.6
 MARKDOWNLINT_CLI_VERSION ?= v0.45.0
+GO_LICENSES_VERSION ?= v2.0.1
 
 .PHONY: mockgen
 mockgen: $(MOCK_GEN) ## Installs mockgen locally if necessary.
@@ -513,6 +515,22 @@ $(GOLANGCI_LINT): $(LOCALBIN)
 go-junit-report: $(GO_JUNIT_REPORT) ## Download go-junit-report locally if necessary.
 $(GO_JUNIT_REPORT): $(LOCALBIN)
 	$(call go-install-tool,$(GO_JUNIT_REPORT),github.com/jstemmer/go-junit-report/v2,$(GO_JUNIT_REPORT_VERSION))
+
+.PHONY: go-licenses
+go-licenses: $(GO_LICENSES) ## Download go-licenses locally if necessary.
+$(GO_LICENSES): $(LOCALBIN)
+	$(call go-install-tool,$(GO_LICENSES),github.com/google/go-licenses/v2,$(GO_LICENSES_VERSION))
+
+##@ Compliance
+
+.PHONY: notice
+notice: go-licenses ## Generate NOTICE.txt from dependency licenses.
+	$(GO_LICENSES) report ./cmd/... \
+		--ignore local-csi-driver \
+		--ignore $$(go list std | awk 'NR > 1 { printf "," } { printf "%s", $$0 }') \
+		--template NOTICE.tmpl \
+		> NOTICE.txt
+	cat NOTICE.manual >> NOTICE.txt
 
 ##@ Utilities
 
