@@ -39,16 +39,21 @@ jobs:
           go-version-file: go.mod
           cache-dependency-path: go.sum
 
+      - name: Get golangci-lint version
+        run: |
+          version=$(grep -A1 'golangci/golangci-lint' .pre-commit-config.yaml | grep 'rev:' | awk '{print $2}')
+          echo "GOLANGCI_LINT_VERSION=${version}" >> "$GITHUB_ENV"
+
       - name: Cache golangci-lint
         uses: actions/cache@668228422ae6a00e4ad889ee87cd7109ec5666a7 # v5.0.4
         with:
           path: |
             ~/.cache/golangci-lint
             ~/.cache/go-build
-          key: golangci-lint-${{ runner.os }}-${{ hashFiles('**/go.sum') }}-${{ hashFiles('.golangci.yml', '.golangci.yaml') }}
+          key: golangci-lint-${{ runner.os }}-${{ env.GOLANGCI_LINT_VERSION }}-${{ hashFiles('**/go.sum') }}-${{ hashFiles('.golangci.yml', '.golangci.yaml') }}
           restore-keys: |
-            golangci-lint-${{ runner.os }}-${{ hashFiles('**/go.sum') }}-
-            golangci-lint-${{ runner.os }}-
+            golangci-lint-${{ runner.os }}-${{ env.GOLANGCI_LINT_VERSION }}-${{ hashFiles('**/go.sum') }}-
+            golangci-lint-${{ runner.os }}-${{ env.GOLANGCI_LINT_VERSION }}-
 
       - name: Set up Python
         uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
