@@ -39,17 +39,6 @@ jobs:
           go-version-file: go.mod
           cache-dependency-path: go.sum
 
-      - name: Cache golangci-lint
-        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
-        with:
-          path: |
-            ~/.cache/golangci-lint
-            ~/.cache/go-build
-          key: golangci-lint-${{ runner.os }}-${{ hashFiles('**/go.sum') }}-${{ hashFiles('.golangci.yml', '.golangci.yaml') }}
-          restore-keys: |
-            golangci-lint-${{ runner.os }}-${{ hashFiles('**/go.sum') }}-
-            golangci-lint-${{ runner.os }}-
-
       - name: Set up Python
         uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
         with:
@@ -66,12 +55,6 @@ jobs:
         with:
           path: ~/.cache/pre-commit
           key: pre-commit-3|${{ env.pythonLocation }}|${{ hashFiles('.pre-commit-config.yaml') }}
-
-      # Set golangci-lint cache directory
-      - name: Configure golangci-lint cache
-        run: |
-          mkdir -p ~/.cache/golangci-lint
-          echo "GOLANGCI_LINT_CACHE=${HOME}/.cache/golangci-lint" >> "$GITHUB_ENV"
 
       - name: Run pre-commit hooks
         run: |
