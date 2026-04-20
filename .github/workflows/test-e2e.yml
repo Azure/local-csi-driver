@@ -46,8 +46,10 @@ jobs:
           # For push: this is the commit SHA
           SHORT_SHA=$(git rev-parse --short HEAD)
 
-          # Create tag in format MAJOR.MINOR.PATCH-REF
-          TAG="v${{ env.MAJOR }}.${{ env.MINOR }}.${{ env.PATCH }}-${SHORT_SHA}"
+          # Create tag in format MAJOR.MINOR.PATCH-gREF
+          # Prefix SHA with 'g' (git convention) to ensure valid SemVer:
+          # numeric-only pre-release identifiers must not have leading zeros.
+          TAG="v${{ env.MAJOR }}.${{ env.MINOR }}.${{ env.PATCH }}-g${SHORT_SHA}"
           echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
 
           # Only set latest tag for push events to main
