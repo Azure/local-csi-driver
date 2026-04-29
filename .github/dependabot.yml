@@ -37,7 +37,17 @@ updates:
     schedule:
       interval: "daily"
     groups:
+      k8s:
+        patterns:
+          - "k8s.io/*"
+          - "sigs.k8s.io/*"
+        update-types:
+          - "minor"
+          - "patch"
       gomod-minor-patch:
+        exclude-patterns:
+          - "k8s.io/*"
+          - "sigs.k8s.io/*"
         update-types:
           - "minor"
           - "patch"
