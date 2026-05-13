@@ -47,7 +47,7 @@ RUN --mount=type=cache,target=/go/pkg/mod \
     CGO_ENABLED=1 GOEXPERIMENT=systemcrypto GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} go build -v -ldflags "${LDFLAGS}" -o local-csi-driver cmd/driver/main.go
 
 
-FROM mcr.microsoft.com/azurelinux/base/core:3.0@sha256:82e37ddcf271af1b720036697d8ab8c95f7001c3eaf7694a9ca17b35d84085de AS dependency-install
+FROM mcr.microsoft.com/azurelinux/base/core:3.0@sha256:9230290079612a2a8d30a0aa8b8f097c3194e787d09987df0c3e6b8f6271ee27 AS dependency-install
 RUN tdnf install -y --releasever 3.0 --installroot /staging \
     e2fsprogs \
     lvm2 \
@@ -60,7 +60,7 @@ RUN tdnf install -y --releasever 3.0 --installroot /staging \
     && rm -rf /staging/run /staging/var/log /staging/var/cache/tdnf
 
 # Use distroless as minimal base image to package the driver binary.
-FROM mcr.microsoft.com/azurelinux/distroless/minimal:3.0@sha256:4c30ebfa41297a79e98dc08117cc17e80245aacff9dfd0578cbc8c75c2368566
+FROM mcr.microsoft.com/azurelinux/distroless/minimal:3.0@sha256:31fa4e799021201e2d7b25b389037c9b8f750c102308c47954be8eb41dfa4a1c
 WORKDIR /
 COPY --from=builder /workspace/local-csi-driver .
 COPY --from=dependency-install /staging /
