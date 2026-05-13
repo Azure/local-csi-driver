@@ -25,7 +25,7 @@ image:
     pullPolicy: IfNotPresent
   nodeDriverRegistrar:
     repository: /oss/v2/kubernetes-csi/csi-node-driver-registrar
-    tag: v2.13.0
+    tag: v2.16.0
     pullPolicy: IfNotPresent
 
 # DaemonSet configuration.
