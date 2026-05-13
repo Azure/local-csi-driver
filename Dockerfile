@@ -47,6 +47,24 @@ RUN --mount=type=cache,target=/go/pkg/mod \
     CGO_ENABLED=1 GOEXPERIMENT=systemcrypto GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} go build -v -ldflags "${LDFLAGS}" -o local-csi-driver cmd/driver/main.go
 
 
+# Generate NOTICE.txt from dependency licenses. Built in parallel with `builder`.
+FROM mcr.microsoft.com/oss/go/microsoft/golang:1.26-azurelinux3.0@sha256:6b48a8fb2ae39953f6a01a4077eae21c759635babb41ca458d364610af626666 AS notice
+ARG GO_LICENSES_VERSION=v2.0.1
+WORKDIR /workspace
+RUN --mount=type=cache,target=/go/pkg/mod \
+    --mount=type=cache,target=/root/.cache/go-build \
+    GOBIN=/usr/local/bin go install github.com/google/go-licenses/v2@${GO_LICENSES_VERSION}
+COPY go.mod go.sum ./
+RUN --mount=type=cache,target=/go/pkg/mod go mod download
+COPY cmd/ cmd/
+COPY internal/ internal/
+COPY NOTICE.tmpl NOTICE.manual ./
+COPY hack/generate-notice.sh hack/generate-notice.sh
+RUN --mount=type=cache,target=/go/pkg/mod \
+    --mount=type=cache,target=/root/.cache/go-build \
+    ./hack/generate-notice.sh NOTICE.txt
+
+
 FROM mcr.microsoft.com/azurelinux/base/core:3.0@sha256:9230290079612a2a8d30a0aa8b8f097c3194e787d09987df0c3e6b8f6271ee27 AS dependency-install
 RUN tdnf install -y --releasever 3.0 --installroot /staging \
     e2fsprogs \
@@ -64,7 +82,7 @@ FROM mcr.microsoft.com/azurelinux/distroless/minimal:3.0@sha256:31fa4e799021201e
 WORKDIR /
 COPY --from=builder /workspace/local-csi-driver .
 COPY --from=dependency-install /staging /
-COPY NOTICE.txt /
+COPY --from=notice /workspace/NOTICE.txt /
 
 # Set the environment variable to disable udev and just use lvm.
 ENV DM_DISABLE_UDEV=1
