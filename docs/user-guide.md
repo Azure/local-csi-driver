@@ -288,6 +288,53 @@ affinity:
         topologyKey: kubernetes.io/hostname
 ```
 
+## FAQ
+
+### Why is my PVC stuck in `Pending` when I set `spec.nodeName` on the Pod?
+
+The default StorageClass for local-csi-driver uses
+`volumeBindingMode: WaitForFirstConsumer`, which delays PVC binding and volume
+provisioning until a Pod that consumes the PVC is scheduled. Binding is
+triggered by the Kubernetes scheduler so that the volume can be placed on the
+same node where the Pod will run.
+
+If you set `spec.nodeName` directly on the Pod, the scheduler is bypassed and
+never signals the storage system to bind the PVC. As a result, the PVC remains
+`Pending` indefinitely and the Pod cannot start. This is documented in the
+upstream Kubernetes [volume binding mode][k8s-vbm] reference:
+
+> If you choose to use `WaitForFirstConsumer`, do not use `nodeName` in the Pod
+> spec to specify node affinity. If `nodeName` is used in this case, the
+> scheduler will be bypassed and PVC will remain in pending state.
+
+To pin a Pod to a specific node while still using `WaitForFirstConsumer`, use
+`nodeSelector` or `nodeAffinity` so the scheduler still runs and triggers PVC
+binding. For example, with `nodeSelector`:
+
+```yaml
+spec:
+  nodeSelector:
+    kubernetes.io/hostname: <node-name>
+```
+
+Or, equivalently, with `nodeAffinity`:
+
+```yaml
+spec:
+  affinity:
+    nodeAffinity:
+      requiredDuringSchedulingIgnoredDuringExecution:
+        nodeSelectorTerms:
+          - matchExpressions:
+              - key: kubernetes.io/hostname
+                operator: In
+                values:
+                  - <node-name>
+```
+
+[k8s-vbm]: https://kubernetes.io/docs/concepts/storage/storage-classes/#volume-binding-mode
+
+
 ## Uninstalling local-csi-driver
 
 To uninstall local-csi-driver, apply the following steps:
