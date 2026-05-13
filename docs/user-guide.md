@@ -334,7 +334,6 @@ spec:
 
 [k8s-vbm]: https://kubernetes.io/docs/concepts/storage/storage-classes/#volume-binding-mode
 
-
 ## Uninstalling local-csi-driver
 
 To uninstall local-csi-driver, apply the following steps:
