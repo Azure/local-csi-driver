@@ -7,9 +7,6 @@ concurrency:
 on:
   push:
     branches: [main]
-  pull_request_target:
-    types: [labeled]
-    branches: [main, release-**]
 
 permissions:
   contents: read
