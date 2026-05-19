@@ -7,9 +7,9 @@ on:
         description: 'Git ref to checkout'
         required: false
         type: string
-        default: ''
+        default: ${{ github.ref }}
       registry:
-        description: 'Container registry URL'
+        description: 'Container registry URL (only used to construct chart metadata)'
         required: true
         type: string
       repo_base:
@@ -17,36 +17,36 @@ on:
         required: true
         type: string
       tags:
-        description: 'Helm chart tags (YAML array)'
+        description: 'Helm chart tags (newline-separated list)'
         required: true
         type: string
-    secrets:
-      AZURE_CLIENT_ID:
-        required: true
-      AZURE_TENANT_ID:
-        required: true
-      AZURE_SUBSCRIPTION_ID:
-        required: true
+      artifact_retention_days:
+        description: 'Retention for uploaded chart artifacts'
+        required: false
+        type: number
+        default: 1
 
 permissions:
   contents: read
-  id-token: write
 
 jobs:
   build-helm:
     runs-on: ubuntu-latest
-    environment: pull-request
+    timeout-minutes: 15
+    permissions:
+      contents: read
     steps:
       - name: Harden the runner (Audit all outbound calls)
         uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5 # v2.19.3
         with:
           egress-policy: audit
+          disable-sudo-and-containers: true
 
       - name: Check out the code
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
-          ref: ${{ inputs.ref || github.ref }}
-          fetch-depth: 0
+          ref: ${{ inputs.ref }}
+          persist-credentials: false
 
       - name: Set up Go
         uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
@@ -54,30 +54,28 @@ jobs:
           go-version-file: go.mod
           cache-dependency-path: go.sum
 
-      - name: Azure CLI Login
-        uses: azure/login@532459ea530d8321f2fb9bb10d1e0bcf23869a43 # v3.0.0
-        with:
-          client-id: ${{ secrets.AZURE_CLIENT_ID }}
-          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
-          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-
-      - name: ACR login
-        run: az acr login -n ${{ inputs.registry }}
-
-      - name: Build and push Helm chart
+      - name: Build Helm chart packages
+        env:
+          REGISTRY: ${{ inputs.registry }}
+          REPO_BASE: ${{ inputs.repo_base }}
+          TAGS: ${{ inputs.tags }}
         run: |
-          # Login to Helm registry
-          make helm-login REGISTRY=${{ inputs.registry }}
-
-          # Build chart for each tag
+          set -eou pipefail
           while IFS= read -r tag; do
             if [[ -z "${tag}" ]]; then
               continue
             fi
-            echo "Building and pushing Helm chart for tag: ${tag}"
-            make helm-build REGISTRY=${{ inputs.registry }} REPO_BASE=${{ inputs.repo_base }} TAG="${tag}"
-            make helm-push REGISTRY=${{ inputs.registry }} REPO_BASE=${{ inputs.repo_base }} TAG="${tag}"
-            echo "✓ Completed Helm chart: ${tag}"
-          done <<< "${{ inputs.tags }}"
+            echo "Building Helm chart for tag: ${tag}"
+            make helm-build \
+              REGISTRY="${REGISTRY}" \
+              REPO_BASE="${REPO_BASE}" \
+              TAG="${tag}"
+          done <<< "${TAGS}"
 
-          echo "Helm charts built and pushed successfully"
+      - name: Upload Helm chart artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: helm-charts
+          path: dist/*.tgz
+          retention-days: ${{ inputs.artifact_retention_days }}
+          if-no-files-found: error

@@ -1,61 +1,131 @@
-name: Build and Push on Tag
+name: Build and Push on Tag or Main
 
 on:
   push:
+    branches:
+      - main
     tags:
       - 'v[0-9]+.[0-9]+.[0-9]+'
       - 'v[0-9]+.[0-9]+.[0-9]+-preview.[0-9]+'
       - 'v[0-9]+.[0-9]+.[0-9]+-hotfix.[0-9]+'
 
-permissions:
-  contents: read
-  id-token: write
+concurrency:
+  # Group by ref so the same tag/branch can't run twice concurrently, but
+  # different refs do not block each other. Never cancel a release tag build
+  # mid-flight; for main pushes, superseding commits cancel in-progress runs
+  # (the floating `-latest` tag only needs to reflect the newest commit).
+  group: release-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref == 'refs/heads/main' }}
+
+permissions: {}
+
+# Base version used to derive per-commit and floating tags for pushes to
+# main (e.g. v0.0.1-g<sha> and v0.0.1-latest).
+env:
+  MAJOR: "0"
+  MINOR: "0"
+  PATCH: "1"
 
 jobs:
   build-vars:
     runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
     outputs:
       TAG: ${{ steps.set-tag.outputs.tag }}
+      LATEST_TAG: ${{ steps.set-tag.outputs.latest_tag }}
     steps:
       - name: Harden the runner (Audit all outbound calls)
         uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5 # v2.19.3
         with:
           egress-policy: audit
+          disable-sudo-and-containers: true
 
       - name: Check out the code
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
-          fetch-depth: 0
+          persist-credentials: false
 
       - name: Set tag from ref
         id: set-tag
         run: |
-          TAG="${GITHUB_REF#refs/tags/}"
+          set -eou pipefail
+          LATEST_TAG=""
+          case "${GITHUB_REF}" in
+            refs/tags/*)
+              # Release: use the git tag verbatim; no floating tag.
+              TAG="${GITHUB_REF#refs/tags/}"
+              ;;
+            refs/heads/main)
+              # Main: per-commit tag vMAJOR.MINOR.PATCH-g<sha> plus a
+              # floating vMAJOR.MINOR.PATCH-latest tag. The 'g' prefix on
+              # the SHA keeps the pre-release identifier valid SemVer
+              # (numeric-only identifiers cannot have leading zeros).
+              SHORT_SHA=$(git rev-parse --short HEAD)
+              TAG="v${MAJOR}.${MINOR}.${PATCH}-g${SHORT_SHA}"
+              LATEST_TAG="v${MAJOR}.${MINOR}.${PATCH}-latest"
+              ;;
+            *)
+              echo "::error::Unsupported ref ${GITHUB_REF}; this workflow only runs on main or version tags"
+              exit 1
+              ;;
+          esac
           echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
-          echo "Using tag: ${TAG}"
+          echo "latest_tag=${LATEST_TAG}" >> "$GITHUB_OUTPUT"
+          echo "Using tag: ${TAG}${LATEST_TAG:+ (+ ${LATEST_TAG})}"
 
   build-docker:
     needs: build-vars
     uses: ./.github/workflows/docker-build-template.yml
+    permissions:
+      contents: read
+    with:
+      # version is compiled into the binary; always use the unique tag
+      # (never the floating -latest tag) so binaries identify their commit.
+      version: ${{ needs.build-vars.outputs.TAG }}
+
+  push-docker:
+    needs: [build-vars, build-docker]
+    uses: ./.github/workflows/docker-push-template.yml
+    permissions:
+      contents: read
+      id-token: write
     with:
       registry: "localcsidriver.azurecr.io"
       repo_base: "acstor"
-      version: ${{ needs.build-vars.outputs.TAG }}
-      tags: ${{ needs.build-vars.outputs.TAG }}
+      tags: |
+        ${{ needs.build-vars.outputs.TAG }}
+        ${{ needs.build-vars.outputs.LATEST_TAG }}
     secrets:
       AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
       AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
       AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
-
-
   build-helm:
     needs: [build-vars]
     uses: ./.github/workflows/helm-build-template.yml
+    permissions:
+      contents: read
     with:
       registry: "localcsidriver.azurecr.io"
       repo_base: "acstor"
-      tags: ${{ needs.build-vars.outputs.TAG }}
+      tags: |
+        ${{ needs.build-vars.outputs.TAG }}
+        ${{ needs.build-vars.outputs.LATEST_TAG }}
+
+  push-helm:
+    needs: [build-vars, build-helm]
+    uses: ./.github/workflows/helm-push-template.yml
+    permissions:
+      contents: read
+      id-token: write
+    with:
+      registry: "localcsidriver.azurecr.io"
+      repo_base: "acstor"
+      tags: |
+        ${{ needs.build-vars.outputs.TAG }}
+        ${{ needs.build-vars.outputs.LATEST_TAG }}
     secrets:
       AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
       AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}

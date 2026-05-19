@@ -1,0 +1,182 @@
+name: Docker Push Template
+
+on:
+  workflow_call:
+    inputs:
+      registry:
+        description: 'Container registry URL'
+        required: true
+        type: string
+      repo_base:
+        description: 'Repository base path'
+        required: true
+        type: string
+      tags:
+        description: 'Image tags (newline-separated list)'
+        required: true
+        type: string
+    secrets:
+      AZURE_CLIENT_ID:
+        required: true
+      AZURE_TENANT_ID:
+        required: true
+      AZURE_SUBSCRIPTION_ID:
+        required: true
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  push-arch:
+    strategy:
+      matrix:
+        image:
+          - name: local-csi-driver
+          - name: local-csi-manager
+        arch:
+          - tag-suffix: amd64
+          - tag-suffix: arm64
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: pull-request
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5 # v2.19.3
+        with:
+          egress-policy: audit
+          disable-sudo: true
+
+      - name: Refuse to push from untrusted refs
+        if: github.ref != 'refs/heads/main' && !startsWith(github.ref, 'refs/tags/v')
+        run: |
+          echo "::error::This template must only be invoked from refs/heads/main or refs/tags/v*, got: ${GITHUB_REF}"
+          exit 1
+
+      - name: Download image artifact
+        uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6.0.0
+        with:
+          name: image-${{ matrix.image.name }}-${{ matrix.arch.tag-suffix }}
+          path: /tmp/image
+
+      - name: Load image into docker
+        env:
+          IMAGE_NAME: ${{ matrix.image.name }}
+          TAG_SUFFIX: ${{ matrix.arch.tag-suffix }}
+        run: |
+          set -eou pipefail
+          tar="/tmp/image/${IMAGE_NAME}-${TAG_SUFFIX}.tar"
+          if [[ ! -f "$tar" ]]; then
+            echo "Expected artifact $tar not found" >&2
+            exit 1
+          fi
+          docker load -i "$tar"
+
+          expected="local/${IMAGE_NAME}:build"
+          loaded=$(docker image ls --format '{{.Repository}}:{{.Tag}}' | sort -u)
+          if [[ "$loaded" != "$expected" ]]; then
+            echo "::error::Unexpected images loaded from artifact." >&2
+            echo "Expected exactly: $expected" >&2
+            echo "Got:" >&2
+            echo "$loaded" >&2
+            exit 1
+          fi
+
+      - name: Azure CLI Login
+        uses: azure/login@532459ea530d8321f2fb9bb10d1e0bcf23869a43 # v3.0.0
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: ACR login
+        env:
+          REGISTRY: ${{ inputs.registry }}
+        run: az acr login -n "${REGISTRY}"
+
+      - name: Retag and push
+        env:
+          REGISTRY: ${{ inputs.registry }}
+          REPO_BASE: ${{ inputs.repo_base }}
+          IMAGE_NAME: ${{ matrix.image.name }}
+          TAG_SUFFIX: ${{ matrix.arch.tag-suffix }}
+          TAGS: ${{ inputs.tags }}
+        run: |
+          set -eou pipefail
+          # Build template saves images under the placeholder local/<name>:build.
+          # Retag into the destination namespace for each requested tag.
+          src="local/${IMAGE_NAME}:build"
+          while IFS= read -r tag; do
+            if [[ -z "$tag" ]]; then
+              continue
+            fi
+            image="${REGISTRY}/${REPO_BASE}/${IMAGE_NAME}:${tag}-${TAG_SUFFIX}"
+            echo "Tagging $src -> $image"
+            docker tag "$src" "$image"
+            echo "Pushing $image"
+            docker push "$image"
+          done <<< "${TAGS}"
+
+  push-manifest:
+    needs: push-arch
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: pull-request
+    permissions:
+      contents: read
+      id-token: write
+    strategy:
+      matrix:
+        image:
+          - name: local-csi-driver
+          - name: local-csi-manager
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5 # v2.19.3
+        with:
+          egress-policy: audit
+          disable-sudo: true
+
+      - name: Refuse to push from untrusted refs
+        if: github.ref != 'refs/heads/main' && !startsWith(github.ref, 'refs/tags/v')
+        run: |
+          echo "::error::This template must only be invoked from refs/heads/main or refs/tags/v*, got: ${GITHUB_REF}"
+          exit 1
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd # v4.0.0
+
+      - name: Azure CLI Login
+        uses: azure/login@532459ea530d8321f2fb9bb10d1e0bcf23869a43 # v3.0.0
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: ACR login
+        env:
+          REGISTRY: ${{ inputs.registry }}
+        run: az acr login -n "${REGISTRY}"
+
+      - name: Create and push manifest
+        env:
+          REGISTRY: ${{ inputs.registry }}
+          REPO_BASE: ${{ inputs.repo_base }}
+          IMAGE_NAME: ${{ matrix.image.name }}
+          TAGS: ${{ inputs.tags }}
+        run: |
+          set -eou pipefail
+          while IFS= read -r tag; do
+            if [[ -z "$tag" ]]; then
+              continue
+            fi
+            base="${REGISTRY}/${REPO_BASE}/${IMAGE_NAME}:${tag}"
+            echo "Creating manifest $base"
+            docker buildx imagetools create \
+              -t "$base" \
+              "$base-amd64" \
+              "$base-arm64"
+          done <<< "${TAGS}"

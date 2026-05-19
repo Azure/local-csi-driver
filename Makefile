@@ -331,9 +331,10 @@ arc-uninstall: ## Uninstall the Azure Kubernetes Service extension.
 
 
 HELM_ARGS ?=
+CHART_SOURCE ?= oci://$(CHART_IMG)
 .PHONY: helm
 helm-install: helm ## Install the Helm chart from REGISTRY into the K8s cluster specified in ~/.kube/config.
-	$(HELM) install local-csi-driver oci://$(CHART_IMG) \
+	$(HELM) install local-csi-driver $(CHART_SOURCE) \
 		--namespace kube-system \
 		--version $(HELM_TAG) \
 		--set image.driver.repository=$(REGISTRY)/$(DRIVER_REPO) \
@@ -612,7 +613,7 @@ $(CONTAINER_STRUCTURE_TEST): $(LOCALBIN)
 support-bundle: $(SUPPORT_BUNDLE)
 $(SUPPORT_BUNDLE): $(LOCALBIN)
 	@[ -f "$(SUPPORT_BUNDLE)" ] || { \
-	curl --fail --retry 5 --retry-delay 10 --retry-connrefused -L https://github.com/replicatedhq/troubleshoot/releases/download/$(SUPPORT_BUNDLE_VERSION)/support-bundle_linux_amd64.tar.gz | \
+	curl --fail --retry 5 --retry-delay 10 --retry-connrefused -L https://github.com/replicatedhq/troubleshoot/releases/download/$(SUPPORT_BUNDLE_VERSION)/support-bundle_$(HOST_OS)_$(HOST_ARCH).tar.gz | \
 	tar -xvzf - support-bundle; \
 	chmod +x support-bundle; \
 	mkdir -p $(LOCALBIN); \
@@ -631,14 +632,16 @@ $(BICEP): $(LOCALBIN)
 
 .PHONY: helm
 helm: $(HELM)
+HOST_OS ?= $(shell go env GOOS)
+HOST_ARCH ?= $(shell go env GOARCH)
 $(HELM): $(LOCALBIN)
 	@[ -f "$(HELM)" ] || { \
-	curl --fail --retry 5 --retry-delay 10 --retry-connrefused -L https://get.helm.sh/helm-$(HELM_VERSION)-linux-amd64.tar.gz | \
-	tar -xvzf - linux-amd64/helm; \
-	chmod +x linux-amd64/helm; \
+	curl --fail --retry 5 --retry-delay 10 --retry-connrefused -L https://get.helm.sh/helm-$(HELM_VERSION)-$(HOST_OS)-$(HOST_ARCH).tar.gz | \
+	tar -xvzf - $(HOST_OS)-$(HOST_ARCH)/helm; \
+	chmod +x $(HOST_OS)-$(HOST_ARCH)/helm; \
 	mkdir -p $(LOCALBIN); \
-	mv linux-amd64/helm $(HELM); \
-	rmdir linux-amd64; \
+	mv $(HOST_OS)-$(HOST_ARCH)/helm $(HELM); \
+	rmdir $(HOST_OS)-$(HOST_ARCH); \
 	}
 
 

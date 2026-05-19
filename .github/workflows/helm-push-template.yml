@@ -1,0 +1,154 @@
+name: Helm Push Template
+
+on:
+  workflow_call:
+    inputs:
+      registry:
+        description: 'Container registry URL'
+        required: true
+        type: string
+      repo_base:
+        description: 'Repository base path'
+        required: true
+        type: string
+      tags:
+        description: |
+          Newline-separated list of expected chart tags to push (same list
+          passed to helm-build-template). Only chart packages matching
+          these tags will be pushed; the job fails if any expected tag
+          is missing or if the downloaded artifact contains unexpected
+          extras. Tags may include the leading 'v'; it is stripped to
+          match the chart filename (local-csi-driver-<version>.tgz).
+        required: true
+        type: string
+    secrets:
+      AZURE_CLIENT_ID:
+        required: true
+      AZURE_TENANT_ID:
+        required: true
+      AZURE_SUBSCRIPTION_ID:
+        required: true
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  push-helm:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: pull-request
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5 # v2.19.3
+        with:
+          egress-policy: audit
+          disable-sudo-and-containers: true
+
+      # Defense-in-depth ref guard. The `pull-request` environment is the
+      # primary gate (configured in repo settings with deployment branch
+      # restrictions); this guard prevents accidental misuse if that config
+      # is ever loosened. Allow only the default branch and version tags.
+      - name: Refuse to push from untrusted refs
+        if: github.ref != 'refs/heads/main' && !startsWith(github.ref, 'refs/tags/v')
+        run: |
+          echo "::error::This template must only be invoked from refs/heads/main or refs/tags/v*, got: ${GITHUB_REF}"
+          exit 1
+
+      # We only need the Makefile + hack/ scripts to invoke helm-push; the
+      # actual chart content comes from the downloaded artifact. Checkout
+      # uses github.ref (the trusted branch/tag that invoked us).
+      - name: Check out the code
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      # Artifacts originate from the build job in the same workflow run.
+      # We download into a private path so this job only ever touches the
+      # chart tarballs it just received, not anything left over from a
+      # previous step or pre-populated on the runner image.
+      - name: Download Helm chart artifact
+        uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6.0.0
+        with:
+          name: helm-charts
+          path: /tmp/helm-charts
+
+      - name: Verify chart packages
+        env:
+          TAGS: ${{ inputs.tags }}
+        run: |
+          set -eou pipefail
+          shopt -s nullglob
+
+          # Build the expected filename set from the input tags. The
+          # Makefile strips a leading 'v' from TAG to form HELM_TAG, and
+          # helm-build packages as local-csi-driver-<HELM_TAG>.tgz.
+          declare -A expected=()
+          while IFS= read -r tag; do
+            [[ -z "$tag" ]] && continue
+            helm_tag="${tag#v}"
+            expected["/tmp/helm-charts/local-csi-driver-${helm_tag}.tgz"]=1
+          done <<< "${TAGS}"
+
+          if [[ ${#expected[@]} -eq 0 ]]; then
+            echo "::error::No tags provided to push" >&2
+            exit 1
+          fi
+
+          # Every expected file must be present.
+          for f in "${!expected[@]}"; do
+            if [[ ! -f "$f" ]]; then
+              echo "::error::Expected chart package missing: $f" >&2
+              exit 1
+            fi
+          done
+
+          # The downloaded artifact must not contain anything extra.
+          for f in /tmp/helm-charts/*.tgz; do
+            if [[ -z "${expected[$f]+x}" ]]; then
+              echo "::error::Unexpected chart package in artifact: $f" >&2
+              exit 1
+            fi
+          done
+
+          echo "Verified ${#expected[@]} chart package(s):"
+          ls -la /tmp/helm-charts/
+
+      - name: Azure CLI Login
+        uses: azure/login@532459ea530d8321f2fb9bb10d1e0bcf23869a43 # v3.0.0
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Install helm
+        run: make helm
+
+      - name: Helm registry login
+        env:
+          REGISTRY: ${{ inputs.registry }}
+        run: make helm-login REGISTRY="${REGISTRY}"
+
+      - name: Push Helm chart packages
+        env:
+          # Workflow_call inputs flow into shell via env vars rather than
+          # direct ${{ inputs.* }} interpolation to eliminate any chance of
+          # shell injection via a caller-supplied value.
+          REGISTRY: ${{ inputs.registry }}
+          REPO_BASE: ${{ inputs.repo_base }}
+          TAGS: ${{ inputs.tags }}
+        run: |
+          set -eou pipefail
+          # `make helm` installs to bin/helm (LOCALBIN convention). Iterate
+          # the expected tag list (not a glob) so we only ever push what
+          # the caller declared.
+          while IFS= read -r tag; do
+            [[ -z "$tag" ]] && continue
+            helm_tag="${tag#v}"
+            chart="/tmp/helm-charts/local-csi-driver-${helm_tag}.tgz"
+            echo "Pushing ${chart}"
+            bin/helm push "${chart}" "oci://${REGISTRY}/${REPO_BASE}/charts"
+          done <<< "${TAGS}"
