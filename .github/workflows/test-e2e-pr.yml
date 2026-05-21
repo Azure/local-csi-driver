@@ -71,19 +71,19 @@ jobs:
           python-version: ${{ env.PYTHON_VERSION }}
 
       - name: Download driver image
-        uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6.0.0
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: image-local-csi-driver-${{ matrix.arch.tag-suffix }}
           path: /tmp/image
 
       - name: Download manager image
-        uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6.0.0
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: image-local-csi-manager-${{ matrix.arch.tag-suffix }}
           path: /tmp/image
 
       - name: Download helm chart
-        uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6.0.0
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: helm-charts
           path: /tmp/helm
@@ -139,7 +139,7 @@ jobs:
           overwrite: false
 
       - name: Publish Test Summary
-        uses: test-summary/action@31493c76ec9e7aa675f1585d3ed6f1da69269a86 # v2.6
+        uses: test-summary/action@37b508cfee6d4d080eedd00b5bb240a6a784a6a5 # v2.6
         if: always()
         with:
           paths: ./JUnit.xml
