@@ -260,6 +260,34 @@ spec:
             storage: 10Gi
 ```
 
+## Limitations
+
+### Cluster Autoscaler does not scale up on local NVMe capacity
+
+The Kubernetes [Cluster Autoscaler](https://github.com/kubernetes/autoscaler)
+does not consider `CSIStorageCapacity` when simulating scale-up. When a pod is
+Pending because no existing node has enough local NVMe capacity to bind its
+volume, the autoscaler may emit `NotTriggerScaleUp` (for example,
+`node(s) did not have enough free storage`) and will not add a new node, even
+though a new node would have sufficient local NVMe capacity available.
+
+#### Workaround
+
+For workloads that run one pod per node, add a required pod anti-affinity on
+`kubernetes.io/hostname`. This forces the autoscaler to make scale-up
+decisions based on placement constraints rather than storage capacity, which
+avoids the limitation:
+
+```yaml
+affinity:
+  podAntiAffinity:
+    requiredDuringSchedulingIgnoredDuringExecution:
+      - labelSelector:
+          matchLabels:
+            app: <your-app-label>
+        topologyKey: kubernetes.io/hostname
+```
+
 ## FAQ
 
 ### Why is my PVC stuck in `Pending` when I set `spec.nodeName` on the Pod?
