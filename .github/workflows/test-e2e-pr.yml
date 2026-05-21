@@ -1,0 +1,145 @@
+name: E2E Tests (PR)
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
+  cancel-in-progress: true
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main, release-**]
+
+permissions:
+  contents: read
+
+env:
+  PYTHON_VERSION: "3.x"
+  REGISTRY: "localcsidriver.azurecr.io"
+  REPO_BASE: "acstor"
+  TAG: "v0.0.1-pr"
+
+jobs:
+  build-docker:
+    uses: ./.github/workflows/docker-build-template.yml
+    with:
+      # Default checkout (merge ref) is the safe default for pull_request.
+      version: "v0.0.1-pr"
+
+  build-helm:
+    uses: ./.github/workflows/helm-build-template.yml
+    with:
+      registry: "localcsidriver.azurecr.io"
+      repo_base: "acstor"
+      tags: "v0.0.1-pr"
+
+  kind-e2e:
+    needs: [build-docker, build-helm]
+    name: Kind Integration Test (${{ matrix.arch.tag-suffix }})
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        arch:
+          - runs-on: ubuntu-latest
+            tag-suffix: amd64
+          - runs-on: ubuntu-24.04-arm
+            tag-suffix: arm64
+    runs-on: ${{ matrix.arch.runs-on }}
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5 # v2.19.3
+        with:
+          egress-policy: audit
+          disable-sudo: true
+
+      - name: Check out the code
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
+
+      - name: Set up Python
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Download driver image
+        uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6.0.0
+        with:
+          name: image-local-csi-driver-${{ matrix.arch.tag-suffix }}
+          path: /tmp/image
+
+      - name: Download manager image
+        uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6.0.0
+        with:
+          name: image-local-csi-manager-${{ matrix.arch.tag-suffix }}
+          path: /tmp/image
+
+      - name: Download helm chart
+        uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6.0.0
+        with:
+          name: helm-charts
+          path: /tmp/helm
+
+
+      - name: Load images into docker and retag for kind
+        env:
+          TAG_SUFFIX: ${{ matrix.arch.tag-suffix }}
+        run: |
+          set -eou pipefail
+          for tar in "/tmp/image/local-csi-driver-${TAG_SUFFIX}.tar" "/tmp/image/local-csi-manager-${TAG_SUFFIX}.tar"; do
+            if [[ ! -f "$tar" ]]; then
+              echo "Expected artifact $tar not found" >&2
+              exit 1
+            fi
+            docker load -i "$tar"
+          done
+          # Retag from the build template's placeholder (local/<name>:build)
+          # to the registry path the helm chart references. The e2e framework
+          # will subsequently `kind load` these into the cluster nodes.
+          for img in local-csi-driver local-csi-manager; do
+            docker tag \
+              "local/${img}:build" \
+              "${REGISTRY}/${REPO_BASE}/${img}:${TAG}"
+          done
+
+      - name: Setup TestRunId
+        env:
+          TAG_SUFFIX: ${{ matrix.arch.tag-suffix }}
+        run: |
+          TEST_RUN_ID="${{ github.run_id }}-kind-${TAG_SUFFIX}-${{ github.run_attempt }}"
+          echo "TestRunId=${TEST_RUN_ID}" >> "$GITHUB_ENV"
+
+      - name: Run Kind E2E
+        run: |
+          # PR builds never push to ACR. Override pullPolicy so kubelet uses
+          # the locally-loaded image instead of trying to pull from the
+          # registry (which would 404).
+          python .github/workflows/scripts/run_tests.py \
+            --command "make test-e2e REGISTRY=${REGISTRY} REPO_BASE=${REPO_BASE} TAG=${TAG} CHART_SOURCE=/tmp/helm/local-csi-driver-${TAG#v}.tgz HELM_ARGS='--set image.driver.pullPolicy=IfNotPresent --set image.manager.pullPolicy=IfNotPresent'" \
+            --cluster-type kind
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: test-artifacts-${{ env.TestRunId }}
+          path: |
+            ./support-bundles
+            ./JUnit.xml
+          retention-days: 14
+          if-no-files-found: warn
+          overwrite: false
+
+      - name: Publish Test Summary
+        uses: test-summary/action@31493c76ec9e7aa675f1585d3ed6f1da69269a86 # v2.6
+        if: always()
+        with:
+          paths: ./JUnit.xml

@@ -4,41 +4,26 @@ on:
   workflow_call:
     inputs:
       ref:
-        description: 'Git ref to checkout'
+        description: 'Git ref to check out'
         required: false
         type: string
-        default: ''
-      registry:
-        description: 'Container registry URL'
-        required: true
-        type: string
-      repo_base:
-        description: 'Repository base path'
-        required: true
-        type: string
+        default: ${{ github.ref }}
       version:
-        description: 'Version tag for the image'
+        description: 'Version string passed as build arg (compiled into binary)'
         required: true
         type: string
-      tags:
-        description: 'Image tags (YAML array)'
-        required: true
-        type: string
-    secrets:
-      AZURE_CLIENT_ID:
-        required: true
-      AZURE_TENANT_ID:
-        required: true
-      AZURE_SUBSCRIPTION_ID:
-        required: true
+      artifact_retention_days:
+        description: 'Retention for uploaded image tarball artifacts'
+        required: false
+        type: number
+        default: 1
 
 permissions:
   contents: read
-  id-token: write
-
 
 jobs:
   build-docker:
+    timeout-minutes: 30
     strategy:
       matrix:
         image:
@@ -54,28 +39,20 @@ jobs:
             platforms: linux/arm64
             tag-suffix: arm64
     runs-on: ${{ matrix.arch.runs-on }}
-    environment: pull-request
+    permissions:
+      contents: read
     steps:
       - name: Harden the runner (Audit all outbound calls)
         uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5 # v2.19.3
         with:
           egress-policy: audit
+          disable-sudo: true
 
       - name: Check out the code
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
-          ref: ${{ inputs.ref || github.ref }}
-          fetch-depth: 0
-
-      - name: Azure CLI Login
-        uses: azure/login@532459ea530d8321f2fb9bb10d1e0bcf23869a43 # v3.0.0
-        with:
-          client-id: ${{ secrets.AZURE_CLIENT_ID }}
-          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
-          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-
-      - name: ACR login
-        run: az acr login -n ${{ inputs.registry }}
+          ref: ${{ inputs.ref }}
+          persist-credentials: false
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd # v4.0.0
@@ -84,28 +61,16 @@ jobs:
         id: build-date
         run: echo "date=$(date -u +"%Y-%m-%dT%H:%M:%SZ")" >> "$GITHUB_OUTPUT"
 
-      - name: Set image tags
-        id: set-tags
-        run: |
-          set -eou pipefail
-          tags=()
-          while IFS= read -r tag; do
-            if [[ -z "$tag" ]]; then
-              continue
-            fi
-            tags+=("${{ inputs.registry }}/${{ inputs.repo_base }}/${{ matrix.image.name }}:${tag}-${{ matrix.arch.tag-suffix }}")
-          done <<< "${{ inputs.tags }}"
-
-          echo "tags=$(IFS=,; echo "${tags[*]}")" >> "$GITHUB_OUTPUT"
-
-      - name: Docker build and push
+      - name: Docker build (export tarball)
         uses: docker/build-push-action@bcafcacb16a39f128d818304e6c9c0c18556b85f # v7.1.0
         with:
           context: .
           file: ${{ matrix.image.dockerfile }}
-          push: true
-          tags: ${{ steps.set-tags.outputs.tags }}
+          # Stable placeholder tag - the push template / PR test retags
+          # into the destination namespace before pushing or kind-loading.
+          tags: local/${{ matrix.image.name }}:build
           platforms: ${{ matrix.arch.platforms }}
+          outputs: type=docker,dest=/tmp/${{ matrix.image.name }}-${{ matrix.arch.tag-suffix }}.tar
           cache-from: type=gha
           cache-to: type=gha,mode=max
           build-args: |
@@ -114,45 +79,10 @@ jobs:
             GIT_COMMIT=${{ github.sha }}
             BUILD_DATE=${{ steps.build-date.outputs.date }}
 
-  push-manifest:
-    needs: build-docker
-    runs-on: ubuntu-latest
-    environment: pull-request
-    strategy:
-      matrix:
-        image:
-          - name: local-csi-driver
-            dockerfile: Dockerfile
-          - name: local-csi-manager
-            dockerfile: Dockerfile.manager
-    steps:
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd # v4.0.0
-
-      - name: Azure CLI Login
-        uses: azure/login@532459ea530d8321f2fb9bb10d1e0bcf23869a43 # v3.0.0
+      - name: Upload image artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          client-id: ${{ secrets.AZURE_CLIENT_ID }}
-          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
-          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-
-      - name: ACR login
-        run: az acr login -n ${{ inputs.registry }}
-
-      - name: Create and push manifest
-        run: |
-          set -eou pipefail
-          tags=()
-          while IFS= read -r tag; do
-            if [[ -z "$tag" ]]; then
-              continue
-            fi
-            tags+=("${{ inputs.registry }}/${{ inputs.repo_base }}/${{ matrix.image.name }}:${tag}")
-          done <<< "${{ inputs.tags }}"
-
-          for tag in "${tags[@]}"; do
-            docker buildx imagetools create \
-              -t "$tag" \
-              "$tag-amd64" \
-              "$tag-arm64"
-          done
+          name: image-${{ matrix.image.name }}-${{ matrix.arch.tag-suffix }}
+          path: /tmp/${{ matrix.image.name }}-${{ matrix.arch.tag-suffix }}.tar
+          retention-days: ${{ inputs.artifact_retention_days }}
+          if-no-files-found: error
