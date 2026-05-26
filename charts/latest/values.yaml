@@ -78,6 +78,13 @@ raid:
   # StorageClass in the `VolumeGroup` parameter.
   volumeGroup: containerstorage
 
+# Driver configuration.
+driver:
+  # Enables storage capacity tracking. When enabled, the CSI driver reports
+  # storage capacity information to the Kubernetes API server, allowing the
+  # scheduler to make better placement decisions based on available storage.
+  enableStorageCapacity: true
+
 # Garbage collection and cleanup configuration.
 cleanup:
   # Cleanup volume groups and physical volumes on pod termination if logical volume are not in use.

@@ -35,7 +35,7 @@ func initTestLVM(ctrl *gomock.Controller) (*lvm.LVM, *probe.Mock, *lvmMgr.MockMa
 	t := telemetry.NewNoopTracerProvider()
 	p := probe.NewMock(ctrl)
 	lvmMgr := lvmMgr.NewMockManager(ctrl)
-	l, err := lvm.New(testPodName, testNodeName, testPodNamespace, true, p, lvmMgr, t)
+	l, err := lvm.New(testPodName, testNodeName, testPodNamespace, true, true, p, lvmMgr, t)
 	if err != nil {
 		return nil, nil, nil, err
 	}
@@ -100,12 +100,57 @@ func TestNewLVM(t *testing.T) {
 			if tc.mutate != nil {
 				tc.mutate(&test)
 			}
-			got, err := lvm.New(test.podName, test.nodeName, test.namespace, test.enableCleanup, test.probe, test.manager, test.tracer)
+			got, err := lvm.New(test.podName, test.nodeName, test.namespace, test.enableCleanup, true, test.probe, test.manager, test.tracer)
 			if (err != nil) != tc.expectErr {
 				t.Errorf("New(%q) error = %v, expectErr %v", tc.name, err, tc.expectErr)
 			}
 			if err == nil && got == nil {
 				t.Errorf("New(%q) returned nil LVM, want non-nil", tc.name)
+			}
+		})
+	}
+}
+
+func TestGetCSIDriver(t *testing.T) {
+	t.Parallel()
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	tp := telemetry.NewNoopTracerProvider()
+	p := probe.NewMock(ctrl)
+	mgr := lvmMgr.NewMockManager(ctrl)
+
+	tests := []struct {
+		name                  string
+		enableStorageCapacity bool
+	}{
+		{
+			name:                  "storage capacity enabled",
+			enableStorageCapacity: true,
+		},
+		{
+			name:                  "storage capacity disabled",
+			enableStorageCapacity: false,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			l, err := lvm.New(testPodName, testNodeName, testPodNamespace, true, tc.enableStorageCapacity, p, mgr, tp)
+			if err != nil {
+				t.Fatalf("New() error = %v", err)
+			}
+
+			driver := l.GetCSIDriver()
+			if driver == nil {
+				t.Fatal("GetCSIDriver() returned nil")
+			}
+			if driver.Spec.StorageCapacity == nil {
+				t.Fatal("GetCSIDriver().Spec.StorageCapacity is nil")
+			}
+			if *driver.Spec.StorageCapacity != tc.enableStorageCapacity {
+				t.Errorf("GetCSIDriver().Spec.StorageCapacity = %v, want %v",
+					*driver.Spec.StorageCapacity, tc.enableStorageCapacity)
 			}
 		})
 	}

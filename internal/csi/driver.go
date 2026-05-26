@@ -12,6 +12,7 @@ import (
 	storagev1 "k8s.io/api/storage/v1"
 	kevents "k8s.io/client-go/tools/events"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 
 	"local-csi-driver/internal/csi/controller"
 	"local-csi-driver/internal/csi/core"
@@ -89,17 +90,22 @@ func NewNode(nodeID string, volumeClient core.Interface, client client.Client, r
 }
 
 // Register registers the CSI driver with the Kubernetes API server if it
-// doesn't exist.
+// doesn't exist, or patches it to match the expected spec.
 //
 // TODO(sc): Add cluster manager deployment as owner.
 func (d *Driver) Register(ctx context.Context) error {
+	expected := d.volume.GetCSIDriver()
 	obj := &storagev1.CSIDriver{}
-	if err := d.client.Get(ctx, client.ObjectKeyFromObject(d.volume.GetCSIDriver()), obj); err != nil {
-		if client.IgnoreNotFound(err) != nil {
-			return fmt.Errorf("failed to get CSIDriver %s: %w", d.volume.GetCSIDriver(), err)
-		}
-		return d.client.Create(ctx, d.volume.GetCSIDriver())
+	obj.Name = expected.Name
+
+	_, err := controllerutil.CreateOrPatch(ctx, d.client, obj, func() error {
+		obj.Spec = expected.Spec
+		return nil
+	})
+	if err != nil {
+		return fmt.Errorf("failed to create or patch CSIDriver %s: %w", expected.Name, err)
 	}
+
 	return nil
 }
 

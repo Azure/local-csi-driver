@@ -85,6 +85,7 @@ spec:
         - --trace-service-id=$(POD_NAME)
         - --v={{ .Values.observability.driver.log.level }}
         - --enable-cleanup={{ .Values.cleanup.enabled }}
+        - --enable-storage-capacity={{ .Values.driver.enableStorageCapacity }}
         - --enable-lv-garbage-collection={{ .Values.cleanup.lvGarbageCollection.enabled }}
         - --enable-lvm-orphan-cleanup={{ .Values.cleanup.lvmOrphanCleanup.enabled }}
         - --lvm-orphan-cleanup-interval={{ .Values.cleanup.lvmOrphanCleanup.interval }}
@@ -159,9 +160,11 @@ spec:
         - --extra-create-metadata
         - --feature-gates=Topology=true
         - --strict-topology=true
+        {{- if .Values.driver.enableStorageCapacity }}
         - --enable-capacity
         - --capacity-ownerref-level=0
         - --capacity-poll-interval=15s
+        {{- end }}
         - --v={{ .Values.observability.csiProvisioner.log.level }}
         env:
         # POD_NAME and POD_NAMESPACE are used for capacity tracking support

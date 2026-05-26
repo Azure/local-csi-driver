@@ -79,6 +79,7 @@ func main() {
 	var enableLVGarbageCollection bool
 	var enableLVMOrphanCleanup bool
 	var lvmOrphanCleanupInterval time.Duration
+	var enableStorageCapacity bool
 	var runAlongsideWebhook bool
 	flag.StringVar(&nodeName, "node-name", "",
 		"The name of the node this agent is running on.")
@@ -115,6 +116,8 @@ func main() {
 		"If enabled, the LVM orphan cleanup controller will periodically scan and clean up orphaned LVM volumes on the node.")
 	flag.DurationVar(&lvmOrphanCleanupInterval, "lvm-orphan-cleanup-interval", 30*time.Minute,
 		"Interval for the LVM orphan cleanup controller to scan and clean up orphaned volumes.")
+	flag.BoolVar(&enableStorageCapacity, "enable-storage-capacity", true,
+		"If enabled, the CSI driver will report storage capacity information to the Kubernetes API server.")
 	flag.BoolVar(&runAlongsideWebhook, "run-alongside-webhook", false,
 		"If set, indicates that the driver is running alongside a separate webhook deployment. This affects PV node affinity behavior.")
 	// Initialize logger flagsconfig.
@@ -231,7 +234,7 @@ func main() {
 	//
 	// Volume client is an abstraction that understands csi requests and
 	// responses and how to implement them for a storage type.
-	volumeClient, err := lvm.New(podName, nodeName, namespace, enableCleanup, deviceProbe, lvmMgr, tp)
+	volumeClient, err := lvm.New(podName, nodeName, namespace, enableCleanup, enableStorageCapacity, deviceProbe, lvmMgr, tp)
 	if err != nil {
 		logAndExit(err, "unable to create lvm volume client")
 	}

@@ -154,17 +154,18 @@ var (
 )
 
 type LVM struct {
-	releaseNamespace string
-	podName          string
-	nodeName         string
-	enableCleanup    bool
-	probe            probe.Interface
-	lvm              lvm.Manager
-	tracer           trace.Tracer
+	releaseNamespace      string
+	podName               string
+	nodeName              string
+	enableCleanup         bool
+	enableStorageCapacity bool
+	probe                 probe.Interface
+	lvm                   lvm.Manager
+	tracer                trace.Tracer
 }
 
 // New creates a new LVM volume manager.
-func New(podName, nodeName, releaseNamespace string, enableCleanup bool, probe probe.Interface, lvmMgr lvm.Manager, tp trace.TracerProvider) (*LVM, error) {
+func New(podName, nodeName, releaseNamespace string, enableCleanup, enableStorageCapacity bool, probe probe.Interface, lvmMgr lvm.Manager, tp trace.TracerProvider) (*LVM, error) {
 	if podName == "" {
 		return nil, fmt.Errorf("podName must not be empty")
 	}
@@ -175,13 +176,14 @@ func New(podName, nodeName, releaseNamespace string, enableCleanup bool, probe p
 		return nil, fmt.Errorf("releaseNamespace must not be empty")
 	}
 	return &LVM{
-		podName:          podName,
-		nodeName:         nodeName,
-		releaseNamespace: releaseNamespace,
-		enableCleanup:    enableCleanup,
-		probe:            probe,
-		lvm:              lvmMgr,
-		tracer:           tp.Tracer("localdisk.csi.acstor.io/internal/csi/api/volume/lvm"),
+		podName:               podName,
+		nodeName:              nodeName,
+		releaseNamespace:      releaseNamespace,
+		enableCleanup:         enableCleanup,
+		enableStorageCapacity: enableStorageCapacity,
+		probe:                 probe,
+		lvm:                   lvmMgr,
+		tracer:                tp.Tracer("localdisk.csi.acstor.io/internal/csi/api/volume/lvm"),
 	}, nil
 }
 
@@ -215,7 +217,9 @@ func (l *LVM) NeedLeaderElection() bool {
 
 // GetCSIDriver returns the CSI driver object for the volume manager.
 func (l *LVM) GetCSIDriver() *storagev1.CSIDriver {
-	return csiDriver
+	driver := csiDriver.DeepCopy()
+	driver.Spec.StorageCapacity = &l.enableStorageCapacity
+	return driver
 }
 
 // GetDriverName returns the name of the driver.

@@ -1,0 +1,62 @@
+---
+# StatefulSet example with the Cluster Autoscaler workaround.
+#
+# The Kubernetes Cluster Autoscaler does not consider CSIStorageCapacity when
+# simulating scale-up, so pods that are Pending due to insufficient local NVMe
+# capacity may not trigger a new node. Adding a required pod anti-affinity on
+# kubernetes.io/hostname forces the autoscaler to base its scale-up decisions
+# on placement constraints rather than storage capacity. See
+# docs/user-guide.md for details.
+#
+# Starts with 3 replicas; scale up (e.g. `kubectl scale sts statefulset-lcd-lvm
+# --replicas=N`) to exercise autoscaler-driven node scale-up.
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: statefulset-lcd-lvm
+  labels:
+    app: busybox
+spec:
+  podManagementPolicy: Parallel
+  replicas: 3
+  template:
+    metadata:
+      labels:
+        app: busybox
+    spec:
+      nodeSelector:
+        "kubernetes.io/os": linux
+      affinity:
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - labelSelector:
+                matchLabels:
+                  app: busybox
+              topologyKey: kubernetes.io/hostname
+      containers:
+        - name: statefulset-lcd
+          image: mcr.microsoft.com/azurelinux/busybox:1.36
+          command:
+            - "/bin/sh"
+            - "-c"
+            - set -euo pipefail; trap exit TERM; while true; do date -u +"%Y-%m-%dT%H:%M:%SZ" | tee -a /mnt/lcd/outfile; sleep 1; done
+          volumeMounts:
+            - name: ephemeral-storage
+              mountPath: /mnt/lcd
+      volumes:
+        - name: ephemeral-storage
+          ephemeral:
+            volumeClaimTemplate:
+              spec:
+                resources:
+                  requests:
+                    storage: 10Gi
+                volumeMode: Filesystem
+                accessModes:
+                  - ReadWriteOnce
+                storageClassName: local
+  updateStrategy:
+    type: RollingUpdate
+  selector:
+    matchLabels:
+      app: busybox

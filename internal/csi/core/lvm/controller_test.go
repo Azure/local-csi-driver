@@ -334,7 +334,7 @@ func TestLVM_Create(t *testing.T) {
 			p := probe.NewFake([]string{"device1", "device2"}, nil)
 			lvmMgr := lvmMgr.NewFake()
 
-			l, err := lvm.New("podname", "nodename", "default", true, p, lvmMgr, tp)
+			l, err := lvm.New("podname", "nodename", "default", true, true, p, lvmMgr, tp)
 			if err != nil {
 				t.Fatalf("failed to create LVM instance: %v", err)
 			}
@@ -665,7 +665,7 @@ func TestLVM_List(t *testing.T) {
 			tp := telemetry.NewNoopTracerProvider()
 			p := probe.NewFake([]string{"device1"}, nil)
 
-			l, err := lvm.New("test-pod", "test-node", "test-namespace", false, p, mockLVM, tp)
+			l, err := lvm.New("test-pod", "test-node", "test-namespace", false, true, p, mockLVM, tp)
 			if err != nil {
 				t.Fatal(err)
 			}
