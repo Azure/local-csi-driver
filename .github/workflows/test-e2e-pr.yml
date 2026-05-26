@@ -33,9 +33,9 @@ jobs:
       repo_base: "acstor"
       tags: "v0.0.1-pr"
 
-  kind-e2e:
+  kind-test:
     needs: [build-docker, build-helm]
-    name: Kind Integration Test (${{ matrix.arch.tag-suffix }})
+    name: ${{ matrix.test.name }} (${{ matrix.arch.tag-suffix }})
     permissions:
       contents: read
     strategy:
@@ -46,6 +46,29 @@ jobs:
             tag-suffix: amd64
           - runs-on: ubuntu-24.04-arm
             tag-suffix: arm64
+        test:
+          - name: Kind E2E
+            id: e2e
+            make-target: test-e2e
+            kind-args: --kind-nodes single --kind-setup-vg
+            extra-helm: ""
+          - name: Kind External E2E
+            id: external-e2e
+            make-target: test-external-e2e
+            kind-args: --kind-nodes single --kind-setup-vg
+            extra-helm: ""
+          - name: Kind Sanity
+            id: sanity
+            make-target: test-sanity
+            kind-args: --kind-nodes single --kind-setup-vg
+            extra-helm: --set cleanup.lvGarbageCollection.enabled=false --set cleanup.lvmOrphanCleanup.enabled=false
+        exclude:
+          # external-e2e and sanity work on arm64 too, but to save CI minutes
+          # we only run them on amd64. Plain e2e still runs on both arches.
+          - arch: { tag-suffix: arm64 }
+            test: { id: external-e2e }
+          - arch: { tag-suffix: arm64 }
+            test: { id: sanity }
     runs-on: ${{ matrix.arch.runs-on }}
     steps:
       - name: Harden Runner
@@ -88,7 +111,6 @@ jobs:
           name: helm-charts
           path: /tmp/helm
 
-
       - name: Load images into docker and retag for kind
         env:
           TAG_SUFFIX: ${{ matrix.arch.tag-suffix }}
@@ -110,21 +132,34 @@ jobs:
               "${REGISTRY}/${REPO_BASE}/${img}:${TAG}"
           done
 
+      - name: Create kind cluster
+        run: |
+          # Ensure kind binary is on PATH for any in-suite invocations
+          # (e.g. external-e2e's `kind load docker-image` in BeforeSuite).
+          make kind
+          echo "${PWD}/bin" >> "$GITHUB_PATH"
+
       - name: Setup TestRunId
         env:
           TAG_SUFFIX: ${{ matrix.arch.tag-suffix }}
+          TEST_ID: ${{ matrix.test.id }}
         run: |
-          TEST_RUN_ID="${{ github.run_id }}-kind-${TAG_SUFFIX}-${{ github.run_attempt }}"
+          TEST_RUN_ID="${{ github.run_id }}-kind-${TEST_ID}-${TAG_SUFFIX}-${{ github.run_attempt }}"
           echo "TestRunId=${TEST_RUN_ID}" >> "$GITHUB_ENV"
 
-      - name: Run Kind E2E
+      - name: Run ${{ matrix.test.name }}
+        env:
+          MAKE_TARGET: ${{ matrix.test.make-target }}
+          KIND_ARGS: ${{ matrix.test.kind-args }}
+          EXTRA_HELM: ${{ matrix.test.extra-helm }}
         run: |
-          # PR builds never push to ACR. Override pullPolicy so kubelet uses
-          # the locally-loaded image instead of trying to pull from the
-          # registry (which would 404).
+          # PR builds never push to ACR. The suite consumes the pre-built chart
+          # with pullPolicy=IfNotPresent so kubelet uses the locally-loaded
+          # image instead of trying to pull from the registry.
+          # shellcheck disable=SC2086  # KIND_ARGS intentionally word-splits.
           python .github/workflows/scripts/run_tests.py \
-            --command "make test-e2e REGISTRY=${REGISTRY} REPO_BASE=${REPO_BASE} TAG=${TAG} CHART_SOURCE=/tmp/helm/local-csi-driver-${TAG#v}.tgz HELM_ARGS='--set image.driver.pullPolicy=IfNotPresent --set image.manager.pullPolicy=IfNotPresent'" \
-            --cluster-type kind
+            --command "make ${MAKE_TARGET} REGISTRY=${REGISTRY} REPO_BASE=${REPO_BASE} TAG=${TAG} INSTALLATION_METHOD=localHelm CHART_SOURCE=/tmp/helm/local-csi-driver-${TAG#v}.tgz SKIP_BUILD=true HELM_ARGS='--set image.driver.pullPolicy=IfNotPresent --set image.manager.pullPolicy=IfNotPresent ${EXTRA_HELM}'" \
+            --cluster-type kind ${KIND_ARGS}
 
       - name: Upload test results
         if: always()

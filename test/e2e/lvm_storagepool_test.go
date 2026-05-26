@@ -46,6 +46,11 @@ var testLvmStoragePool = func() {
 }
 
 // lvmStatefulsetTest applies a statefulset fixture and waits for it to be ready.
+//
+// Labeled "aks" because the post-provision assertions count Microsoft NVMe
+// Direct Disks via getDiskCount and require pv count and LV stripe count to
+// match the number of NVMe disks. On clusters backed by loopback devices
+// (e.g. kind) those assertions cannot hold.
 func lvmStatefulsetTest(name, statefulsetFixture string) {
 	It(name, Label("aks"), func(ctx context.Context) {
 		cmd := exec.CommandContext(ctx, "kubectl", "apply", "-f", statefulsetFixture)
@@ -148,7 +153,7 @@ func lvmWebhookRejectTest(name, fixture string) {
 // lvmHyperconvergedTest make sure that pod scheduled second time for
 // annotation PVC ends up on the same node.
 func lvmHyperconvergedTest(name, pvcFixture, podFixture string) {
-	It(name, Label("aks"), func(ctx context.Context) {
+	It(name, func(ctx context.Context) {
 		cmd := exec.CommandContext(ctx, "kubectl", "apply", "-f", pvcFixture)
 		_, err := utils.Run(cmd)
 		Expect(err).NotTo(HaveOccurred(), "pvc should be created")
