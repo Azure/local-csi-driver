@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -28,10 +29,12 @@ const (
 	// controllerDs is the resource name used in kubectl commands for the node.
 	controllerDs = "daemonsets/csi-local-node"
 
-	// helmArgs is the environment variable used to pass extra arguments to
-	// helm during installation of the csi driver. We need to disable cleanup,
-	// PV garbage collection, and LVM orphan cleanup for the sanity tests.
-	helmArgs = "HELM_ARGS=--set cleanup.lvGarbageCollection.enabled=false --set cleanup.lvmOrphanCleanup.enabled=false"
+	// helmArgs is the make-style HELM_ARGS argument passed to `make deploy`
+	// to disable cleanup, PV garbage collection, and LVM orphan cleanup for
+	// the sanity tests. Any HELM_ARGS already present in the environment
+	// (e.g. set by CI to pin pullPolicy=IfNotPresent) is preserved by
+	// prepending it - later --set flags win in helm.
+	sanityHelmArgs = "--set cleanup.lvGarbageCollection.enabled=false --set cleanup.lvmOrphanCleanup.enabled=false"
 )
 
 var (
@@ -84,7 +87,8 @@ func TestCSISanity(t *testing.T) {
 
 var _ = SynchronizedBeforeSuite(func(ctx context.Context) {
 	By("Installing csi driver and other required components")
-	common.Setup(ctx, namespace, helmArgs)
+	merged := "HELM_ARGS=" + strings.TrimSpace(os.Getenv("HELM_ARGS")+" "+sanityHelmArgs)
+	common.Setup(ctx, namespace, merged)
 	DeferCleanup(func(ctx context.Context) {
 		common.Teardown(ctx, namespace, *supportBundleDir)
 	})

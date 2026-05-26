@@ -49,7 +49,7 @@ type testConfig struct {
 var TestConfigs = []testConfig{
 	{
 		testSuiteName:         "lvm CSI Sanity Suite",
-		labels:                Label("aks", "lvm", "sanity"),
+		labels:                Label("lvm", "sanity"),
 		controllerAddressPort: "10001",
 		socatPort:             "10000",
 		skips: []string{

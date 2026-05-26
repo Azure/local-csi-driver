@@ -11,6 +11,26 @@ spec:
           - /bin/sh
           - -c
           - |
+            set -e
+            # Wait for cluster DNS to resolve the package mirror before
+            # invoking tdnf. Without this, on slow/just-started clusters
+            # (e.g. CI) tdnf can hit "Could not resolve hostname" and
+            # crash the init container, which then sits in CrashLoopBackOff
+            # for the rest of the test.
+            host=packages.microsoft.com
+            for i in $(seq 1 60); do
+              if getent hosts "$host" >/dev/null 2>&1; then
+                echo "DNS resolved $host after $i attempt(s)"
+                break
+              fi
+              echo "waiting for DNS to resolve $host ($i/60)"
+              sleep 2
+            done
+            getent hosts "$host" >/dev/null || {
+              echo "ERROR: DNS still cannot resolve $host" >&2
+              cat /etc/resolv.conf >&2 || true
+              exit 1
+            }
             tdnf install -y --releasever 3.0 --installroot /shared \
               socat \
               && tdnf clean all \

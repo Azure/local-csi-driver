@@ -431,6 +431,17 @@ multi: kind ## Create a multi node kind cluster.
 		$(KIND) create cluster --config=./test/config/kind-3-node.yaml; \
 	fi
 
+.PHONY: kind-setup-vg
+kind-setup-vg: kind ## Create a 100GiB loop-backed LVM VG (containerstorage) on each kind node.
+	KIND=$(KIND) ./hack/kind-setup-vg.sh
+
+.PHONY: kind-teardown-vg
+kind-teardown-vg: kind ## Remove the loop-backed LVM VG from each kind node.
+	KIND=$(KIND) ./hack/kind-setup-vg.sh --teardown
+
+.PHONY: kind-e2e-bootstrap
+kind-e2e-bootstrap: multi kind-setup-vg ## Create a 3-node kind cluster + VG on each node, ready for e2e / external-e2e.
+
 .PHONY: clean
 clean: kind ## Deletes the kind cluster.
 	$(KIND) delete cluster --name kind

@@ -64,13 +64,13 @@ type testConfig struct {
 var testConfigs = []testConfig{
 	{
 		driverPath:         path.Join("test", "external", "drivers", "lvm.yaml"),
-		labels:             Label("aks", "lvm", "external-e2e"),
+		labels:             Label("lvm", "external-e2e"),
 		testSuiteName:      "lvm External E2E Test Suite",
 		supportTestPattern: "Generic Ephemeral-volume",
 	},
 	{
 		driverPath:    path.Join("test", "external", "drivers", "lvm.yaml"),
-		labels:        Label("aks", "lvm-annotation", "external-e2e"),
+		labels:        Label("lvm-annotation", "external-e2e"),
 		testSuiteName: "lvm-annotation External E2E Test Suite",
 		setup: func(ctx context.Context) {
 			By("setting up installing kyverno")
