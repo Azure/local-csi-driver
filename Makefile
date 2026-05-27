@@ -142,13 +142,13 @@ test-e2e-aks: ginkgo ## Run the e2e tests on AKS.
 
 .PHONY: test-sanity
 test-sanity: ginkgo ## Run the sanity tests.
-	$(eval ARGS := $(ADDITIONAL_GINKGO_FLAGS))
+	$(eval ARGS := $(ADDITIONAL_GINKGO_FLAGS) --fail-fast)
 	$(if $(findstring --dry-run,$(ADDITIONAL_GINKGO_FLAGS)), , $(eval ARGS := $(ARGS) --procs=16))
 	$(call run_tests,sanity,./test/sanity,$(ARGS),)
 
 .PHONY: test-external-e2e
 test-external-e2e: ginkgo ## Run the external e2e tests.
-	$(eval ARGS := $(ADDITIONAL_GINKGO_FLAGS))
+	$(eval ARGS := $(ADDITIONAL_GINKGO_FLAGS) --fail-fast)
 	$(if $(findstring --dry-run,$(ADDITIONAL_GINKGO_FLAGS)), , $(eval ARGS := $(ARGS) --procs=16))
 	$(call run_tests,external-e2e && !Disruptive,./test/external,$(ARGS),)
 
@@ -430,6 +430,17 @@ multi: kind ## Create a multi node kind cluster.
 	else \
 		$(KIND) create cluster --config=./test/config/kind-3-node.yaml; \
 	fi
+
+.PHONY: kind-setup-vg
+kind-setup-vg: kind ## Create a 100GiB loop-backed LVM VG (containerstorage) on each kind node.
+	KIND=$(KIND) ./hack/kind-setup-vg.sh
+
+.PHONY: kind-teardown-vg
+kind-teardown-vg: kind ## Remove the loop-backed LVM VG from each kind node.
+	KIND=$(KIND) ./hack/kind-setup-vg.sh --teardown
+
+.PHONY: kind-e2e-bootstrap
+kind-e2e-bootstrap: multi kind-setup-vg ## Create a 3-node kind cluster + VG on each node, ready for e2e / external-e2e.
 
 .PHONY: clean
 clean: kind ## Deletes the kind cluster.

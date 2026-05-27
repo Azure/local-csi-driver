@@ -48,3 +48,4 @@ config/controller/generated_config.yaml
 
 # Generated NOTICE file (regenerated during docker build)
 NOTICE.txt
+.github/workflows/scripts/__pycache__/run_tests.cpython-312.pyc

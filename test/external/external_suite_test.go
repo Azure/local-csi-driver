@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -22,6 +23,13 @@ import (
 )
 
 const namespace = "kube-system"
+
+// externalE2EHelmArgs disables the driver's pod-termination LVM cleanup so
+// that a daemonset rollout (or graceful pod restart) does not wipe the kind
+// VG mid-suite. We deliberately keep lvGarbageCollection and lvmOrphanCleanup
+// enabled - those reclaim leaked LVs and are needed to keep the VG from
+// filling up under parallel ephemeral-volume tests.
+const externalE2EHelmArgs = "--set cleanup.enabled=false"
 
 var (
 
@@ -64,7 +72,8 @@ func TestExternalE2E(t *testing.T) {
 
 var _ = SynchronizedBeforeSuite(func(ctx context.Context) {
 	By("Installing csi driver and other required components")
-	common.Setup(ctx, namespace)
+	merged := "HELM_ARGS=" + strings.TrimSpace(os.Getenv("HELM_ARGS")+" "+externalE2EHelmArgs)
+	common.Setup(ctx, namespace, merged)
 	DeferCleanup(func(ctx context.Context) {
 		common.Teardown(ctx, namespace, *supportBundleDir)
 	})

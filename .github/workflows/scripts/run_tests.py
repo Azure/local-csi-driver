@@ -10,6 +10,7 @@ import time
 import argparse
 import logging
 import asyncio
+import sys
 import uuid
 import json
 import functools
@@ -227,14 +228,34 @@ class KindCluster(Cluster):
     Class for managing a kind cluster.
     """
 
+    def __init__(self, nodes: str = "single", setup_vg: bool = False):
+        if nodes not in ("single", "multi"):
+            raise ValueError(f"Unsupported kind node config: {nodes}")
+        self.nodes = nodes
+        self.setup_vg = setup_vg
+
     async def setup(self) -> None:
         """
         Set up the kind cluster.
         """
-        logging.info("Creating kind cluster")
-        if await run_command("make single", os.environ.copy()) != 0:
+        logging.info(f"Creating kind cluster (target=make {self.nodes})")
+        if await run_command(f"make {self.nodes}", os.environ.copy()) != 0:
             logging.error("Failed to create kind cluster")
             raise RuntimeError("Failed to create kind cluster")
+        if self.setup_vg:
+            # Pre-create the LVM volume group the driver expects on each kind
+            # node so tests can run without real NVMe hardware. The driver's
+            # CreateVolume path short-circuits NVMe discovery when the VG
+            # already exists.
+            logging.info("Setting up LVM volume group on kind nodes")
+            cmd = "make kind-setup-vg"
+            if await run_command(cmd, os.environ.copy()) != 0:
+                logging.error(
+                    "Failed to set up LVM volume group on kind nodes"
+                )
+                raise RuntimeError(
+                    "Failed to set up LVM volume group on kind nodes"
+                )
 
     async def cleanup(self) -> None:
         """
@@ -425,7 +446,7 @@ def create_cluster(args: argparse.Namespace, config: EnvConfig) -> Cluster:
         Cluster: An instance of the appropriate cluster class.
     """
     if args.cluster_type == "kind":
-        return KindCluster()
+        return KindCluster(nodes=args.kind_nodes, setup_vg=args.kind_setup_vg)
     elif args.cluster_type == "aks":
         return AksCluster(
             args.aks_template,
@@ -483,7 +504,7 @@ async def retry_async(func, retries, delay, validator, error_msg):
             await asyncio.sleep(delay)
 
 
-async def main() -> None:
+async def main() -> int:
     """
     Main function to run the script.
     """
@@ -504,6 +525,28 @@ async def main() -> None:
         default="none",
         required=False,
         help="Specify the cluster type: kind, aks, or none",
+    )
+
+    parser.add_argument(
+        "--kind-nodes",
+        type=str,
+        choices=["single", "multi"],
+        default="single",
+        required=False,
+        help=(
+            "Kind cluster configuration: single (1 node) or multi (3 nodes). "
+            "Only used when --cluster-type=kind."
+        ),
+    )
+
+    parser.add_argument(
+        "--kind-setup-vg",
+        action="store_true",
+        help=(
+            "After creating the kind cluster, pre-create the LVM volume "
+            "group the driver expects on each node. "
+            "Only used when --cluster-type=kind."
+        ),
     )
 
     parser.add_argument(
@@ -568,6 +611,8 @@ async def main() -> None:
     logging.info("Script execution completed")
 
     await cluster.cleanup()
+
+    return exit_code
 
 
 @dataclass
@@ -913,4 +958,4 @@ async def _install_elastic_san_extension() -> None:
             raise RuntimeError(f"Failed to install extension: {str(e)}")
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    sys.exit(asyncio.run(main()))

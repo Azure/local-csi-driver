@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -18,6 +19,7 @@ import (
 	"k8s.io/client-go/tools/clientcmd"
 
 	"local-csi-driver/test/pkg/common"
+	"local-csi-driver/test/pkg/kind"
 	"local-csi-driver/test/pkg/utils"
 )
 
@@ -28,10 +30,16 @@ const (
 	// controllerDs is the resource name used in kubectl commands for the node.
 	controllerDs = "daemonsets/csi-local-node"
 
-	// helmArgs is the environment variable used to pass extra arguments to
-	// helm during installation of the csi driver. We need to disable cleanup,
-	// PV garbage collection, and LVM orphan cleanup for the sanity tests.
-	helmArgs = "HELM_ARGS=--set cleanup.lvGarbageCollection.enabled=false --set cleanup.lvmOrphanCleanup.enabled=false"
+	// helmArgs is the make-style HELM_ARGS argument passed to `make deploy`
+	// to disable cleanup, PV garbage collection, and LVM orphan cleanup for
+	// the sanity tests. Any HELM_ARGS already present in the environment
+	// (e.g. set by CI to pin pullPolicy=IfNotPresent) is preserved by
+	// prepending it - later --set flags win in helm.
+	// cleanup.enabled is also disabled so that pod-termination cleanup
+	// does not destroy the volume group when the daemonset is patched to
+	// add the socat sidecar (which causes a rollout that SIGTERMs the
+	// original pod).
+	sanityHelmArgs = "--set cleanup.enabled=false --set cleanup.lvGarbageCollection.enabled=false --set cleanup.lvmOrphanCleanup.enabled=false"
 )
 
 var (
@@ -40,6 +48,11 @@ var (
 
 	// socatPatch is the path to the socat patch file.
 	socatPatch = filepath.Join("test", "sanity", "fixtures", "socat-patch.yaml")
+
+	// socatImage must match the image used by socatPatch. We preload it
+	// into kind clusters so the patched daemonset does not have to pull
+	// it from Docker Hub through kind's NAT, which is unreliable on CI.
+	socatImage = "alpine/socat:1.8.0.3"
 
 	// junitReport is the report file generated for consumption by test framework.
 	junitReport = flag.String("junit-report", "junit.xml", "Path to the junit report")
@@ -84,10 +97,17 @@ func TestCSISanity(t *testing.T) {
 
 var _ = SynchronizedBeforeSuite(func(ctx context.Context) {
 	By("Installing csi driver and other required components")
-	common.Setup(ctx, namespace, helmArgs)
+	merged := "HELM_ARGS=" + strings.TrimSpace(os.Getenv("HELM_ARGS")+" "+sanityHelmArgs)
+	common.Setup(ctx, namespace, merged)
 	DeferCleanup(func(ctx context.Context) {
 		common.Teardown(ctx, namespace, *supportBundleDir)
 	})
+
+	if kind.IsCluster() {
+		By("Preloading " + socatImage + " into the kind cluster")
+		Expect(kind.LoadImageWithName(ctx, socatImage)).To(Succeed(),
+			"failed to preload %s into kind", socatImage)
+	}
 
 	By("Applying socat patch to node and controller")
 	for _, component := range []string{controllerDs} {
@@ -127,7 +147,7 @@ var _ = SynchronizedBeforeSuite(func(ctx context.Context) {
 
 }, func() {
 	_, _ = fmt.Fprintf(GinkgoWriter, "Finished installing csi driver and other required components\n")
-})
+}, NodeTimeout(10*time.Minute))
 
 var _ = AfterEach(func(ctx context.Context) {
 	common.CollectSupportBundle(ctx, *supportBundleDir)
