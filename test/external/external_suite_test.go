@@ -24,11 +24,12 @@ import (
 
 const namespace = "kube-system"
 
-// externalE2EHelmArgs disables the driver's pod-termination LVM cleanup
-// and the lvGarbageCollection/lvmOrphanCleanup controllers. Otherwise a
-// daemonset rollout (or graceful pod restart) can wipe the kind VG mid-suite,
-// causing CreateVolume RPCs to fail with "0 capacity" / "no devices found".
-const externalE2EHelmArgs = "--set cleanup.enabled=false --set cleanup.lvGarbageCollection.enabled=false --set cleanup.lvmOrphanCleanup.enabled=false"
+// externalE2EHelmArgs disables the driver's pod-termination LVM cleanup so
+// that a daemonset rollout (or graceful pod restart) does not wipe the kind
+// VG mid-suite. We deliberately keep lvGarbageCollection and lvmOrphanCleanup
+// enabled - those reclaim leaked LVs and are needed to keep the VG from
+// filling up under parallel ephemeral-volume tests.
+const externalE2EHelmArgs = "--set cleanup.enabled=false"
 
 var (
 

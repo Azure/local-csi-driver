@@ -51,17 +51,14 @@ jobs:
             id: e2e
             make-target: test-e2e
             kind-args: --kind-nodes single --kind-setup-vg
-            extra-helm: ""
           - name: Kind External E2E
             id: external-e2e
             make-target: test-external-e2e
             kind-args: --kind-nodes single --kind-setup-vg
-            extra-helm: ""
           - name: Kind Sanity
             id: sanity
             make-target: test-sanity
             kind-args: --kind-nodes single --kind-setup-vg
-            extra-helm: --set cleanup.lvGarbageCollection.enabled=false --set cleanup.lvmOrphanCleanup.enabled=false
         exclude:
           # external-e2e and sanity work on arm64 too, but to save CI minutes
           # we only run them on amd64. Plain e2e still runs on both arches.
@@ -151,14 +148,13 @@ jobs:
         env:
           MAKE_TARGET: ${{ matrix.test.make-target }}
           KIND_ARGS: ${{ matrix.test.kind-args }}
-          EXTRA_HELM: ${{ matrix.test.extra-helm }}
         run: |
           # PR builds never push to ACR. The suite consumes the pre-built chart
           # with pullPolicy=IfNotPresent so kubelet uses the locally-loaded
           # image instead of trying to pull from the registry.
           # shellcheck disable=SC2086  # KIND_ARGS intentionally word-splits.
           python .github/workflows/scripts/run_tests.py \
-            --command "make ${MAKE_TARGET} REGISTRY=${REGISTRY} REPO_BASE=${REPO_BASE} TAG=${TAG} INSTALLATION_METHOD=localHelm CHART_SOURCE=/tmp/helm/local-csi-driver-${TAG#v}.tgz SKIP_BUILD=true HELM_ARGS='--set image.driver.pullPolicy=IfNotPresent --set image.manager.pullPolicy=IfNotPresent ${EXTRA_HELM}'" \
+            --command "make ${MAKE_TARGET} REGISTRY=${REGISTRY} REPO_BASE=${REPO_BASE} TAG=${TAG} INSTALLATION_METHOD=localHelm CHART_SOURCE=/tmp/helm/local-csi-driver-${TAG#v}.tgz SKIP_BUILD=true HELM_ARGS='--set image.driver.pullPolicy=IfNotPresent --set image.manager.pullPolicy=IfNotPresent'" \
             --cluster-type kind ${KIND_ARGS}
 
       - name: Upload test results
