@@ -9,13 +9,13 @@
 # device discovery if the VG already exists, so this is enough to make the
 # e2e / external-e2e suites runnable on Kind.
 #
-# Each node gets a sparse file (default 100G) attached to a loop device, with a
+# Each node gets a sparse file (default 500G) attached to a loop device, with a
 # physical volume on top and the expected VG (default "containerstorage")
 # created with the "local-csi" tag. Because the backing file is sparse, only
 # data actually written to logical volumes consumes real host disk space.
 #
 # Usage:
-#   ./hack/kind-setup-vg.sh                       # cluster "kind", VG "containerstorage", 100G
+#   ./hack/kind-setup-vg.sh                       # cluster "kind", VG "containerstorage", 500G
 #   KIND_CLUSTER=mycluster VG_SIZE=8G ./hack/kind-setup-vg.sh
 #   ./hack/kind-setup-vg.sh --teardown            # remove VG + loop + backing file
 #
@@ -26,7 +26,7 @@ set -euo pipefail
 CLUSTER="${KIND_CLUSTER:-kind}"
 VG_NAME="${VG_NAME:-containerstorage}"
 VG_TAG="${VG_TAG:-local-csi}"
-VG_SIZE="${VG_SIZE:-100G}"
+VG_SIZE="${VG_SIZE:-500G}"
 IMG_PATH_TEMPLATE="${IMG_PATH:-/csi-local-vg/__HOSTNAME__.img}"
 TMPFS_DIR="${TMPFS_DIR:-/csi-local-vg}"
 KIND_BIN="${KIND:-kind}"

@@ -142,7 +142,7 @@ test-e2e-aks: ginkgo ## Run the e2e tests on AKS.
 
 .PHONY: test-sanity
 test-sanity: ginkgo ## Run the sanity tests.
-	$(eval ARGS := $(ADDITIONAL_GINKGO_FLAGS))
+	$(eval ARGS := $(ADDITIONAL_GINKGO_FLAGS) --fail-fast)
 	$(if $(findstring --dry-run,$(ADDITIONAL_GINKGO_FLAGS)), , $(eval ARGS := $(ARGS) --procs=16))
 	$(call run_tests,sanity,./test/sanity,$(ARGS),)
 
