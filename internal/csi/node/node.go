@@ -587,6 +587,17 @@ func (ns *Server) NodeExpandVolume(ctx context.Context, req *csi.NodeExpandVolum
 		return nil, status.Error(codes.Internal, err.Error())
 	}
 
+	// TODO: a failover-driven reprovisioning  recreates the LV at the expanded size
+	// instead of the original create-time size.
+	// As getCapacityAndLimit takes the capacity from the PV's CapacityParam
+	// (pv.spec.csi.volumeAttributes["localdisk.csi.acstor.io/capacity"]) which is
+	// immutable, after PV creation the PV will always have the original size.
+	//
+	// Consequence: if the node loses its disks after an expansion and
+	// NodeStageVolume triggers a recovery via NodeEnsureVolume, the LV will be
+	// recreated at the *original* create-time size from CapacityParam, not at
+	// the expanded size.
+
 	log.V(2).Info("NodeExpandVolume resized volume")
 	span.SetStatus(otcodes.Ok, "resized volume")
 	return resp, nil

@@ -96,15 +96,15 @@ func (l *LVM) NodeExpandVolume(ctx context.Context, req *csi.NodeExpandVolumeReq
 		}
 	}
 
-	// Check if the requested size is greater than the current size.
+	// Check if the requested size is less than the current size.
 	if capacityRequest.CmpInt64(int64(lv.Size)) < 0 {
 		span.SetStatus(codes.Error, "requested size is less than current size")
 		return nil, status.Errorf(grpcCodes.FailedPrecondition, "requested size %d is less than current size %d", capacityRequest.Value(), lv.Size)
 	}
 
-	// Check if the volume is already expanded.
-	if capacityRequest.CmpInt64(int64(lv.Size)) >= 0 {
-		span.SetStatus(codes.Error, "volume is already expanded")
+	// Check if the volume is already at the requested size.
+	if capacityRequest.CmpInt64(int64(lv.Size)) == 0 {
+		span.SetStatus(codes.Ok, "volume is already at the requested size")
 		return &csi.NodeExpandVolumeResponse{
 			CapacityBytes: req.GetCapacityRange().GetRequiredBytes(),
 		}, nil

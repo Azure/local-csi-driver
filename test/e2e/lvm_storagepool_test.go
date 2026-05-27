@@ -41,6 +41,7 @@ var testLvmStoragePool = func() {
 
 		lvmWebhookRejectTest("should reject statefulset with non-ephemeral local storagepool", common.LvmPvcNoAnnotationFixture)
 		lvmHyperconvergedTest("should create hyperconverged pod with local storagepool", common.LvmPvcAnnotationFixure, common.LvmPodAnnotationFixture)
+		lvmExpansionTest("should expand a PVC and grow the backing LV", common.LvmPvcAnnotationFixure, common.LvmPodAnnotationFixture)
 	})
 
 }
