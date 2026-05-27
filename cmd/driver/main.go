@@ -25,6 +25,7 @@ import (
 	"local-csi-driver/internal/pkg/probe"
 	"local-csi-driver/internal/pkg/raid"
 
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
@@ -32,6 +33,7 @@ import (
 	"k8s.io/klog/v2/textlogger"
 	"k8s.io/utils/exec"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
 	"sigs.k8s.io/controller-runtime/pkg/metrics"
 	"sigs.k8s.io/controller-runtime/pkg/metrics/filters"
@@ -199,6 +201,13 @@ func main() {
 		HealthProbeBindAddress: probeAddr,
 		LeaderElection:         false, // No webhooks, no leader election needed
 		LeaderElectionID:       "local-csi-driver",
+		// Pod is only read once at startup (StartupDiagnostic). Bypass the
+		// cache so we don't start a cluster-wide Pod informer on every node.
+		Client: client.Options{
+			Cache: &client.CacheOptions{
+				DisableFor: []client.Object{&corev1.Pod{}},
+			},
+		},
 	})
 	if err != nil {
 		logAndExit(err, "unable to start manager")
