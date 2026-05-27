@@ -23,7 +23,7 @@ DriverInfo:
     # support ReadWriteMany access modes
     RWX: false
     # support volume expansion for controller
-    controllerExpansion: false
+    controllerExpansion: true
     # support volume expansion for node
     nodeExpansion: true
     # support volume limits (limit on number of volumes per node)
