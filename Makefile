@@ -148,7 +148,7 @@ test-sanity: ginkgo ## Run the sanity tests.
 
 .PHONY: test-external-e2e
 test-external-e2e: ginkgo ## Run the external e2e tests.
-	$(eval ARGS := $(ADDITIONAL_GINKGO_FLAGS))
+	$(eval ARGS := $(ADDITIONAL_GINKGO_FLAGS) --fail-fast)
 	$(if $(findstring --dry-run,$(ADDITIONAL_GINKGO_FLAGS)), , $(eval ARGS := $(ARGS) --procs=16))
 	$(call run_tests,external-e2e && !Disruptive,./test/external,$(ARGS),)
 
