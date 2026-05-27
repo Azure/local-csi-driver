@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -22,6 +23,12 @@ import (
 )
 
 const namespace = "kube-system"
+
+// externalE2EHelmArgs disables the driver's pod-termination LVM cleanup
+// and the lvGarbageCollection/lvmOrphanCleanup controllers. Otherwise a
+// daemonset rollout (or graceful pod restart) can wipe the kind VG mid-suite,
+// causing CreateVolume RPCs to fail with "0 capacity" / "no devices found".
+const externalE2EHelmArgs = "--set cleanup.enabled=false --set cleanup.lvGarbageCollection.enabled=false --set cleanup.lvmOrphanCleanup.enabled=false"
 
 var (
 
@@ -64,7 +71,8 @@ func TestExternalE2E(t *testing.T) {
 
 var _ = SynchronizedBeforeSuite(func(ctx context.Context) {
 	By("Installing csi driver and other required components")
-	common.Setup(ctx, namespace)
+	merged := "HELM_ARGS=" + strings.TrimSpace(os.Getenv("HELM_ARGS")+" "+externalE2EHelmArgs)
+	common.Setup(ctx, namespace, merged)
 	DeferCleanup(func(ctx context.Context) {
 		common.Teardown(ctx, namespace, *supportBundleDir)
 	})
