@@ -19,6 +19,7 @@ import (
 	"k8s.io/client-go/tools/clientcmd"
 
 	"local-csi-driver/test/pkg/common"
+	"local-csi-driver/test/pkg/kind"
 	"local-csi-driver/test/pkg/utils"
 )
 
@@ -47,6 +48,11 @@ var (
 
 	// socatPatch is the path to the socat patch file.
 	socatPatch = filepath.Join("test", "sanity", "fixtures", "socat-patch.yaml")
+
+	// socatImage must match the image used by socatPatch. We preload it
+	// into kind clusters so the patched daemonset does not have to pull
+	// it from Docker Hub through kind's NAT, which is unreliable on CI.
+	socatImage = "alpine/socat:1.8.0.3"
 
 	// junitReport is the report file generated for consumption by test framework.
 	junitReport = flag.String("junit-report", "junit.xml", "Path to the junit report")
@@ -96,6 +102,12 @@ var _ = SynchronizedBeforeSuite(func(ctx context.Context) {
 	DeferCleanup(func(ctx context.Context) {
 		common.Teardown(ctx, namespace, *supportBundleDir)
 	})
+
+	if kind.IsCluster() {
+		By("Preloading " + socatImage + " into the kind cluster")
+		Expect(kind.LoadImageWithName(ctx, socatImage)).To(Succeed(),
+			"failed to preload %s into kind", socatImage)
+	}
 
 	By("Applying socat patch to node and controller")
 	for _, component := range []string{controllerDs} {

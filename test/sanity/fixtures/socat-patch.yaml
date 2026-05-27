@@ -1,48 +1,23 @@
-# This patch will add a socat container to the pod that listens on TCP port 10000 and forwards the traffic to the CSI
-# socket. This is useful for debugging the CSI driver using the csi-sanity tool.
-# Example: kubectl patch deployments.apps -n kube-system cns-cluster-manager --patch-file ./test/sanity/fixtures/agent-patch.yaml
+# This patch adds a socat sidecar to the csi-local-node daemonset so
+# csi-sanity can talk to the CSI socket over TCP port 10000.
+#
+# We use the prebuilt alpine/socat image so the sidecar starts without
+# installing socat at runtime. The previous approach pulled
+# mcr.microsoft.com/azurelinux/base/core and ran `tdnf install socat`
+# against packages.microsoft.com from inside an init container, which
+# was unreliable in kind clusters on CI (CoreDNS cold-start + double-NAT
+# to the host caused the init container to hang for >10 minutes).
+#
+# Example:
+#   kubectl patch daemonsets.apps -n kube-system csi-local-node \
+#     --patch-file ./test/sanity/fixtures/socat-patch.yaml
 spec:
   template:
     spec:
-      initContainers:
-      - name: init-socat
-        image: mcr.microsoft.com/azurelinux/base/core:3.0
-        command:
-          - /bin/sh
-          - -c
-          - |
-            set -e
-            # Wait for cluster DNS to resolve the package mirror before
-            # invoking tdnf. Without this, on slow/just-started clusters
-            # (e.g. CI) tdnf can hit "Could not resolve hostname" and
-            # crash the init container, which then sits in CrashLoopBackOff
-            # for the rest of the test.
-            host=packages.microsoft.com
-            for i in $(seq 1 60); do
-              if getent hosts "$host" >/dev/null 2>&1; then
-                echo "DNS resolved $host after $i attempt(s)"
-                break
-              fi
-              echo "waiting for DNS to resolve $host ($i/60)"
-              sleep 2
-            done
-            getent hosts "$host" >/dev/null || {
-              echo "ERROR: DNS still cannot resolve $host" >&2
-              cat /etc/resolv.conf >&2 || true
-              exit 1
-            }
-            tdnf install -y --releasever 3.0 --installroot /shared \
-              socat \
-              && tdnf clean all \
-              && rm -rf /staging/run /staging/var/log /staging/var/cache/tdnf
-        volumeMounts:
-        - mountPath: /shared
-          name: shared-dir
       containers:
       - name: socat-csi
-        image: mcr.microsoft.com/azurelinux/base/core:3.0
-        command:
-          - /shared/usr/bin/socat
+        image: alpine/socat:1.8.0.3
+        imagePullPolicy: IfNotPresent
         args:
           - tcp-listen:10000,fork,reuseaddr
           - unix-connect:/csi/csi.sock
@@ -51,8 +26,3 @@ spec:
         volumeMounts:
         - mountPath: /csi
           name: csi-socket-dir
-        - mountPath: /shared
-          name: shared-dir
-      volumes:
-      - name: shared-dir
-        emptyDir: {}
