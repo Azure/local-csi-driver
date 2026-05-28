@@ -35,10 +35,9 @@ const (
 //  3. assert that the LV on the owning node actually grew (the original bug
 //     was that lvextend was never invoked because the early-return branch
 //     swallowed the request);
-//  4. assert that PVC.status, PV.spec.capacity, and
-//     pv.spec.csi.volumeAttributes[".../capacity"] all reflect the new size
-//     so a subsequent failover-driven re-provisioning recreates the LV at the
-//     expanded size.
+//  4. assert that PVC.status, PV.spec.capacity, and the PV's
+//     expanded-capacity annotation all reflect the new size so a subsequent
+//     failover-driven re-provisioning recreates the LV at the expanded size.
 func lvmExpansionTest(name, pvcFixture, podFixture string) {
 	It(name, func(ctx context.Context) {
 		By("applying the PVC fixture")
@@ -127,6 +126,19 @@ func lvmExpansionTest(name, pvcFixture, podFixture string) {
 			g.Expect(err).NotTo(HaveOccurred(), "Failed to get PV capacity")
 			g.Expect(strings.TrimSpace(out)).To(Equal(expansionPVCTargetSize), "PV.spec.capacity should equal the new request")
 		}).WithContext(ctx).Should(Succeed(), "PV.spec.capacity never updated")
+
+		By("verifying the PV expanded-capacity annotation records the actual LV size")
+		Eventually(func(g Gomega, ctx context.Context) {
+			jsonpath := fmt.Sprintf("{.metadata.annotations['%s']}", strings.ReplaceAll(lvm.ExpandedCapacityParam, "/", "\\/"))
+			out, err := utils.Run(exec.CommandContext(ctx, "kubectl", "get", "pv", pvName, "-o", fmt.Sprintf("jsonpath=%s", jsonpath)))
+			g.Expect(err).NotTo(HaveOccurred(), "Failed to get PV expanded-capacity annotation")
+			raw := strings.TrimSpace(out)
+			g.Expect(raw).NotTo(BeEmpty(), "PV should have the expanded-capacity annotation")
+			annotationBytes, err := strconv.ParseInt(raw, 10, 64)
+			g.Expect(err).NotTo(HaveOccurred(), "expanded-capacity annotation should be a valid integer")
+			g.Expect(annotationBytes).To(BeNumerically(">=", expansionPVCTargetBytes),
+				"expanded-capacity annotation (%d) should be >= requested expansion size (%d)", annotationBytes, expansionPVCTargetBytes)
+		}).WithContext(ctx).Should(Succeed(), "PV expanded-capacity annotation never set")
 
 		By("verifying the workload is still Running after the expand")
 		out, err := utils.Run(exec.CommandContext(ctx, "kubectl", "get", "pod", "-l", "part-of=e2e-test", "-o", "jsonpath={.items[0].status.phase}"))

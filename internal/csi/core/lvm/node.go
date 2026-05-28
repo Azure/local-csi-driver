@@ -13,6 +13,7 @@ import (
 	"google.golang.org/grpc/status"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
+	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	"local-csi-driver/internal/csi/capability"
 	"local-csi-driver/internal/pkg/events"
@@ -117,9 +118,21 @@ func (l *LVM) NodeExpandVolume(ctx context.Context, req *csi.NodeExpandVolumeReq
 		recorder.Eventf(corev1.EventTypeWarning, expandingLogicalVolumeFailed, "Failed to expand volume %s/%s to %d: %v", id.VolumeGroup, id.LogicalVolume, capacityRequest.Value(), err)
 		return nil, err
 	}
-	recorder.Eventf(corev1.EventTypeNormal, expandedLogicalVolume, "Expanded volume %s/%s to %d", id.VolumeGroup, id.LogicalVolume, capacityRequest.Value())
+
+	// Re-query the LV to get the actual allocated size after extend,
+	// Fall back to the requested size if the query fails; the expand itself
+	// already succeeded.
+	actualSize := req.GetCapacityRange().GetRequiredBytes()
+	expandedLV, err := l.lvm.GetLogicalVolume(ctx, id.VolumeGroup, id.LogicalVolume)
+	if err != nil {
+		log.FromContext(ctx).Error(err, "failed to get volume after expand, using requested size", "volumeId", req.GetVolumeId())
+	} else {
+		actualSize = int64(expandedLV.Size)
+	}
+
+	recorder.Eventf(corev1.EventTypeNormal, expandedLogicalVolume, "Expanded volume %s/%s to %d", id.VolumeGroup, id.LogicalVolume, actualSize)
 	return &csi.NodeExpandVolumeResponse{
-		CapacityBytes: req.GetCapacityRange().GetRequiredBytes(),
+		CapacityBytes: actualSize,
 	}, nil
 }
 

@@ -123,10 +123,10 @@ func TestNodeExpandVolume(t *testing.T) {
 				CapacityRange: &csi.CapacityRange{RequiredBytes: expandedSize},
 			},
 			expectLvm: func(m *lvmMgr.MockManager) {
-				m.EXPECT().GetLogicalVolume(gomock.Any(), testVG, testLV).
+				first := m.EXPECT().GetLogicalVolume(gomock.Any(), testVG, testLV).
 					Return(&lvmMgr.LogicalVolume{Name: testLV, Size: lvmMgr.Int64String(currentSize)}, nil).
 					Times(1)
-				m.EXPECT().
+				second := m.EXPECT().
 					ExtendLogicalVolume(gomock.Any(), gomock.AssignableToTypeOf(lvmMgr.ExtendLVOptions{})).
 					DoAndReturn(func(_ context.Context, opts lvmMgr.ExtendLVOptions) error {
 						if opts.Name != expandLVName {
@@ -137,7 +137,35 @@ func TestNodeExpandVolume(t *testing.T) {
 						}
 						return nil
 					}).
+					Times(1).
+					After(first)
+				m.EXPECT().GetLogicalVolume(gomock.Any(), testVG, testLV).
+					Return(&lvmMgr.LogicalVolume{Name: testLV, Size: lvmMgr.Int64String(expandedSize)}, nil).
+					Times(1).
+					After(second)
+			},
+			expectResp:     true,
+			expectCapacity: expandedSize,
+		},
+		{
+			name: "re-query failure after extend falls back to requested size",
+			req: &csi.NodeExpandVolumeRequest{
+				VolumeId:      testVolumeID,
+				CapacityRange: &csi.CapacityRange{RequiredBytes: expandedSize},
+			},
+			expectLvm: func(m *lvmMgr.MockManager) {
+				first := m.EXPECT().GetLogicalVolume(gomock.Any(), testVG, testLV).
+					Return(&lvmMgr.LogicalVolume{Name: testLV, Size: lvmMgr.Int64String(currentSize)}, nil).
 					Times(1)
+				second := m.EXPECT().
+					ExtendLogicalVolume(gomock.Any(), gomock.AssignableToTypeOf(lvmMgr.ExtendLVOptions{})).
+					Return(nil).
+					Times(1).
+					After(first)
+				m.EXPECT().GetLogicalVolume(gomock.Any(), testVG, testLV).
+					Return(nil, lvmMgr.ErrNotFound).
+					Times(1).
+					After(second)
 			},
 			expectResp:     true,
 			expectCapacity: expandedSize,
@@ -154,10 +182,10 @@ func TestNodeExpandVolume(t *testing.T) {
 				},
 			},
 			expectLvm: func(m *lvmMgr.MockManager) {
-				m.EXPECT().GetLogicalVolume(gomock.Any(), testVG, testLV).
+				first := m.EXPECT().GetLogicalVolume(gomock.Any(), testVG, testLV).
 					Return(&lvmMgr.LogicalVolume{Name: testLV, Size: lvmMgr.Int64String(currentSize)}, nil).
 					Times(1)
-				m.EXPECT().
+				second := m.EXPECT().
 					ExtendLogicalVolume(gomock.Any(), gomock.AssignableToTypeOf(lvmMgr.ExtendLVOptions{})).
 					DoAndReturn(func(_ context.Context, opts lvmMgr.ExtendLVOptions) error {
 						if !opts.ResizeFS {
@@ -165,7 +193,12 @@ func TestNodeExpandVolume(t *testing.T) {
 						}
 						return nil
 					}).
-					Times(1)
+					Times(1).
+					After(first)
+				m.EXPECT().GetLogicalVolume(gomock.Any(), testVG, testLV).
+					Return(&lvmMgr.LogicalVolume{Name: testLV, Size: lvmMgr.Int64String(expandedSize)}, nil).
+					Times(1).
+					After(second)
 			},
 			expectResp:     true,
 			expectCapacity: expandedSize,
