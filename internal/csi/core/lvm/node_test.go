@@ -87,7 +87,7 @@ func TestNodeExpandVolume(t *testing.T) {
 			expectErrCode: codes.NotFound,
 		},
 		{
-			name: "requested less than current returns FailedPrecondition",
+			name: "requested less than current returns OK with actual size",
 			req: &csi.NodeExpandVolumeRequest{
 				VolumeId:      testVolumeID,
 				CapacityRange: &csi.CapacityRange{RequiredBytes: smallerSize},
@@ -98,8 +98,8 @@ func TestNodeExpandVolume(t *testing.T) {
 					Times(1)
 				// ExtendLogicalVolume must NOT be called.
 			},
-			expectErr:     true,
-			expectErrCode: codes.FailedPrecondition,
+			expectResp:     true,
+			expectCapacity: currentSize,
 		},
 		{
 			name: "requested equals current is idempotent no-op",
@@ -148,7 +148,7 @@ func TestNodeExpandVolume(t *testing.T) {
 			expectCapacity: expandedSize,
 		},
 		{
-			name: "re-query failure after extend falls back to requested size",
+			name: "re-query failure after extend returns error",
 			req: &csi.NodeExpandVolumeRequest{
 				VolumeId:      testVolumeID,
 				CapacityRange: &csi.CapacityRange{RequiredBytes: expandedSize},
@@ -167,8 +167,8 @@ func TestNodeExpandVolume(t *testing.T) {
 					Times(1).
 					After(second)
 			},
-			expectResp:     true,
-			expectCapacity: expandedSize,
+			expectErr:     true,
+			expectErrCode: codes.Internal,
 		},
 		{
 			name: "requested greater with mount capability sets ResizeFS",
@@ -202,6 +202,25 @@ func TestNodeExpandVolume(t *testing.T) {
 			},
 			expectResp:     true,
 			expectCapacity: expandedSize,
+		},
+		{
+			name: "extend returns ErrResourceExhausted maps to OutOfRange",
+			req: &csi.NodeExpandVolumeRequest{
+				VolumeId:      testVolumeID,
+				CapacityRange: &csi.CapacityRange{RequiredBytes: expandedSize},
+			},
+			expectLvm: func(m *lvmMgr.MockManager) {
+				first := m.EXPECT().GetLogicalVolume(gomock.Any(), testVG, testLV).
+					Return(&lvmMgr.LogicalVolume{Name: testLV, Size: lvmMgr.Int64String(currentSize)}, nil).
+					Times(1)
+				m.EXPECT().
+					ExtendLogicalVolume(gomock.Any(), gomock.AssignableToTypeOf(lvmMgr.ExtendLVOptions{})).
+					Return(lvmMgr.ErrResourceExhausted).
+					Times(1).
+					After(first)
+			},
+			expectErr:     true,
+			expectErrCode: codes.OutOfRange,
 		},
 	}
 

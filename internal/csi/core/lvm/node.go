@@ -5,6 +5,7 @@ package lvm
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/container-storage-interface/spec/lib/go/csi"
@@ -13,7 +14,6 @@ import (
 	"google.golang.org/grpc/status"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
-	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	"local-csi-driver/internal/csi/capability"
 	"local-csi-driver/internal/pkg/events"
@@ -97,17 +97,10 @@ func (l *LVM) NodeExpandVolume(ctx context.Context, req *csi.NodeExpandVolumeReq
 		}
 	}
 
-	// Check if the requested size is less than the current size.
-	if capacityRequest.CmpInt64(int64(lv.Size)) < 0 {
-		span.SetStatus(codes.Error, "requested size is less than current size")
-		return nil, status.Errorf(grpcCodes.FailedPrecondition, "requested size %d is less than current size %d", capacityRequest.Value(), lv.Size)
-	}
-
-	// Check if the volume is already at the requested size.
-	if capacityRequest.CmpInt64(int64(lv.Size)) == 0 {
-		span.SetStatus(codes.Ok, "volume is already at the requested size")
+	if capacityRequest.CmpInt64(int64(lv.Size)) <= 0 {
+		span.SetStatus(codes.Ok, "volume is already at or above the requested size")
 		return &csi.NodeExpandVolumeResponse{
-			CapacityBytes: req.GetCapacityRange().GetRequiredBytes(),
+			CapacityBytes: int64(lv.Size),
 		}, nil
 	}
 
@@ -116,19 +109,19 @@ func (l *LVM) NodeExpandVolume(ctx context.Context, req *csi.NodeExpandVolumeReq
 	if err := l.lvm.ExtendLogicalVolume(ctx, extendOps); err != nil {
 		span.SetStatus(codes.Error, "unable to expand volume")
 		recorder.Eventf(corev1.EventTypeWarning, expandingLogicalVolumeFailed, "Failed to expand volume %s/%s to %d: %v", id.VolumeGroup, id.LogicalVolume, capacityRequest.Value(), err)
-		return nil, err
+		if errors.Is(err, lvm.ErrResourceExhausted) {
+			return nil, status.Error(grpcCodes.OutOfRange, err.Error())
+		}
+		return nil, status.Errorf(grpcCodes.Internal, "failed to expand volume: %v", err)
 	}
 
-	// Re-query the LV to get the actual allocated size after extend,
-	// Fall back to the requested size if the query fails; the expand itself
-	// already succeeded.
-	actualSize := req.GetCapacityRange().GetRequiredBytes()
+	// Re-query the LV to get the actual allocated size after extend.
 	expandedLV, err := l.lvm.GetLogicalVolume(ctx, id.VolumeGroup, id.LogicalVolume)
 	if err != nil {
-		log.FromContext(ctx).Error(err, "failed to get volume after expand, using requested size", "volumeId", req.GetVolumeId())
-	} else {
-		actualSize = int64(expandedLV.Size)
+		span.SetStatus(codes.Error, "failed to get volume after expand")
+		return nil, status.Errorf(grpcCodes.Internal, "failed to get volume after expand: %v", err)
 	}
+	actualSize := int64(expandedLV.Size)
 
 	recorder.Eventf(corev1.EventTypeNormal, expandedLogicalVolume, "Expanded volume %s/%s to %d", id.VolumeGroup, id.LogicalVolume, actualSize)
 	return &csi.NodeExpandVolumeResponse{

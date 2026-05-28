@@ -617,7 +617,7 @@ func (ns *Server) NodeExpandVolume(ctx context.Context, req *csi.NodeExpandVolum
 		}
 	}
 
-	log.V(2).Info("NodeExpandVolume resized volume")
+	log.V(2).Info("NodeExpandVolume resized volume", "capacityBytes", resp.GetCapacityBytes())
 	span.SetStatus(otcodes.Ok, "resized volume")
 	return resp, nil
 }

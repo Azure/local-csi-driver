@@ -129,7 +129,7 @@ func lvmExpansionTest(name, pvcFixture, podFixture string) {
 
 		By("verifying the PV expanded-capacity annotation records the actual LV size")
 		Eventually(func(g Gomega, ctx context.Context) {
-			jsonpath := fmt.Sprintf("{.metadata.annotations['%s']}", strings.ReplaceAll(lvm.ExpandedCapacityParam, "/", "\\/"))
+			jsonpath := fmt.Sprintf("{.metadata.annotations.%s}", strings.ReplaceAll(lvm.ExpandedCapacityParam, ".", "\\."))
 			out, err := utils.Run(exec.CommandContext(ctx, "kubectl", "get", "pv", pvName, "-o", fmt.Sprintf("jsonpath=%s", jsonpath)))
 			g.Expect(err).NotTo(HaveOccurred(), "Failed to get PV expanded-capacity annotation")
 			raw := strings.TrimSpace(out)

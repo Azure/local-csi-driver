@@ -884,18 +884,18 @@ func TestNodeExpandVolume(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to get target test path: %v", err)
 	}
-	t.Cleanup(func() { os.RemoveAll(targetTest) })
+	t.Cleanup(func() { _ = os.RemoveAll(targetTest) })
 	_ = testutil.MakeDir(targetTest)
 
 	tests := []struct {
-		name           string
-		req            *csi.NodeExpandVolumeRequest
-		fakeCapacity   int64
-		fakeErr        error
-		expectErrCode  codes.Code
-		expectErr      bool
-		expectResp     bool
-		expectCapacity int64
+		name            string
+		req             *csi.NodeExpandVolumeRequest
+		fakeCapacity    int64
+		fakeErr         error
+		expectErrCode   codes.Code
+		expectErr       bool
+		expectResp      bool
+		expectCapacity  int64
 		checkAnnotation bool
 	}{
 		{
