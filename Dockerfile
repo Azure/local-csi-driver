@@ -65,7 +65,7 @@ RUN --mount=type=cache,target=/go/pkg/mod \
     ./hack/generate-notice.sh NOTICE.txt
 
 
-FROM mcr.microsoft.com/azurelinux/base/core:3.0@sha256:f5e224c47997aa4a5d3d8addfcc3866e175e7026368a71ce1be2c0eed1876f04 AS dependency-install
+FROM mcr.microsoft.com/azurelinux/base/core:3.0@sha256:2d83ae6e0d21cd58973633948d903038679f70fb594d6565626f29ddc162fe0c AS dependency-install
 RUN tdnf install -y --releasever 3.0 --installroot /staging \
     e2fsprogs \
     lvm2 \
