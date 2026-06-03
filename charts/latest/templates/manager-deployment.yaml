@@ -53,6 +53,9 @@ spec:
         - --namespace=$(POD_NAMESPACE)
         - --health-probe-bind-address=:{{ .Values.observability.manager.health.port }}
         - --metrics-bind-address=:{{ .Values.observability.manager.metrics.port }}
+        {{- if .Values.observability.manager.pprof.enabled }}
+        - --pprof-bind-address=:{{ .Values.observability.manager.pprof.port }}
+        {{- end }}
         {{- if or .Values.webhook.enforceEphemeral.enabled .Values.webhook.hyperconverged.enabled }}
         - --webhook-port={{ .Values.webhook.service.targetPort }}
         - --webhook-service-name={{ .Values.name }}-webhook-service

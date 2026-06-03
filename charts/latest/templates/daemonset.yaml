@@ -80,6 +80,9 @@ spec:
         - --metrics-bind-address=:{{ .Values.observability.driver.metrics.port }}
         - --metrics-secure=false
         - --health-probe-bind-address=:{{ .Values.observability.driver.health.port }}
+        {{- if .Values.observability.driver.pprof.enabled }}
+        - --pprof-bind-address=:{{ .Values.observability.driver.pprof.port }}
+        {{- end }}
         - --trace-address={{ .Values.observability.driver.trace.endpoint }}
         - --trace-sample-rate={{ .Values.observability.driver.trace.sampleRate }}
         - --trace-service-id=$(POD_NAME)

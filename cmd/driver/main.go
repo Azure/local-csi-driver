@@ -68,6 +68,7 @@ func main() {
 	var csiAddr string
 	var metricsAddr string
 	var probeAddr string
+	var pprofAddr string
 	var secureMetrics bool
 	var workers int
 	var apiQPS int
@@ -93,6 +94,8 @@ func main() {
 	flag.StringVar(&metricsAddr, "metrics-bind-address", "0", "The address the metrics endpoint binds to. "+
 		"Use :8443 for HTTPS or :8080 for HTTP, or leave as 0 to disable the metrics service.")
 	flag.StringVar(&probeAddr, "health-probe-bind-address", ":8081", "The address the probe endpoint binds to.")
+	flag.StringVar(&pprofAddr, "pprof-bind-address", "", "The address the pprof endpoint binds to (e.g. :6060). "+
+		"Leave empty to disable pprof. Exposes /debug/pprof/* for heap, goroutine, and CPU profiling.")
 	flag.BoolVar(&secureMetrics, "metrics-secure", true,
 		"If set, the metrics endpoint is served securely via HTTPS. Use --metrics-secure=false to use HTTP instead.")
 	flag.IntVar(&workers, "worker-threads", 10,
@@ -199,6 +202,7 @@ func main() {
 		Scheme:                 scheme,
 		Metrics:                metricsServerOptions,
 		HealthProbeBindAddress: probeAddr,
+		PprofBindAddress:       pprofAddr,
 		LeaderElection:         false, // No webhooks, no leader election needed
 		LeaderElectionID:       "local-csi-driver",
 		// Pod is only read once at startup (StartupDiagnostic). Bypass the
