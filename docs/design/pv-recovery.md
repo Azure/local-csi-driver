@@ -39,13 +39,15 @@ another node by:
 
 PV Recovery applies when **all** of the following conditions are met:
 
-| Condition | Detail |
-|-----------|--------|
-| CSI Driver | PV must be provisioned by `localdisk.csi.acstor.io` |
-| Hyperconverged webhook enabled | The mutation webhook must be active to inject node affinity into Pods |
-| `--run-alongside-webhook=true` | The driver flag must be set so the driver removes PV node affinity |
-| Non-ephemeral PVC | PVC must use standard (non-generic-ephemeral) provisioning with the `localdisk.csi.acstor.io/accept-ephemeral-storage: "true"` annotation |
-| Volume binding mode | StorageClass must use `WaitForFirstConsumer` |
+- **CSI Driver**: PV must be provisioned by `localdisk.csi.acstor.io`.
+- **Hyperconverged webhook enabled**: The mutation webhook must be active
+  to inject node affinity into Pods.
+- **`--run-alongside-webhook=true`**: The driver flag must be set so the
+  driver removes PV node affinity.
+- **Non-ephemeral PVC**: PVC must use standard (non-generic-ephemeral)
+  provisioning with the
+  `localdisk.csi.acstor.io/accept-ephemeral-storage: "true"` annotation.
+- **Volume binding mode**: StorageClass must use `WaitForFirstConsumer`.
 
 Generic ephemeral volumes are excluded because their lifecycle is tied to the
 Pod, so recovery does not apply.
@@ -143,10 +145,10 @@ LVM volumes on nodes that no longer own the PV:
 
 ### Node Annotations
 
-| Key | Location | Purpose |
-|-----|----------|---------|
-| `localdisk.csi.acstor.io/selected-initial-node` | PV VolumeAttributes | Records the node that originally created the volume |
-| `localdisk.csi.acstor.io/selected-node` | PV Annotations | Records the node currently owning the volume (updated on recovery) |
+- `localdisk.csi.acstor.io/selected-initial-node` (PV VolumeAttributes):
+  records the node that originally created the volume.
+- `localdisk.csi.acstor.io/selected-node` (PV Annotations): records the node
+  currently owning the volume (updated on recovery).
 
 ## How to Enable
 
