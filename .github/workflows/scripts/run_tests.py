@@ -265,6 +265,31 @@ class KindCluster(Cluster):
         logging.info("No cleanup needed for kind cluster")
 
 
+class KwokCluster(Cluster):
+    """
+    Class for managing a kwok-tuned kind cluster used by the scale tests.
+
+    The cluster is a single kind node with apiserver/etcd/cm/scheduler tuned
+    for thousands of fake nodes. The kwok controller itself is installed by
+    the test suite (via test/pkg/kwok), not here.
+    """
+
+    async def setup(self) -> None:
+        """
+        Set up the kwok-tuned kind cluster.
+        """
+        logging.info("Creating kwok cluster (target=make kwok-bootstrap)")
+        if await run_command("make kwok-bootstrap", os.environ.copy()) != 0:
+            logging.error("Failed to create kwok-tuned kind cluster")
+            raise RuntimeError("Failed to create kwok-tuned kind cluster")
+
+    async def cleanup(self) -> None:
+        """
+        Clean up the kwok-tuned kind cluster.
+        """
+        logging.info("No cleanup needed for kwok cluster")
+
+
 class AksCluster(Cluster):
     """
     Class for managing an AKS cluster.
@@ -447,6 +472,8 @@ def create_cluster(args: argparse.Namespace, config: EnvConfig) -> Cluster:
     """
     if args.cluster_type == "kind":
         return KindCluster(nodes=args.kind_nodes, setup_vg=args.kind_setup_vg)
+    elif args.cluster_type == "kwok":
+        return KwokCluster()
     elif args.cluster_type == "aks":
         return AksCluster(
             args.aks_template,
@@ -521,7 +548,7 @@ async def main() -> int:
     )
     parser.add_argument(
         "--cluster-type",
-        choices=["kind", "aks", "none"],
+        choices=["kind", "kwok", "aks", "none"],
         default="none",
         required=False,
         help="Specify the cluster type: kind, aks, or none",

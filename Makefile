@@ -168,13 +168,19 @@ test-upgrade: ginkgo ## Run the upgrade tests.
 test-scaledown: ginkgo ## Run the scale down tests.
 	$(call run_tests,scaledown && aks,./test/e2e,$(ADDITIONAL_GINKGO_FLAGS),--repeat=$(REPEAT))
 
+
+.PHONY: test-kwok
+test-kwok: ginkgo ## Run the kwok tests.
+	$(call run_tests,kwok,./test/kwok,$(ADDITIONAL_GINKGO_FLAGS),--repeat=$(REPEAT) $(if $(filter true,$(SKIP_CLEANUP)),--skip-cleanup))
+
 define run_tests
+PATH="$(LOCALBIN):$$PATH" \
 TAG=$(TAG) \
 REGISTRY=$(REGISTRY) \
 DRIVER_IMG=${DRIVER_IMG} \
 MANAGER_IMG=${MANAGER_IMG} \
 $(GINKGO) -v -r $(3) --label-filter="$(1)$(if $(LABEL_FILTER), && ($(LABEL_FILTER)))" --focus="$(FOCUS)" --no-color="$(NO_COLOR)" --timeout="$(TEST_TIMEOUT)" "$(2)" -- \
-	--junit-report=$(TEST_OUTPUT) --support-bundle-dir=$(SUPPORT_BUNDLE_OUTPUT_DIR) "$(4)"
+	--junit-report=$(TEST_OUTPUT) --support-bundle-dir=$(SUPPORT_BUNDLE_OUTPUT_DIR) $(4)
 endef
 
 .PHONY: test-container-structure
@@ -271,15 +277,15 @@ endef
 docker-load: docker-load-driver docker-load-manager
 
 .PHONY: docker-load-driver
-docker-load-driver: ## Load the docker image into the kind cluster.
+docker-load-driver: kind ## Load the docker image into the kind cluster.
 	$(call docker-load,${DRIVER_IMG})
 
 .PHONY: docker-load-manager
-docker-load-manager: ## Load the manager image into the kind cluster.
+docker-load-manager: kind ## Load the manager image into the kind cluster.
 	$(call docker-load,${MANAGER_IMG})
 
 define docker-load
-	kind load docker-image $(1) --name kind
+	$(KIND) load docker-image $(1) --name kind
 endef
 
 .PHONY: docker-lint
@@ -360,10 +366,10 @@ deploy: helm ## Deploy to the K8s cluster specified in ~/.kube/config.
 		--version $(TAG) \
 		--set image.driver.repository=$(REGISTRY)/$(DRIVER_REPO) \
 		--set image.driver.tag=$(TAG) \
-		--set image.driver.pullPolicy=Always \
+		--set image.driver.pullPolicy=IfNotPresent \
 		--set image.manager.repository=$(REGISTRY)/$(MANAGER_REPO) \
 		--set image.manager.tag=$(TAG) \
-		--set image.manager.pullPolicy=Always \
+		--set image.manager.pullPolicy=IfNotPresent \
 		--set observability.driver.trace.endpoint=$(OTEL_ENDPOINT) \
 		--debug --wait --atomic $(HELM_ARGS)
 
@@ -415,21 +421,34 @@ add-copyright:
 kubeconform-lint: kubeconform-helm ## Lint all Kubernetes manifests using kubeconform.
 	$(HELM) kubeconform --verbose --summary --strict charts/latest
 
-.PHONY: single
-single: kind ## Create a single node kind cluster.
+define create-kind-cluster
 	if $(KIND) get clusters | grep -q kind; then \
 		echo "Cluster 'kind' already exists"; \
 	else \
-		$(KIND) create cluster --config=./test/config/kind-1-node.yaml; \
+		$(KIND) create cluster --config=$(1); \
 	fi
+	kubectl config use-context kind-kind
+endef
+
+.PHONY: single
+single: kind ## Create a single node kind cluster.
+	$(call create-kind-cluster,./test/config/kind-1-node.yaml)
 
 .PHONY: multi
 multi: kind ## Create a multi node kind cluster.
-	if $(KIND) get clusters | grep -q kind; then \
-		echo "Cluster 'kind' already exists"; \
-	else \
-		$(KIND) create cluster --config=./test/config/kind-3-node.yaml; \
-	fi
+	$(call create-kind-cluster,./test/config/kind-3-node.yaml)
+
+.PHONY: kwok-cluster
+kwok-cluster: kind ## Create a single-node kind cluster tuned for the kwok scale test.
+	$(call create-kind-cluster,./test/config/kind-kwok.yaml)
+
+.PHONY: kwok-bootstrap
+kwok-bootstrap: kwok-cluster kind-setup-vg ## Create a kwok-tuned kind cluster + VG, ready for `make test-kwok`.
+	# Real LVM VG is created on the (single) kind node so the driver pod
+	# starts up the same way it does in production. Kwok still fakes the
+	# 10k worker nodes and their volumes - the VG only backs LVs that
+	# could be created on the real driver node.
+	# The kwok test installs the helm chart itself with values-kwok.yaml.
 
 .PHONY: kind-setup-vg
 kind-setup-vg: kind ## Create a 100GiB loop-backed LVM VG (containerstorage) on each kind node.
@@ -443,7 +462,7 @@ kind-teardown-vg: kind ## Remove the loop-backed LVM VG from each kind node.
 kind-e2e-bootstrap: multi kind-setup-vg ## Create a 3-node kind cluster + VG on each node, ready for e2e / external-e2e.
 
 .PHONY: clean
-clean: kind ## Deletes the kind cluster.
+clean: kind kind-teardown-vg ## Deletes the kind cluster.
 	$(KIND) delete cluster --name kind
 
 .PHONY: kubeconfig
@@ -467,6 +486,8 @@ get-support-bundle: support-bundle ## Download support-bundle locally if necessa
 LOCALBIN ?= $(shell pwd)/bin
 $(LOCALBIN):
 	mkdir -p $(LOCALBIN)
+
+PATH ?= $(LOCALBIN):$$(PATH)
 
 ## Tool Binaries
 KUBECTL ?= kubectl
@@ -498,6 +519,7 @@ SUPPORT_BUNDLE_VERSION ?= v0.121.2
 BICEP_VERSION ?= v0.37.4
 HELM_VERSION ?= v3.18.6
 MARKDOWNLINT_CLI_VERSION ?= v0.45.0
+KWOK_VERSION ?= v0.7.0
 
 .PHONY: mockgen
 mockgen: $(MOCK_GEN) ## Installs mockgen locally if necessary.
@@ -550,6 +572,20 @@ prometheus-crds: ## Install prometheus crds into the current cluster.
 .PHONY: prometheus-crds-uninstall
 prometheus-crds-uninstall: ## Uninstall prometheus crds from the current cluster.
 	$(KUBECTL) delete -f $(PROMETHEUS_CRD_YAML) --ignore-not-found
+
+KWOK_YAML="https://github.com/kubernetes-sigs/kwok/releases/download/${KWOK_VERSION}/kwok.yaml"
+KWOK_FAST_STAGE_YAML="https://github.com/kubernetes-sigs/kwok/releases/download/${KWOK_VERSION}/stage-fast.yaml"
+
+.PHONY: kwok
+kwok: ## Install Kwok into the current cluster.
+	$(KUBECTL) apply -f $(KWOK_YAML)
+	$(KUBECTL) apply -f $(KWOK_FAST_STAGE_YAML)
+
+.PHONY: kwok-uninstall
+kwok-uninstall: ## Uninstall Kwok from the current cluster.
+	$(KUBECTL) delete -f $(KWOK_FAST_STAGE_YAML) --ignore-not-found || true
+	$(KUBECTL) delete -f $(KWOK_YAML) --ignore-not-found
+
 
 .PHONY: jaeger
 jaeger: jaeger-install jaeger-port-forward ## Install Jaeger into the current cluster and create port-forward.
