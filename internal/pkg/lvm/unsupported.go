@@ -98,3 +98,8 @@ func (l *Noop) ExtendLogicalVolume(ctx context.Context, opts ExtendLVOptions) er
 func (l *Noop) IsLogicalVolumeCorrupted(ctx context.Context, vgName string, lvName string) (bool, error) {
 	return false, ErrUnsupported
 }
+
+// MakeVolumeGroupDeviceNodes implements Manager.
+func (l *Noop) MakeVolumeGroupDeviceNodes(ctx context.Context, opts MakeVGDeviceNodesOptions) error {
+	return ErrUnsupported
+}

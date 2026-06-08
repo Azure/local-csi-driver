@@ -61,3 +61,11 @@ func newIdFromString(id string) (*volumeId, error) {
 func (v *volumeId) ReconstructLogicalVolumePath() string {
 	return fmt.Sprintf("/dev/%s/%s", v.VolumeGroup, v.LogicalVolume)
 }
+
+// ReconstructMapperPath returns the device-mapper node path for the logical
+// volume: /dev/mapper/<vg>-<lv>. Literal hyphens in the volume group or logical
+// volume name are doubled to match device-mapper's name mangling.
+func (v *volumeId) ReconstructMapperPath() string {
+	escape := func(s string) string { return strings.ReplaceAll(s, "-", "--") }
+	return fmt.Sprintf("/dev/mapper/%s-%s", escape(v.VolumeGroup), escape(v.LogicalVolume))
+}

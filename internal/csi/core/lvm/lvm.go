@@ -7,6 +7,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/container-storage-interface/spec/lib/go/csi"
@@ -266,6 +268,17 @@ func (l *LVM) EnsureVolumeGroup(ctx context.Context, name string, devices []stri
 	if vg != nil {
 		log.V(1).Info("volume group already exists")
 		return vg, nil
+	}
+
+	// The volume group does not exist in LVM metadata, so any leftover
+	// /dev/<name> device nodes are stale (e.g. from a killed lvremove or an
+	// orphaned VG). vgcreate refuses to run when /dev/<name> already exists
+	// ("already exists in filesystem"), so remove the stale nodes first to make
+	// volume group creation self-healing. Best-effort: if cleanup fails we still
+	// attempt the create and surface its error.
+	if err := l.cleanupVolumeGroupNodes(ctx, name); err != nil {
+		log.Error(err, "failed to cleanup stale volume group device nodes before create")
+		span.RecordError(err)
 	}
 
 	recorder.Eventf(corev1.EventTypeNormal, provisioningVolumeGroup, "Provisioning volume group %s", name)
@@ -592,11 +605,24 @@ func (l *LVM) Cleanup(ctx context.Context) error {
 	}
 
 	for _, vg := range volumeGroup {
+		if err := l.cleanupStateLogicalVolumePaths(ctx, vg.Name); err != nil {
+			log.Error(err, "failed to cleanup logical volume paths", "vg", vg.Name)
+			span.SetStatus(codes.Error, "failed to cleanup logical volume paths")
+			span.RecordError(err)
+			return fmt.Errorf("failed to cleanup logical volume paths for VG %s: %w", vg.Name, err)
+		}
 		if err := l.removeVolumeGroup(ctx, vg.Name); err != nil {
 			log.Error(err, "failed to remove volume group", "vg", vg.Name)
 			span.SetStatus(codes.Error, "failed to remove volume group")
 			span.RecordError(err)
 			return fmt.Errorf("failed to remove volume group %s: %w", vg.Name, err)
+		}
+		// The VG is now gone from LVM metadata, so any leftover device nodes
+		// under /dev/<vg> are stale. Remove them best-effort so a leaked
+		// /dev/<vg> directory does not block a future vgcreate.
+		if err := l.cleanupVolumeGroupNodes(ctx, vg.Name); err != nil {
+			log.Error(err, "failed to cleanup stale volume group device nodes", "vg", vg.Name)
+			span.RecordError(err)
 		}
 	}
 
@@ -662,5 +688,177 @@ func (l *LVM) removePhysicalVolumes(ctx context.Context, devicePaths []string) e
 			return fmt.Errorf("failed to remove physical volumes: %w", err)
 		}
 	}
+	return nil
+}
+
+// cleanupStateLogicalVolumePaths cleans up the logical volume paths in the state.
+func (l *LVM) cleanupStateLogicalVolumePaths(ctx context.Context, vg string) error {
+	// Reconcile device nodes for active logical volumes and remove nodes for
+	// inactive ones. The VG name is intentionally not set: the stale-node
+	// cleanup pass (lv_mknodes) is not scoped to a single VG, so we let
+	// vgmknodes process all volume groups.
+	opts := lvm.MakeVGDeviceNodesOptions{}
+	if err := l.lvm.MakeVolumeGroupDeviceNodes(ctx, opts); err != nil {
+		return fmt.Errorf("failed to make volume group device nodes: %w", err)
+	}
+
+	path := filepath.Join("/dev", vg)
+	if _, err := os.Stat(path); os.IsNotExist(err) {
+		return nil
+	}
+	// Remove dangling symlinks in /dev/<vg> that point to logical volumes which
+	// no longer exist. vgmknodes only manages nodes for LVs still in LVM
+	// metadata, so symlinks for fully removed LVs must be pruned here.
+	symlinks, err := os.ReadDir(path)
+	if err != nil {
+		return fmt.Errorf("failed to read directory: %w", err)
+	}
+
+	for _, symlink := range symlinks {
+		if symlink.Type()&os.ModeSymlink == 0 {
+			continue
+		}
+		symlinkPath := filepath.Join(path, symlink.Name())
+		if _, err := os.Stat(symlinkPath); os.IsNotExist(err) {
+			if err := os.Remove(symlinkPath); err != nil {
+				return fmt.Errorf("failed to remove logical volume path: %w", err)
+			}
+		}
+	}
+	return nil
+}
+
+// cleanupVolumeGroupNodes removes stale device nodes left behind for a volume
+// group that no longer exists in LVM metadata.
+//
+// A killed lvremove or an orphaned VG can leave /dev/<vg>/<lv> symlinks,
+// /dev/mapper/<vg>-<lv> block nodes and the /dev/<vg> directory behind. A
+// leftover /dev/<vg> directory is particularly harmful: vgcreate refuses to
+// create a volume group whose name collides with an existing filesystem entry
+// ("/dev/<vg>: already exists in filesystem"), so the leak blocks all future
+// provisioning into that volume group until the directory is removed.
+//
+// This must only be called once the volume group is known to be absent from LVM
+// metadata, so every node under /dev/<vg> is guaranteed stale. The per-node
+// removal mirrors cleanupLogicalVolumeNodes (lvm _rm_link / _rm_dir /
+// _rm_dev_node). The symlink file name in /dev/<vg> is the logical volume name,
+// which lets us reconstruct the exact /dev/mapper/<vg>-<lv> node without
+// globbing, avoiding device-mapper name-mangling ambiguity between hyphenated
+// volume group and logical volume names.
+func (l *LVM) cleanupVolumeGroupNodes(ctx context.Context, vgName string) error {
+	log := log.FromContext(ctx)
+
+	vgPath := filepath.Join("/dev", vgName)
+	entries, err := os.ReadDir(vgPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return fmt.Errorf("failed to read volume group directory %s: %w", vgPath, err)
+	}
+
+	for _, entry := range entries {
+		if entry.Type()&os.ModeSymlink == 0 {
+			// Leave unexpected real files in place; the rmdir below then fails
+			// and the directory is preserved.
+			log.V(1).Info("skipping non-symlink entry in volume group directory", "path", filepath.Join(vgPath, entry.Name()))
+			continue
+		}
+		id := &volumeId{VolumeGroup: vgName, LogicalVolume: entry.Name()}
+
+		// /dev/mapper/<vg>-<lv> node (lvm: _rm_dev_node). Unlink
+		// unconditionally; in non-udev mode this is a real block node.
+		mapperPath := id.ReconstructMapperPath()
+		if _, err := os.Lstat(mapperPath); err != nil {
+			if !os.IsNotExist(err) {
+				return fmt.Errorf("failed to stat device node %s: %w", mapperPath, err)
+			}
+		} else {
+			log.V(1).Info("removing stale logical volume device node", "path", mapperPath)
+			if err := os.Remove(mapperPath); err != nil && !os.IsNotExist(err) {
+				return fmt.Errorf("failed to remove stale device node %s: %w", mapperPath, err)
+			}
+		}
+
+		// /dev/<vg>/<lv> symlink (lvm: _rm_link).
+		lvPath := id.ReconstructLogicalVolumePath()
+		log.V(1).Info("removing stale logical volume device node", "path", lvPath)
+		if err := os.Remove(lvPath); err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("failed to remove stale device node %s: %w", lvPath, err)
+		}
+	}
+
+	// /dev/<vg> directory (lvm: _rm_dir). os.Remove calls rmdir for a directory
+	// and fails if it is not empty, which we ignore so we only prune empty VG
+	// directories.
+	if err := os.Remove(vgPath); err != nil && !os.IsNotExist(err) {
+		log.V(1).Info("not removing volume group directory", "path", vgPath, "reason", err.Error())
+	}
+	return nil
+}
+
+// cleanupLogicalVolumeNodes removes stale device nodes left behind for a single
+// logical volume that no longer exists in LVM metadata.
+//
+// lvremove deactivates the LV before it commits the metadata removal: it tears
+// down the kernel dm mapping (DM_DEV_REMOVE) and removes the device nodes, then
+// runs vg_commit. Because deactivation always precedes the commit, once a later
+// DeleteVolume retry observes the LV as NotFound (metadata committed) the kernel
+// device is already gone and only the /dev node files can be left behind (e.g.
+// if lvremove was killed between node removal and commit). vgmknodes does not
+// help here: it only visits LVs still present in LVM metadata.
+//
+// The removal mirrors exactly what lvm does to the device nodes, so it is safe
+// to run unconditionally (the kernel device is guaranteed gone by this point):
+//
+//   - /dev/<vg>/<lv> is a symlink, removed by lib/activate/fs.c:_rm_link:
+//     lstat, require S_ISLNK, then unlink.
+//   - /dev/<vg> is removed by lib/activate/fs.c:_rm_dir: rmdir only if empty.
+//   - /dev/mapper/<vg>-<lv> is a real block node in non-udev mode (created via
+//     mknod by libdm), removed by libdm/libdm-common.c:_rm_dev_node: lstat then
+//     unlink unconditionally (no symlink/dangling check, since stat on a block
+//     node succeeds even after the kernel device is gone).
+func (l *LVM) cleanupLogicalVolumeNodes(ctx context.Context, id *volumeId) error {
+	log := log.FromContext(ctx)
+
+	// /dev/<vg>/<lv> symlink (lvm: _rm_link). Require it to be a symlink before
+	// removing so we never unlink an unexpected real file.
+	lvPath := id.ReconstructLogicalVolumePath()
+	if info, err := os.Lstat(lvPath); err != nil {
+		if !os.IsNotExist(err) {
+			return fmt.Errorf("failed to stat device node %s: %w", lvPath, err)
+		}
+	} else if info.Mode()&os.ModeSymlink == 0 {
+		log.V(1).Info("skipping logical volume path that is not a symlink", "path", lvPath)
+	} else {
+		log.V(1).Info("removing stale logical volume device node", "path", lvPath)
+		if err := os.Remove(lvPath); err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("failed to remove stale device node %s: %w", lvPath, err)
+		}
+	}
+
+	// /dev/<vg> directory (lvm: _rm_dir). os.Remove calls rmdir for a directory
+	// and fails if it is not empty, which we ignore so we only prune empty VG
+	// directories.
+	vgPath := filepath.Dir(lvPath)
+	if err := os.Remove(vgPath); err != nil && !os.IsNotExist(err) {
+		log.V(1).Info("not removing volume group directory", "path", vgPath, "reason", err.Error())
+	}
+
+	// /dev/mapper/<vg>-<lv> node (lvm: _rm_dev_node). Unlink unconditionally; in
+	// non-udev mode this is a real block node, so a stat-based dangling check
+	// would never fire.
+	mapperPath := id.ReconstructMapperPath()
+	if _, err := os.Lstat(mapperPath); err != nil {
+		if !os.IsNotExist(err) {
+			return fmt.Errorf("failed to stat device node %s: %w", mapperPath, err)
+		}
+	} else {
+		log.V(1).Info("removing stale logical volume device node", "path", mapperPath)
+		if err := os.Remove(mapperPath); err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("failed to remove stale device node %s: %w", mapperPath, err)
+		}
+	}
+
 	return nil
 }

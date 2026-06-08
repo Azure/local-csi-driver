@@ -581,7 +581,9 @@ func (c *Client) MovePhysicalVolumes(ctx context.Context, opts MovePVOptions) er
 	return err
 }
 
-// Create device files for active logical volumes in the volume group.
+// MakeVolumeGroupDeviceNodes creates device files for active logical volumes in
+// the volume group and removes device files for logical volumes that are no
+// longer active (vgmknodes).
 func (c *Client) MakeVolumeGroupDeviceNodes(ctx context.Context, opts MakeVGDeviceNodesOptions) error {
 	ctx, span := c.tracer.Start(ctx, "lvm/MakeVolumeGroupDeviceNodes", trace.WithAttributes(
 		attribute.String("vg.name", opts.Name),

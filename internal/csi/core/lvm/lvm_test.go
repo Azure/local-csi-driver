@@ -748,6 +748,7 @@ func TestCleanup(t *testing.T) {
 			expectLvm: func(m *lvmMgr.MockManager) {
 				vgs := []lvmMgr.VolumeGroup{{Name: "vg1", LVCount: 0}}
 				m.EXPECT().ListVolumeGroups(gomock.Any(), &lvmMgr.ListVGOptions{Select: "vg_tags=local-csi"}).Return(vgs, nil)
+				m.EXPECT().MakeVolumeGroupDeviceNodes(gomock.Any(), lvmMgr.MakeVGDeviceNodesOptions{}).Return(nil)
 				m.EXPECT().GetVolumeGroup(gomock.Any(), "vg1").Return(&vgs[0], nil)
 				m.EXPECT().RemoveVolumeGroup(gomock.Any(), lvmMgr.RemoveVGOptions{Name: "vg1"}).Return(errTestInternal)
 			},
@@ -758,6 +759,7 @@ func TestCleanup(t *testing.T) {
 			expectLvm: func(m *lvmMgr.MockManager) {
 				vgs := []lvmMgr.VolumeGroup{{Name: "vg1", LVCount: 0}}
 				m.EXPECT().ListVolumeGroups(gomock.Any(), &lvmMgr.ListVGOptions{Select: "vg_tags=local-csi"}).Return(vgs, nil)
+				m.EXPECT().MakeVolumeGroupDeviceNodes(gomock.Any(), lvmMgr.MakeVGDeviceNodesOptions{}).Return(nil)
 				m.EXPECT().GetVolumeGroup(gomock.Any(), "vg1").Return(&vgs[0], nil)
 				m.EXPECT().RemoveVolumeGroup(gomock.Any(), lvmMgr.RemoveVGOptions{Name: "vg1"}).Return(nil)
 				m.EXPECT().ListPhysicalVolumes(gomock.Any(), gomock.Nil()).Return(nil, errTestInternal)
@@ -770,6 +772,7 @@ func TestCleanup(t *testing.T) {
 				vgs := []lvmMgr.VolumeGroup{{Name: "vg1", LVCount: 0}}
 				pvs := []lvmMgr.PhysicalVolume{{Name: "/dev/pv1"}}
 				m.EXPECT().ListVolumeGroups(gomock.Any(), &lvmMgr.ListVGOptions{Select: "vg_tags=local-csi"}).Return(vgs, nil)
+				m.EXPECT().MakeVolumeGroupDeviceNodes(gomock.Any(), lvmMgr.MakeVGDeviceNodesOptions{}).Return(nil)
 				m.EXPECT().GetVolumeGroup(gomock.Any(), "vg1").Return(&vgs[0], nil)
 				m.EXPECT().RemoveVolumeGroup(gomock.Any(), lvmMgr.RemoveVGOptions{Name: "vg1"}).Return(nil)
 				m.EXPECT().ListPhysicalVolumes(gomock.Any(), gomock.Nil()).Return(pvs, nil).Times(2)
@@ -786,6 +789,7 @@ func TestCleanup(t *testing.T) {
 				}
 				pvs := []lvmMgr.PhysicalVolume{{Name: "/dev/pv1"}, {Name: "/dev/pv2"}}
 				m.EXPECT().ListVolumeGroups(gomock.Any(), &lvmMgr.ListVGOptions{Select: "vg_tags=local-csi"}).Return(vgs, nil)
+				m.EXPECT().MakeVolumeGroupDeviceNodes(gomock.Any(), lvmMgr.MakeVGDeviceNodesOptions{}).Return(nil).Times(2)
 				m.EXPECT().GetVolumeGroup(gomock.Any(), "vg1").Return(&vgs[0], nil)
 				m.EXPECT().RemoveVolumeGroup(gomock.Any(), lvmMgr.RemoveVGOptions{Name: "vg1"}).Return(nil)
 				m.EXPECT().GetVolumeGroup(gomock.Any(), "vg2").Return(&vgs[1], nil)

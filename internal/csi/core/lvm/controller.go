@@ -174,6 +174,17 @@ func (l *LVM) Delete(ctx context.Context, req *csi.DeleteVolumeRequest) error {
 		case <-ticker.C:
 			err := l.lvm.RemoveLogicalVolume(ctx, deleteOps)
 			if lvm.IgnoreNotFound(err) == nil {
+				// The LV is gone from metadata. Best-effort cleanup of any
+				// device nodes orphaned by an interrupted lvremove (links left
+				// behind after deactivate but before the metadata commit). A
+				// failure here must not block deletion, since the volume itself
+				// is already gone.
+				if cerr := l.cleanupLogicalVolumeNodes(ctx, id); cerr != nil {
+					log.FromContext(ctx).Error(cerr, "failed to cleanup stale logical volume device nodes", "vol.id", volumeId)
+					span.AddEvent("failed to cleanup stale logical volume device nodes", trace.WithAttributes(
+						attribute.String("error", cerr.Error()),
+					))
+				}
 				recorder.Eventf(corev1.EventTypeNormal, deletedLogicalVolume, "Successfully deleted logical volume %s", volumeId)
 				span.AddEvent("deleted logical volume")
 				span.SetStatus(codes.Ok, "deleted logical volume")

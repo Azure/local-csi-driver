@@ -43,6 +43,10 @@ type Manager interface {
 	GetVolumeGroup(ctx context.Context, vgName string) (*VolumeGroup, error)
 	// RemoveVolumeGroup removes a VG.
 	RemoveVolumeGroup(ctx context.Context, opts RemoveVGOptions) error
+	// MakeVolumeGroupDeviceNodes creates device files for active logical
+	// volumes in the volume group and removes device files for logical volumes
+	// that are no longer active (vgmknodes).
+	MakeVolumeGroupDeviceNodes(ctx context.Context, opts MakeVGDeviceNodesOptions) error
 	// CreateLogicalVolume creates an LV on a VG.
 	CreateLogicalVolume(ctx context.Context, opts CreateLVOptions) (int64, error)
 	// RemoveLogicalVolume removes a LV from a VG

@@ -220,6 +220,20 @@ func (mr *MockManagerMockRecorder) ListVolumeGroups(ctx, opts any) *gomock.Call 
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListVolumeGroups", reflect.TypeOf((*MockManager)(nil).ListVolumeGroups), ctx, opts)
 }
 
+// MakeVolumeGroupDeviceNodes mocks base method.
+func (m *MockManager) MakeVolumeGroupDeviceNodes(ctx context.Context, opts MakeVGDeviceNodesOptions) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "MakeVolumeGroupDeviceNodes", ctx, opts)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// MakeVolumeGroupDeviceNodes indicates an expected call of MakeVolumeGroupDeviceNodes.
+func (mr *MockManagerMockRecorder) MakeVolumeGroupDeviceNodes(ctx, opts any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "MakeVolumeGroupDeviceNodes", reflect.TypeOf((*MockManager)(nil).MakeVolumeGroupDeviceNodes), ctx, opts)
+}
+
 // RemoveLogicalVolume mocks base method.
 func (m *MockManager) RemoveLogicalVolume(ctx context.Context, opts RemoveLVOptions) error {
 	m.ctrl.T.Helper()

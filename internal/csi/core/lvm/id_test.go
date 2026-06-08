@@ -211,3 +211,46 @@ func TestReconstructLogicalVolumePath(t *testing.T) {
 		})
 	}
 }
+
+func TestReconstructMapperPath(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		vg   string
+		lv   string
+		want string
+	}{
+		{
+			name: "basic mapper path",
+			vg:   "vg1",
+			lv:   "lv1",
+			want: "/dev/mapper/vg1-lv1",
+		},
+		{
+			name: "hyphen in names is doubled",
+			vg:   "my-vg",
+			lv:   "pvc-1234",
+			want: "/dev/mapper/my--vg-pvc--1234",
+		},
+		{
+			name: "multiple hyphens",
+			vg:   "a-b-c",
+			lv:   "d-e",
+			want: "/dev/mapper/a--b--c-d--e",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			vid := &volumeId{
+				VolumeGroup:   tt.vg,
+				LogicalVolume: tt.lv,
+			}
+			if got := vid.ReconstructMapperPath(); got != tt.want {
+				t.Errorf("volumeId.ReconstructMapperPath() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
