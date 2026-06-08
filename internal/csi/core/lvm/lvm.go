@@ -51,18 +51,14 @@ const (
 	ID = "lvm"
 
 	// Physical Volume (PV) related event reasons.
-	provisioningPhysicalVolume       = "ProvisioningPhysicalVolume"
 	provisionedPhysicalVolume        = "ProvisionedPhysicalVolume"
 	provisioningPhysicalVolumeFailed = "ProvisioningPhysicalVolumeFailed"
 
 	// Volume Group (VG) related event reasons.
-	provisioningVolumeGroup       = "ProvisioningVolumeGroup"
 	provisionedVolumeGroup        = "ProvisionedVolumeGroup"
 	provisioningVolumeGroupFailed = "ProvisioningVolumeGroupFailed"
 
 	// Logical Volume (LV) related event reasons.
-	provisioningLogicalVolume            = "ProvisioningLogicalVolume"
-	provisionedLogicalVolume             = "ProvisionedLogicalVolume"
 	provisioningLogicalVolumeFailed      = "ProvisioningLogicalVolumeFailed"
 	provisionedLogicalVolumeSizeMismatch = "ProvisionedLogicalVolumeSizeMismatch"
 	provisionedEmptyVolume               = "ProvisionedEmptyVolume"
@@ -268,7 +264,6 @@ func (l *LVM) EnsureVolumeGroup(ctx context.Context, name string, devices []stri
 		return vg, nil
 	}
 
-	recorder.Eventf(corev1.EventTypeNormal, provisioningVolumeGroup, "Provisioning volume group %s", name)
 	// Create the volume group.
 	if err := l.lvm.CreateVolumeGroup(ctx, lvm.CreateVGOptions{
 		Name:    name,
@@ -485,7 +480,6 @@ func (l *LVM) EnsureVolume(ctx context.Context, volumeId string, capacity int64,
 		return lvSize, nil
 	}
 
-	recorder.Eventf(corev1.EventTypeNormal, provisioningLogicalVolume, "Provisioning logical volume %s/%s", id.VolumeGroup, id.LogicalVolume)
 	log.V(2).Info("no existing volume found, creating new one")
 	// Check if the volume group already exists and create if needed.
 	vg, err := l.lvm.GetVolumeGroup(ctx, id.VolumeGroup)
@@ -546,7 +540,6 @@ func (l *LVM) EnsureVolume(ctx context.Context, volumeId string, capacity int64,
 
 	log.V(1).Info("created logical volume", "capacity", allocatedSize)
 	span.AddEvent("created logical volume", trace.WithAttributes(attribute.Int64("capacity", allocatedSize)))
-	recorder.Eventf(corev1.EventTypeNormal, provisionedLogicalVolume, "Successfully provisioned logical volume %s/%s", id.VolumeGroup, id.LogicalVolume)
 	if isMountOperation {
 		recorder.Eventf(corev1.EventTypeNormal, provisionedEmptyVolume, "A new empty volume was created during mount because the logical volume %s/%s was not found on the node. This may indicate the volume was not previously provisioned on this node.", id.VolumeGroup, id.LogicalVolume)
 	}

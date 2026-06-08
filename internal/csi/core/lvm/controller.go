@@ -26,8 +26,6 @@ import (
 
 const (
 	// Logical Volume (LV) related event reasons.
-	deletingLogicalVolume       = "DeletingLogicalVolume"
-	deletedLogicalVolume        = "DeletedLogicalVolume"
 	deletingLogicalVolumeFailed = "DeletingLogicalVolumeFailed"
 
 	defaultPeSize        = 4 * 1024 * 1024 // 4 MiB
@@ -161,7 +159,6 @@ func (l *LVM) Delete(ctx context.Context, req *csi.DeleteVolumeRequest) error {
 	ticker := time.NewTicker(removeVolumeRetryPoll)
 	defer ticker.Stop()
 
-	recorder.Eventf(corev1.EventTypeNormal, deletingLogicalVolume, "Starting deletion of logical volume %s", volumeId)
 	var lastErr error
 	for {
 		select {
@@ -174,7 +171,6 @@ func (l *LVM) Delete(ctx context.Context, req *csi.DeleteVolumeRequest) error {
 		case <-ticker.C:
 			err := l.lvm.RemoveLogicalVolume(ctx, deleteOps)
 			if lvm.IgnoreNotFound(err) == nil {
-				recorder.Eventf(corev1.EventTypeNormal, deletedLogicalVolume, "Successfully deleted logical volume %s", volumeId)
 				span.AddEvent("deleted logical volume")
 				span.SetStatus(codes.Ok, "deleted logical volume")
 				return nil

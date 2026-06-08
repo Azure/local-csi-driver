@@ -11,7 +11,6 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	kevents "k8s.io/client-go/tools/events"
-	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	"local-csi-driver/internal/pkg/block"
@@ -29,33 +28,32 @@ const (
 // event if no disks are available, or a Normal event listing available and
 // in-use disks.
 type StartupDiagnostic struct {
-	probe     probe.Interface
-	block     block.Interface
-	filter    *probe.Filter
-	recorder  kevents.EventRecorder
-	k8sClient client.Client
-	podName   string
-	namespace string
+	probe    probe.Interface
+	block    block.Interface
+	filter   *probe.Filter
+	recorder kevents.EventRecorder
+	pod      *corev1.Pod
 }
 
 // NewStartupDiagnostic creates a new StartupDiagnostic instance.
+//
+// pod is an ObjectReference to the driver Pod itself (built from downward-API
+// env vars at startup, not fetched from the apiserver). It is used as the
+// event subject so the diagnostic result is visible via `kubectl describe
+// pod`.
 func NewStartupDiagnostic(
 	p probe.Interface,
 	b block.Interface,
 	filter *probe.Filter,
 	recorder kevents.EventRecorder,
-	k8sClient client.Client,
-	podName string,
-	namespace string,
+	pod *corev1.Pod,
 ) *StartupDiagnostic {
 	return &StartupDiagnostic{
-		probe:     p,
-		block:     b,
-		filter:    filter,
-		recorder:  recorder,
-		k8sClient: k8sClient,
-		podName:   podName,
-		namespace: namespace,
+		probe:    p,
+		block:    b,
+		filter:   filter,
+		recorder: recorder,
+		pod:      pod,
 	}
 }
 
@@ -63,13 +61,6 @@ func NewStartupDiagnostic(
 // once at startup and emits a Kubernetes event on the pod with the results.
 func (s *StartupDiagnostic) Start(ctx context.Context) error {
 	log := log.FromContext(ctx).WithName("startup-diagnostic")
-
-	// Fetch the pod for event emission.
-	var pod corev1.Pod
-	if err := s.k8sClient.Get(ctx, client.ObjectKey{Namespace: s.namespace, Name: s.podName}, &pod); err != nil {
-		log.Error(err, "failed to get pod for event emission", "pod", s.podName, "namespace", s.namespace)
-		return nil
-	}
 
 	// Check if there are any available disks.
 	devices, err := s.probe.ScanAvailableDevices(ctx)
@@ -84,13 +75,13 @@ func (s *StartupDiagnostic) Start(ctx context.Context) error {
 	if devices == nil || len(devices.Devices) == 0 {
 		log.Info("no available disks found", "totalNVMeDisks", summary.total, "nonLVM2FormattedDisks", summary.nonLVM2Formatted)
 		msg := buildNoDiskMessage(summary)
-		s.recorder.Eventf(&pod, nil, corev1.EventTypeWarning, noDiskAvailable, noDiskAvailable, msg)
+		s.recorder.Eventf(s.pod, nil, corev1.EventTypeWarning, noDiskAvailable, noDiskAvailable, msg)
 		return nil
 	}
 
 	log.Info("startup disk discovery complete", "availableDisks", len(devices.Devices))
 	msg := buildDiskDiscoveryMessage(devices.Devices, summary)
-	s.recorder.Eventf(&pod, nil, corev1.EventTypeNormal, diskDiscoveryComplete, diskDiscoveryComplete, msg)
+	s.recorder.Eventf(s.pod, nil, corev1.EventTypeNormal, diskDiscoveryComplete, diskDiscoveryComplete, msg)
 	return nil
 }
 
