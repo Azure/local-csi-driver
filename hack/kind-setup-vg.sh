@@ -31,6 +31,7 @@ nodes=$("${KIND_BIN}" get nodes --name "${CLUSTER}")
 
 run_on_node() {
     docker exec -i \
+        -e NODE_NAME="$1" \
         -e VG_NAME="${VG_NAME}" \
         -e VG_TAG="${VG_TAG}" \
         -e VG_SIZE="${VG_SIZE}" \
@@ -51,21 +52,30 @@ for i in $(seq 8 31); do
     [ -e "/dev/loop${i}" ] || { mknod "/dev/loop${i}" b 7 "${i}" && chmod 660 "/dev/loop${i}"; } 2>/dev/null || true
 done
 
-# Loop devices are kernel-global across kind containers; per-node filename
-# keeps losetup -j unambiguous.
-img=/var/lib/csi-local-vg/$(hostname).img
-mkdir -p "$(dirname "$img")"
+# LVM is host-kernel-global across kind nodes (same /dev). Without scoping,
+# every node sees every other node`s PV/VG. Use the lvm devices file so this
+# container`s lvm tools only operate on this node`s loop. Each kind node
+# has its own /etc, so the devices file is per-node.
+mkdir -p /etc/lvm/devices
+: > /etc/lvm/devices/system.devices
 
-if vgs --noheadings -o vg_name 2>/dev/null | grep -qw "${VG_NAME}"; then
-    echo "VG ${VG_NAME} already exists, skipping."
-    vgs "${VG_NAME}"
-    exit 0
-fi
+img=/var/lib/csi-local-vg/${NODE_NAME}.img
+mkdir -p "$(dirname "$img")"
 
 [ -f "$img" ] || truncate -s "${VG_SIZE}" "$img"
 loop=$(losetup -j "$img" | awk -F: "NR==1{print \$1}")
 [ -n "$loop" ] || loop=$(losetup -f --show "$img")
 echo "using loop device $loop"
+
+# Scope lvm to just this loop. lvmdevices --adddev re-creates the file with
+# only this entry; subsequent vgs/pvs/lvs ignore everything else.
+lvmdevices --adddev "$loop" 2>/dev/null || true
+
+if vgs --noheadings -o vg_name 2>/dev/null | grep -qw "${VG_NAME}"; then
+    echo "VG ${VG_NAME} already exists on this node, skipping."
+    vgs "${VG_NAME}"
+    exit 0
+fi
 
 pvs --noheadings -o pv_name "$loop" >/dev/null 2>&1 || pvcreate -ff -y "$loop"
 vgcreate --addtag "${VG_TAG}" "${VG_NAME}" "$loop"
@@ -74,7 +84,7 @@ vgs "${VG_NAME}"
 
 # shellcheck disable=SC2016
 teardown_script='
-img=/var/lib/csi-local-vg/$(hostname).img
+img=/var/lib/csi-local-vg/${NODE_NAME}.img
 if vgs --noheadings -o vg_name 2>/dev/null | grep -qw "${VG_NAME}"; then
     vgchange -an "${VG_NAME}" || true
     vgremove -ff -y "${VG_NAME}" || true
@@ -82,6 +92,7 @@ fi
 loop=$(losetup -j "$img" 2>/dev/null | awk -F: "NR==1{print \$1}")
 [ -z "$loop" ] || { pvremove -ff -y "$loop" 2>/dev/null || true; losetup -d "$loop" || true; }
 rm -f "$img"
+rm -f /etc/lvm/devices/system.devices
 '
 
 for node in ${nodes}; do

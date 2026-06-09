@@ -28,8 +28,25 @@ func warnError(err error) {
 	_, _ = fmt.Fprintf(GinkgoWriter, "warning: %v\n", err)
 }
 
+// RunOption configures the behavior of Run.
+type RunOption func(*runOptions)
+
+type runOptions struct {
+	silent bool
+}
+
+// Silent suppresses logging of the command and its output to GinkgoWriter.
+func Silent() RunOption {
+	return func(o *runOptions) { o.silent = true }
+}
+
 // Run executes the provided command within this context.
-func Run(cmd *exec.Cmd) (string, error) {
+func Run(cmd *exec.Cmd, opts ...RunOption) (string, error) {
+	var o runOptions
+	for _, opt := range opts {
+		opt(&o)
+	}
+
 	dir, _ := GetProjectDir()
 	cmd.Dir = dir
 	if err := os.Chdir(cmd.Dir); err != nil {
@@ -38,10 +55,14 @@ func Run(cmd *exec.Cmd) (string, error) {
 
 	cmd.Env = append(os.Environ(), "GO111MODULE=on")
 	command := strings.Join(cmd.Args, " ")
-	_, _ = fmt.Fprintf(GinkgoWriter, "running: %s\n", command)
+	if !o.silent {
+		_, _ = fmt.Fprintf(GinkgoWriter, "running: %s\n", command)
+	}
 	output, err := cmd.CombinedOutput()
 	if err != nil {
-		_, _ = fmt.Fprintf(GinkgoWriter, "%s failed with error: (%v) %s\n", command, err, string(output))
+		if !o.silent {
+			_, _ = fmt.Fprintf(GinkgoWriter, "%s failed with error: (%v) %s\n", command, err, string(output))
+		}
 		return string(output), err
 	}
 
@@ -137,6 +158,7 @@ func GetProjectDir() (string, error) {
 	wd = strings.ReplaceAll(wd, "/test/sanity", "")
 	wd = strings.ReplaceAll(wd, "/test/scale", "")
 	wd = strings.ReplaceAll(wd, "/test/aks", "")
+	wd = strings.ReplaceAll(wd, "/test/kwok", "")
 	return wd, nil
 }
 
