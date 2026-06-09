@@ -24,7 +24,7 @@ func TestNewCombinedDriver(t *testing.T) {
 	recorder := events.NewNoopRecorder()
 	tracerProvider := telemetry.NewNoopTracerProvider()
 
-	driver := NewCombined("node1", fakeVolumeClient, fakeClient, false, recorder, tracerProvider)
+	driver := NewCombined("node1", nil, fakeVolumeClient, fakeClient, false, recorder, tracerProvider)
 
 	//nolint:staticcheck,nolintlint
 	if driver == nil {
@@ -115,7 +115,7 @@ func TestDriver_GetIdentityServer(t *testing.T) {
 	recorder := events.NewNoopRecorder()
 	tracerProvider := telemetry.NewNoopTracerProvider()
 
-	driver := NewCombined("node1", fakeVolumeClient, fakeClient, false, recorder, tracerProvider)
+	driver := NewCombined("node1", nil, fakeVolumeClient, fakeClient, false, recorder, tracerProvider)
 
 	identityServer := driver.GetIdentityServer()
 	if identityServer == nil {
@@ -131,7 +131,7 @@ func TestDriver_GetControllerServer(t *testing.T) {
 	recorder := events.NewNoopRecorder()
 	tracerProvider := telemetry.NewNoopTracerProvider()
 
-	driver := NewCombined("node1", fakeVolumeClient, fakeClient, false, recorder, tracerProvider)
+	driver := NewCombined("node1", nil, fakeVolumeClient, fakeClient, false, recorder, tracerProvider)
 
 	controllerServer := driver.GetControllerServer()
 	if controllerServer == nil {
@@ -147,7 +147,7 @@ func TestDriver_GetNodeServer(t *testing.T) {
 	recorder := events.NewNoopRecorder()
 	tracerProvider := telemetry.NewNoopTracerProvider()
 
-	driver := NewCombined("node1", fakeVolumeClient, fakeClient, false, recorder, tracerProvider)
+	driver := NewCombined("node1", nil, fakeVolumeClient, fakeClient, false, recorder, tracerProvider)
 
 	nodeServer := driver.GetNodeServer()
 	if nodeServer == nil {
