@@ -55,7 +55,13 @@ func (ids *Server) GetPluginCapabilities(ctx context.Context, req *csi.GetPlugin
 					},
 				},
 			},
-			// TODO(sc): volume expansion, and?
+			{
+				Type: &csi.PluginCapability_VolumeExpansion_{
+					VolumeExpansion: &csi.PluginCapability_VolumeExpansion{
+						Type: csi.PluginCapability_VolumeExpansion_ONLINE,
+					},
+				},
+			},
 		},
 	}, nil
 }

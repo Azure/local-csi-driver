@@ -21,7 +21,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	k8sruntime "k8s.io/apimachinery/pkg/runtime"
-	testingexec "k8s.io/utils/exec/testing"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	"local-csi-driver/internal/csi/capability"
@@ -29,7 +29,6 @@ import (
 	"local-csi-driver/internal/csi/core/lvm"
 	"local-csi-driver/internal/csi/mounter"
 	"local-csi-driver/internal/csi/testutil"
-	"local-csi-driver/internal/pkg/convert"
 	"local-csi-driver/internal/pkg/events"
 	"local-csi-driver/internal/pkg/telemetry"
 )
@@ -874,170 +873,172 @@ func TestNodeGetCapabilities(t *testing.T) {
 }
 
 func TestNodeExpandVolume(t *testing.T) {
-	t.Skip("Skipping test for NodeExpandVolume") // TODO: re-enable this test
 	if runtime.GOOS == "darwin" || runtime.GOOS == "windows" {
 		t.Skipf("not supported on GOOS=%s", runtime.GOOS)
 	}
-	ctrl := gomock.NewController(t)
-	defer ctrl.Finish()
-	ns := initTestNodeServer(t, ctrl)
 
-	stdCapacityRange := &csi.CapacityRange{
-		RequiredBytes: convert.GiBToBytes(4),
-		LimitBytes:    convert.GiBToBytes(8),
-	}
+	expandCapacity := int64(8 * 1024 * 1024 * 1024) // 8 GiB
 
-	blockVolumePath := "/tmp/block-volume-path"
-	targetTest, err := testutil.GetWorkDirPath("target_test")
+	// Create a real directory for the volume path.
+	targetTest, err := testutil.GetWorkDirPath("expand_target_test")
 	if err != nil {
-		t.Fatalf("failed to get target test path: %v\n", err)
-		os.Exit(1)
+		t.Fatalf("failed to get target test path: %v", err)
 	}
-
-	if err := os.RemoveAll(targetTest); err != nil {
-		t.Fatalf("failed to remove target test path: %v\n", err)
-	}
-	if err := os.RemoveAll(blockVolumePath); err != nil {
-		t.Fatalf("failed to remove block volume path: %v\n", err)
-	}
+	t.Cleanup(func() { _ = os.RemoveAll(targetTest) })
 	_ = testutil.MakeDir(targetTest)
-	_ = testutil.MakeDir(blockVolumePath)
-
-	notFoundErr := status.Error(codes.NotFound, "exit status 1")
-	getSizeErr := status.Errorf(codes.Internal, "Failed to get volume size")
-	resizeTooSmallErr := status.Errorf(codes.Internal, "Volume size is less than requested size")
-	notFoundErrAction := func() ([]byte, []byte, error) {
-		return []byte{}, []byte{}, notFoundErr
-	}
 
 	tests := []struct {
-		name              string
-		req               *csi.NodeExpandVolumeRequest
-		resp              *csi.NodeExpandVolumeResponse
-		wantMountPointErr bool
-		expectErr         error
-		outputScripts     []testingexec.FakeAction
+		name            string
+		req             *csi.NodeExpandVolumeRequest
+		fakeCapacity    int64
+		fakeErr         error
+		expectErrCode   codes.Code
+		expectErr       bool
+		expectResp      bool
+		expectCapacity  int64
+		checkAnnotation bool
 	}{
 		{
-			name:      "Volume ID missing in request",
-			req:       &csi.NodeExpandVolumeRequest{},
-			expectErr: status.Error(codes.InvalidArgument, "Volume ID missing in request"),
-		},
-		{
-			name: "Path not found",
-			req: &csi.NodeExpandVolumeRequest{
-				CapacityRange:     stdCapacityRange,
-				VolumePath:        "./test",
-				VolumeId:          testVolumeID,
-				StagingTargetPath: "test",
-			},
-			expectErr: status.Error(codes.NotFound, "Invalid path"),
+			name:          "Volume ID missing",
+			req:           &csi.NodeExpandVolumeRequest{},
+			expectErr:     true,
+			expectErrCode: codes.InvalidArgument,
 		},
 		{
 			name: "Volume path not provided",
 			req: &csi.NodeExpandVolumeRequest{
-				CapacityRange:     stdCapacityRange,
-				StagingTargetPath: "test",
-				VolumeId:          "test",
+				VolumeId: testVolumeID,
 			},
-			expectErr: status.Error(codes.InvalidArgument, "Volume path must be provided"),
+			expectErr:     true,
+			expectErrCode: codes.InvalidArgument,
 		},
 		{
-			name: "Expand failure",
+			name: "Volume path does not exist",
 			req: &csi.NodeExpandVolumeRequest{
-				CapacityRange:     stdCapacityRange,
-				VolumePath:        targetTest,
-				VolumeId:          testVolumeID,
-				StagingTargetPath: "test",
+				VolumeId:   testVolumeID,
+				VolumePath: "/nonexistent/path",
 			},
-			expectErr:     getSizeErr,
-			outputScripts: []testingexec.FakeAction{notFoundErrAction},
+			expectErr:     true,
+			expectErrCode: codes.NotFound,
 		},
 		{
-			name: "Resize too small failure",
+			name: "Invalid volume ID format",
 			req: &csi.NodeExpandVolumeRequest{
-				CapacityRange:     stdCapacityRange,
-				VolumePath:        targetTest,
-				VolumeId:          testVolumeID,
-				StagingTargetPath: "test",
-			},
-			expectErr: resizeTooSmallErr,
-		},
-		{
-			name: "Successfully expanded",
-			req: &csi.NodeExpandVolumeRequest{
-				CapacityRange:     stdCapacityRange,
-				VolumePath:        targetTest,
-				VolumeId:          testVolumeID,
-				StagingTargetPath: "test",
-			},
-			resp: &csi.NodeExpandVolumeResponse{
-				CapacityBytes: stdCapacityRange.RequiredBytes,
-			},
-		},
-		{
-			name: "Block volume expansion",
-			req: &csi.NodeExpandVolumeRequest{
-				CapacityRange:     stdCapacityRange,
-				VolumePath:        blockVolumePath,
-				VolumeId:          testVolumeID,
-				StagingTargetPath: "test",
-			},
-			resp: &csi.NodeExpandVolumeResponse{},
-		},
-		{
-			name: "Block volume expansion volume capability ignore path",
-			req: &csi.NodeExpandVolumeRequest{
-				CapacityRange:     stdCapacityRange,
-				VolumePath:        targetTest,
-				VolumeId:          testVolumeID,
-				StagingTargetPath: "test",
-				VolumeCapability: &csi.VolumeCapability{
-					AccessType: &csi.VolumeCapability_Block{
-						Block: &csi.VolumeCapability_BlockVolume{},
-					},
+				VolumeId:   "invalidId",
+				VolumePath: targetTest,
+				CapacityRange: &csi.CapacityRange{
+					RequiredBytes: expandCapacity,
 				},
 			},
-			resp: &csi.NodeExpandVolumeResponse{},
+			expectErr:     true,
+			expectErrCode: codes.InvalidArgument,
+		},
+		{
+			name: "Volume expand fails",
+			req: &csi.NodeExpandVolumeRequest{
+				VolumeId:   testVolumeID,
+				VolumePath: targetTest,
+				CapacityRange: &csi.CapacityRange{
+					RequiredBytes: expandCapacity,
+				},
+			},
+			fakeErr:       fmt.Errorf("extend failed"),
+			expectErr:     true,
+			expectErrCode: codes.Internal,
+		},
+		{
+			name: "Successfully expanded with annotation patched",
+			req: &csi.NodeExpandVolumeRequest{
+				VolumeId:   testVolumeID,
+				VolumePath: targetTest,
+				CapacityRange: &csi.CapacityRange{
+					RequiredBytes: expandCapacity,
+				},
+			},
+			fakeCapacity:    expandCapacity,
+			expectResp:      true,
+			expectCapacity:  expandCapacity,
+			checkAnnotation: true,
 		},
 	}
-	for _, test := range tests {
-		var tt = test
+
+	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			mntDir, err := os.MkdirTemp(os.TempDir(), "mount")
-			if err != nil {
-				t.Fatalf("failed to create tmp dir: %v", err)
+			ctrl := gomock.NewController(t)
+			defer ctrl.Finish()
+
+			vc := core.NewFake()
+			vc.DiskPoolCapacity = tt.fakeCapacity
+			vc.Err = tt.fakeErr
+
+			m := mounter.NewMockMounter(ctrl)
+			r := events.NewNoopRecorder()
+			tp := telemetry.NewNoopTracerProvider()
+			scheme := k8sruntime.NewScheme()
+			_ = corev1.AddToScheme(scheme)
+
+			// PV named "pv" matches GetVolumeName("vg#pv") → "pv"
+			pv := corev1.PersistentVolume{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "pv",
+				},
+				Spec: corev1.PersistentVolumeSpec{
+					PersistentVolumeSource: corev1.PersistentVolumeSource{
+						CSI: &corev1.CSIPersistentVolumeSource{
+							Driver:       driverName,
+							VolumeHandle: testVolumeID,
+							VolumeAttributes: map[string]string{
+								lvm.CapacityParam: "4Gi",
+							},
+						},
+					},
+				},
 			}
-			defer func() {
-				if err := os.RemoveAll(mntDir); err != nil {
-					t.Errorf("failed to remove tmp dir: %v", err)
+			k8sClient := fake.NewClientBuilder().WithScheme(scheme).
+				WithObjects(&pv).
+				Build()
+
+			caps := []*csi.NodeServiceCapability{
+				capability.NewNodeServiceCapability(csi.NodeServiceCapability_RPC_STAGE_UNSTAGE_VOLUME),
+			}
+			ns := New(vc, testNodeName, selectedNodeAnnotation, selectedInitialNodeParam, driverName, caps, m, k8sClient, true, r, tp)
+
+			resp, err := ns.NodeExpandVolume(context.Background(), tt.req)
+			if tt.expectErr {
+				if err == nil {
+					t.Fatalf("NodeExpandVolume() error = nil, want gRPC code %v", tt.expectErrCode)
 				}
-			}()
-
-			// Prefix staging and target path with tmp path for easy cleanup.
-			req := tt.req
-			if req.StagingTargetPath != "" {
-				req.StagingTargetPath = filepath.Join(mntDir, req.StagingTargetPath)
-			}
-			resp, err := ns.NodeExpandVolume(context.Background(), req)
-
-			if status.Code(err) != status.Code(tt.expectErr) ||
-				(err != nil && err.Error() != tt.expectErr.Error()) {
-				t.Errorf("NodeExpandVolume() error = %v, expected = %v", err, tt.expectErr)
+				if st, ok := status.FromError(err); !ok || st.Code() != tt.expectErrCode {
+					t.Fatalf("NodeExpandVolume() error code = %v, want %v (err=%v)", st.Code(), tt.expectErrCode, err)
+				}
 				return
 			}
-			if !reflect.DeepEqual(resp, tt.resp) {
-				t.Errorf("NodeExpandVolume() resp:\n %+v\n expected:\n %+v", resp, tt.resp)
+			if err != nil {
+				t.Fatalf("NodeExpandVolume() unexpected error: %v", err)
+			}
+			if !tt.expectResp {
 				return
+			}
+			if resp == nil {
+				t.Fatalf("NodeExpandVolume() resp = nil, want non-nil")
+			}
+			if resp.GetCapacityBytes() != tt.expectCapacity {
+				t.Errorf("NodeExpandVolume() CapacityBytes = %d, want %d", resp.GetCapacityBytes(), tt.expectCapacity)
+			}
+
+			// Verify expanded-capacity annotation was written to the PV.
+			if tt.checkAnnotation {
+				var updatedPV corev1.PersistentVolume
+				if err := k8sClient.Get(context.Background(), client.ObjectKey{Name: "pv"}, &updatedPV); err != nil {
+					t.Fatalf("failed to get PV after expand: %v", err)
+				}
+				got := updatedPV.Annotations[lvm.ExpandedCapacityParam]
+				want := fmt.Sprint(tt.expectCapacity)
+				if got != want {
+					t.Errorf("PV annotation %s = %q, want %q", lvm.ExpandedCapacityParam, got, want)
+				}
 			}
 		})
-	}
-
-	if err := os.RemoveAll(targetTest); err != nil {
-		t.Fatalf("failed to remove target test path: %v\n", err)
-	}
-	if err := os.RemoveAll(blockVolumePath); err != nil {
-		t.Fatalf("failed to remove block volume path: %v\n", err)
 	}
 }
 
@@ -1356,6 +1357,7 @@ func Test_getCapacityAndLimit(t *testing.T) {
 	tests := []struct {
 		name         string
 		attrs        map[string]string
+		annotations  map[string]string
 		wantCapacity int64
 		wantLimit    int64
 		wantErr      bool
@@ -1416,10 +1418,42 @@ func Test_getCapacityAndLimit(t *testing.T) {
 			wantLimit:    0,
 			wantErr:      false,
 		},
+		{
+			name:         "expanded capacity annotation overrides attrs",
+			attrs:        map[string]string{lvm.CapacityParam: "10737418240"},
+			annotations:  map[string]string{lvm.ExpandedCapacityParam: "11811160064"},
+			wantCapacity: 11811160064,
+			wantLimit:    0,
+			wantErr:      false,
+		},
+		{
+			name:         "expanded capacity annotation smaller than attrs is ignored",
+			attrs:        map[string]string{lvm.CapacityParam: "10737418240"},
+			annotations:  map[string]string{lvm.ExpandedCapacityParam: "5368709120"},
+			wantCapacity: 10737418240,
+			wantLimit:    0,
+			wantErr:      false,
+		},
+		{
+			name:         "invalid expanded capacity annotation falls back to attrs",
+			attrs:        map[string]string{lvm.CapacityParam: "10Gi"},
+			annotations:  map[string]string{lvm.ExpandedCapacityParam: "invalid"},
+			wantCapacity: 10 * 1024 * 1024 * 1024,
+			wantLimit:    0,
+			wantErr:      false,
+		},
+		{
+			name:         "nil annotations uses attrs capacity",
+			attrs:        map[string]string{lvm.CapacityParam: "10Gi"},
+			annotations:  nil,
+			wantCapacity: 10 * 1024 * 1024 * 1024,
+			wantLimit:    0,
+			wantErr:      false,
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			gotCapacityBytes, gotLimitBytes, err := getCapacityAndLimit(tt.attrs)
+			gotCapacityBytes, gotLimitBytes, err := getCapacityAndLimit(tt.attrs, tt.annotations)
 			if (err != nil) != tt.wantErr {
 				t.Errorf("getCapacityAndLimit() error = %v, wantErr %v", err, tt.wantErr)
 				return

@@ -78,6 +78,12 @@ var (
 	// exist.
 	CapacityParam = DriverName + "/capacity"
 	LimitParam    = DriverName + "/limit"
+
+	// ExpandedCapacityParam is a PV annotation key set after a successful
+	// NodeExpandVolume. It records the actual LV size after expansion so that
+	// failover-driven recovery in NodeStageVolume can recreate the volume at
+	// the expanded size instead of the immutable create-time CapacityParam.
+	ExpandedCapacityParam = DriverName + "/expanded-capacity"
 )
 
 var (
