@@ -102,6 +102,27 @@ cleanup:
     # Enable the PV cleanup controller in the manager deployment
     enabled: true
 
+  # Capacity-template controller configuration.
+  # When enabled, the manager publishes one CSIStorageCapacity per
+  # (StorageClass x node group) so that Cluster Autoscaler can observe
+  # non-zero capacity on its simulated template nodes and trigger scale-up.
+  # Each object's NodeTopology is constrained to template nodes only via the
+  # 'cluster-autoscaler.kubernetes.io/template-node=true' label that CA
+  # attaches to its simulated nodes (see kubernetes/autoscaler#9702), so
+  # these synthetic objects do not shadow real per-node capacity reported by
+  # the external-provisioner sidecar.
+  # StorageClasses opt in by setting the annotation
+  # 'localdisk.csi.acstor.io/template-capacity' to a resource quantity
+  # (e.g. '1800Gi').
+  capacityTemplate:
+    enabled: false
+    # Node label whose values define a node group. Defaults to the upstream
+    # instance-type label (i.e. the VM SKU), since local NVMe capacity is
+    # determined by the SKU. Other common choices:
+    #   kubernetes.azure.com/agentpool   - AKS node pool
+    #   topology.kubernetes.io/zone      - failure domain
+    nodeGroupLabelKey: node.kubernetes.io/instance-type
+
 # Webhook configuration.
 webhook:
   enforceEphemeral:

@@ -24,6 +24,7 @@ import (
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
 
+	"local-csi-driver/internal/manager/capacitytemplate"
 	"local-csi-driver/internal/manager/pvcleanup"
 	"local-csi-driver/internal/pkg/events"
 	"local-csi-driver/internal/pkg/version"
@@ -71,6 +72,8 @@ func main() {
 	var printVersionAndExit bool
 	var eventRecorderEnabled bool
 	var enablePVCleanup bool
+	var enableCapacityTemplate bool
+	var capacityTemplateNodeGroupLabel string
 
 	flag.StringVar(&namespace, "namespace", "default",
 		"The namespace to use for creating objects.")
@@ -109,6 +112,12 @@ func main() {
 		"If enabled, the webhook will use the event recorder to record events. This is useful for debugging and monitoring purposes.")
 	flag.BoolVar(&enablePVCleanup, "enable-pv-cleanup", true,
 		"If enabled, the PV cleanup controller will be registered to clean up PVs when nodes are unavailable.")
+	flag.BoolVar(&enableCapacityTemplate, "enable-capacity-template", false,
+		"If enabled, publish one CSIStorageCapacity per (StorageClass x node group) so Cluster Autoscaler can observe non-zero capacity on simulated template nodes.")
+	flag.StringVar(&capacityTemplateNodeGroupLabel, "capacity-template-node-group-label", capacitytemplate.DefaultNodeGroupLabelKey,
+		"Node label key whose values define a node group for the capacity-template controller. "+
+			"Defaults to node.kubernetes.io/instance-type (VM SKU). Other useful values: "+
+			"kubernetes.azure.com/agentpool (AKS node pool), topology.kubernetes.io/zone.")
 
 	// Initialize logger flags config.
 	logConfig := textlogger.NewConfig(textlogger.VerbosityFlagName("v"))
@@ -127,7 +136,7 @@ func main() {
 	log.Info("starting webhook server")
 
 	// Validate required flags
-	if enforceEphemeralWebhookConfig == "" && hyperconvergedWebhookConfig == "" && !enablePVCleanup {
+	if enforceEphemeralWebhookConfig == "" && hyperconvergedWebhookConfig == "" && !enablePVCleanup && !enableCapacityTemplate {
 		logAndExit(fmt.Errorf("at least one feature must be enabled"), "no webhooks or PV cleanup controller configured")
 	}
 
@@ -297,6 +306,22 @@ func main() {
 		log.Info("PV cleanup controller registered successfully")
 	} else {
 		log.Info("PV cleanup controller disabled")
+	}
+
+	// Register capacity-template controller if enabled
+	if enableCapacityTemplate {
+		log.Info("registering capacity-template controller",
+			"nodeGroupLabelKey", capacityTemplateNodeGroupLabel)
+		if err := (&capacitytemplate.Reconciler{
+			Client:            mgr.GetClient(),
+			Namespace:         namespace,
+			NodeGroupLabelKey: capacityTemplateNodeGroupLabel,
+		}).SetupWithManager(mgr); err != nil {
+			logAndExit(err, "unable to register capacity-template controller")
+		}
+		log.Info("capacity-template controller registered successfully")
+	} else {
+		log.Info("capacity-template controller disabled")
 	}
 
 	// Register webhooks once certificates are ready
