@@ -11,6 +11,7 @@ var (
 
 	LvmStorageClassFixture          = filepath.Join(basePath, "lvm_storageclass.yaml")
 	LvmStatefulSetFixture           = filepath.Join(basePath, "lvm_statefulset.yaml")
+	LvmChaosStatefulSetFixture      = filepath.Join(basePath, "lvm_chaos_statefulset.yaml")
 	LvmAnnotationStatefulSetFixture = filepath.Join(basePath, "lvm_annotation_statefulset.yaml")
 	LvmPvcNoAnnotationFixture       = filepath.Join(basePath, "lvm_pvc_no_annotation.yaml")
 	LvmPvcAnnotationFixure          = filepath.Join(basePath, "lvm_pvc_annotation.yaml")
