@@ -16,6 +16,8 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	kevents "k8s.io/client-go/tools/events"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
@@ -34,6 +36,7 @@ type Server struct {
 	mounter                  mounter.Interface
 	k8sClient                client.Client
 	nodeId                   string
+	selfPod                  *corev1.Pod
 	selectedNodeAnnotation   string
 	selectedInitialNodeParam string
 	removePvNodeAffinity     bool
@@ -47,7 +50,7 @@ type Server struct {
 // Server must implement the csi.ControllerServer interface.
 var _ csi.ControllerServer = &Server{}
 
-func New(volume core.ControllerInterface, caps []*csi.ControllerServiceCapability, modes []*csi.VolumeCapability_AccessMode, mounter mounter.Interface, k8sClient client.Client, nodeID, selectedNodeAnnotation string, selectedInitialNodeParam string, removePvNodeAffinity bool, recorder kevents.EventRecorder, tp trace.TracerProvider) *Server {
+func New(volume core.ControllerInterface, caps []*csi.ControllerServiceCapability, modes []*csi.VolumeCapability_AccessMode, mounter mounter.Interface, k8sClient client.Client, nodeID string, selfPod *corev1.Pod, selectedNodeAnnotation string, selectedInitialNodeParam string, removePvNodeAffinity bool, recorder kevents.EventRecorder, tp trace.TracerProvider) *Server {
 	return &Server{
 		caps:                     caps,
 		modes:                    modes,
@@ -55,6 +58,7 @@ func New(volume core.ControllerInterface, caps []*csi.ControllerServiceCapabilit
 		mounter:                  mounter,
 		k8sClient:                k8sClient,
 		nodeId:                   nodeID,
+		selfPod:                  selfPod,
 		selectedNodeAnnotation:   selectedNodeAnnotation,
 		selectedInitialNodeParam: selectedInitialNodeParam,
 		removePvNodeAffinity:     removePvNodeAffinity,
@@ -96,20 +100,7 @@ func (cs *Server) CreateVolume(ctx context.Context, req *csi.CreateVolumeRequest
 	if limit > 0 && capacity > limit {
 		return nil, status.Error(codes.InvalidArgument, "capacity cannot exceed limit")
 	}
-
-	// Fetch PVC to be used as reference object in events.
-	var pvc *corev1.PersistentVolumeClaim
-	if req.Parameters[core.PVCNameParam] != "" && req.Parameters[core.PVCNamespaceParam] != "" {
-		pvc = &corev1.PersistentVolumeClaim{}
-		if err := cs.k8sClient.Get(ctx, client.ObjectKey{Namespace: req.Parameters[core.PVCNamespaceParam], Name: req.Parameters[core.PVCNameParam]}, pvc); err != nil {
-			// We error in this scenario because we need the PVC to be able to
-			// check the owner references and set the volume to be
-			// accessible from all nodes if it is not a generic ephemeral volume.
-			log.Error(err, "failed to get pvc", "name", req.Parameters[core.PVCNameParam], "namespace", req.Parameters[core.PVCNamespaceParam])
-			return nil, status.Error(codes.Internal, err.Error())
-		}
-		ctx = events.WithObjectIntoContext(ctx, cs.recorder, pvc)
-	}
+	ctx = events.WithObjectIntoContext(ctx, cs.recorder, cs.selfPod)
 
 	// Create using the volume api.
 	vol, err := cs.volume.Create(ctx, req)
@@ -126,9 +117,11 @@ func (cs *Server) CreateVolume(ctx context.Context, req *csi.CreateVolumeRequest
 	// This approach works effectively when a webhook enforces hyperconvergence of workloads
 	// and volumes; otherwise, it may not be suitable.
 	if cs.removePvNodeAffinity {
-		if pvc == nil {
-			// We get the pvc from the request above, if we skip it will be nil
-			// and we will not be able to set the volume to be accessible from all nodes.
+		if req.Parameters[core.PVCNameParam] == "" || req.Parameters[core.PVCNamespaceParam] == "" {
+			// The external-provisioner injects these parameters when
+			// `--extra-create-metadata=true` is set. Without them we have no
+			// way to associate the volume with its claim, so we leave node
+			// affinity intact (the volume stays single-node).
 			log.V(2).Info("CreateVolume succeeded but pvc namespace or name not found")
 			span.SetStatus(otcodes.Ok, "CreateVolume succeeded but pvc namespace or name not found")
 			return &csi.CreateVolumeResponse{Volume: vol}, nil
@@ -217,7 +210,10 @@ func (cs *Server) DeleteVolume(ctx context.Context, req *csi.DeleteVolumeRequest
 			// Check if the node exists in the cluster.
 			// If it does not exist, we can return success without deleting the volume
 			// since the PV cleanup controller will handle finalizer removal.
-			if err := cs.k8sClient.Get(ctx, client.ObjectKey{Name: selectedNode}, &corev1.Node{}); err != nil {
+			// TODO(jlong): move cleanup to csi-manager to avoid PartialObjectMetadata GET in driver
+			nodeMeta := &metav1.PartialObjectMetadata{}
+			nodeMeta.SetGroupVersionKind(schema.GroupVersionKind{Version: "v1", Kind: "Node"})
+			if err := cs.k8sClient.Get(ctx, client.ObjectKey{Name: selectedNode}, nodeMeta); err != nil {
 				if client.IgnoreNotFound(err) == nil { // node not found
 					log.V(2).Info("node not found, assuming it has been deleted", "name", selectedNode)
 					span.SetStatus(otcodes.Ok, "node not found")

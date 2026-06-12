@@ -26,13 +26,17 @@ import (
 	"local-csi-driver/internal/pkg/raid"
 
 	corev1 "k8s.io/api/core/v1"
+	storagev1 "k8s.io/api/storage/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	_ "k8s.io/client-go/plugin/pkg/client/auth"
 	"k8s.io/klog/v2/textlogger"
 	"k8s.io/utils/exec"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/cache"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
 	"sigs.k8s.io/controller-runtime/pkg/metrics"
@@ -64,6 +68,7 @@ func init() {
 func main() {
 	var nodeName string
 	var podName string
+	var podUID string
 	var namespace string
 	var csiAddr string
 	var metricsAddr string
@@ -86,6 +91,8 @@ func main() {
 		"The name of the node this agent is running on.")
 	flag.StringVar(&podName, "pod-name", "",
 		"The name of the pod this agent is running on.")
+	flag.StringVar(&podUID, "pod-uid", "",
+		"The UID of the pod this agent is running on. Used as the subject for node-scoped events.")
 	flag.StringVar(&namespace, "namespace", "default",
 		"The namespace to use for creating objects.")
 	flag.StringVar(&csiAddr, "csi-bind-address", "unix:///tmp/csi.sock",
@@ -201,11 +208,17 @@ func main() {
 		HealthProbeBindAddress: probeAddr,
 		LeaderElection:         false, // No webhooks, no leader election needed
 		LeaderElectionID:       "local-csi-driver",
-		// Pod is only read once at startup (StartupDiagnostic). Bypass the
-		// cache so we don't start a cluster-wide Pod informer on every node.
+		Cache: cache.Options{
+			DefaultTransform: cache.TransformStripManagedFields(),
+		},
 		Client: client.Options{
 			Cache: &client.CacheOptions{
-				DisableFor: []client.Object{&corev1.Pod{}},
+				DisableFor: []client.Object{
+					&storagev1.CSIDriver{},
+					&metav1.PartialObjectMetadata{
+						TypeMeta: metav1.TypeMeta{APIVersion: "v1", Kind: "Node"},
+					},
+				},
 			},
 		},
 	})
@@ -258,9 +271,11 @@ func main() {
 		recorder = mgr.GetEventRecorder("local-csi-driver")
 	}
 
+	selfPod := getPod(podName, namespace, podUID)
+
 	// Run startup diagnostic to check disk availability and emit a Warning
 	// event on the pod if no disks are available for volume group creation.
-	startupDiag := lvm.NewStartupDiagnostic(deviceProbe, blockDevUtils, probe.EphemeralDiskFilter, recorder, mgr.GetClient(), podName, namespace)
+	startupDiag := lvm.NewStartupDiagnostic(deviceProbe, blockDevUtils, probe.EphemeralDiskFilter, recorder, selfPod)
 	if err := mgr.Add(startupDiag); err != nil {
 		logAndExit(err, "unable to add startup diagnostic to manager")
 	}
@@ -314,7 +329,7 @@ func main() {
 	}
 
 	// Create the CSI server.
-	csiServer, err := server.NewCombined(csiAddr, driver.NewCombined(nodeName, volumeClient, mgr.GetClient(), runAlongsideWebhook, recorder, tp), t)
+	csiServer, err := server.NewCombined(csiAddr, driver.NewCombined(nodeName, selfPod, volumeClient, mgr.GetClient(), runAlongsideWebhook, recorder, tp), t)
 	if err != nil {
 		logAndExit(err, "unable to create csi server")
 	}
@@ -333,6 +348,20 @@ func main() {
 	span.AddEvent("starting manager")
 	if err := mgr.Start(ctx); err != nil {
 		logAndExit(err, "problem running manager")
+	}
+}
+
+func getPod(name, ns, uid string) *corev1.Pod {
+	return &corev1.Pod{
+		TypeMeta: metav1.TypeMeta{
+			Kind:       "Pod",
+			APIVersion: "v1",
+		},
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      name,
+			Namespace: ns,
+			UID:       types.UID(uid),
+		},
 	}
 }
 

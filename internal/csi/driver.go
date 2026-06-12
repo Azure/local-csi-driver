@@ -9,6 +9,7 @@ import (
 
 	"github.com/container-storage-interface/spec/lib/go/csi"
 	"go.opentelemetry.io/otel/trace"
+	corev1 "k8s.io/api/core/v1"
 	storagev1 "k8s.io/api/storage/v1"
 	kevents "k8s.io/client-go/tools/events"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -48,10 +49,10 @@ type Driver struct {
 }
 
 // NewCombined creates a new CSI driver with controller and node capabilities.
-func NewCombined(nodeID string, volumeClient core.Interface, client client.Client, removePvNodeAffinity bool, recorder kevents.EventRecorder, tp trace.TracerProvider) *Driver {
+func NewCombined(nodeID string, selfPod *corev1.Pod, volumeClient core.Interface, client client.Client, removePvNodeAffinity bool, recorder kevents.EventRecorder, tp trace.TracerProvider) *Driver {
 	d := &Driver{
 		is:       identity.New(volumeClient.GetDriverName(), Version),
-		cs:       controller.New(volumeClient, volumeClient.GetControllerDriverCapabilities(), volumeClient.GetNodeAccessModes(), mounter.New(tp), client, nodeID, SelectedNodeAnnotation, SelectedInitialNodeParam, removePvNodeAffinity, recorder, tp),
+		cs:       controller.New(volumeClient, volumeClient.GetControllerDriverCapabilities(), volumeClient.GetNodeAccessModes(), mounter.New(tp), client, nodeID, selfPod, SelectedNodeAnnotation, SelectedInitialNodeParam, removePvNodeAffinity, recorder, tp),
 		ns:       node.New(volumeClient, nodeID, SelectedNodeAnnotation, SelectedInitialNodeParam, volumeClient.GetDriverName(), volumeClient.GetNodeDriverCapabilities(), mounter.New(tp), client, removePvNodeAffinity, recorder, tp),
 		client:   client,
 		volume:   volumeClient,
@@ -66,7 +67,7 @@ func NewCombined(nodeID string, volumeClient core.Interface, client client.Clien
 func NewController(volumeClient core.Interface, client client.Client, removePvNodeAffinity bool, recorder kevents.EventRecorder, tp trace.TracerProvider) *Driver {
 	return &Driver{
 		is:       identity.New(volumeClient.GetDriverName(), Version),
-		cs:       controller.New(volumeClient, volumeClient.GetControllerDriverCapabilities(), volumeClient.GetNodeAccessModes(), mounter.New(tp), client, "", SelectedNodeAnnotation, SelectedInitialNodeParam, removePvNodeAffinity, events.NewNoopRecorder(), tp),
+		cs:       controller.New(volumeClient, volumeClient.GetControllerDriverCapabilities(), volumeClient.GetNodeAccessModes(), mounter.New(tp), client, "", nil, SelectedNodeAnnotation, SelectedInitialNodeParam, removePvNodeAffinity, events.NewNoopRecorder(), tp),
 		ns:       nil,
 		client:   client,
 		volume:   volumeClient,

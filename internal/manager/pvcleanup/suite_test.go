@@ -27,6 +27,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 
 	"local-csi-driver/internal/csi/core/lvm"
+	"local-csi-driver/internal/manager/transform"
 )
 
 var (
@@ -70,6 +71,7 @@ var _ = BeforeSuite(func() {
 	// Start the controller
 	k8sManager, err := ctrl.NewManager(cfg, ctrl.Options{
 		Scheme: scheme.Scheme,
+		Cache:  transform.ManagerCacheOptions(),
 	})
 	Expect(err).ToNot(HaveOccurred())
 

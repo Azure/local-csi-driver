@@ -25,6 +25,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
 
 	"local-csi-driver/internal/manager/pvcleanup"
+	"local-csi-driver/internal/manager/transform"
 	"local-csi-driver/internal/pkg/events"
 	"local-csi-driver/internal/pkg/version"
 	"local-csi-driver/internal/webhook/enforceEphemeral"
@@ -211,6 +212,7 @@ func main() {
 		// if you are doing or is intended to do any operation such as perform cleanups
 		// after the manager stops then its usage might be unsafe.
 		LeaderElectionReleaseOnCancel: true,
+		Cache:                         transform.ManagerCacheOptions(),
 	})
 	if err != nil {
 		logAndExit(err, "unable to start manager")
