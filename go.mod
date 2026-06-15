@@ -181,7 +181,7 @@ require (
 replace (
 	k8s.io/cloud-provider v0.0.0 => k8s.io/cloud-provider v0.36.0
 	k8s.io/cluster-bootstrap v0.0.0 => k8s.io/cluster-bootstrap v0.36.0
-	k8s.io/component-helpers v0.0.0 => k8s.io/component-helpers v0.36.0
+	k8s.io/component-helpers v0.0.0 => k8s.io/component-helpers v0.36.2
 	k8s.io/cri-client v0.0.0 => k8s.io/cri-client v0.36.0
 	k8s.io/cri-streaming v0.0.0 => k8s.io/cri-streaming v0.36.0
 	k8s.io/csi-translation-lib v0.0.0 => k8s.io/csi-translation-lib v0.36.0
@@ -194,7 +194,7 @@ replace (
 	k8s.io/kube-scheduler v0.0.0 => k8s.io/kube-scheduler v0.36.0
 	k8s.io/kubectl v0.0.0 => k8s.io/kubectl v0.36.0
 	k8s.io/kubelet v0.0.0 => k8s.io/kubelet v0.36.0
-	k8s.io/mount-utils v0.0.0 => k8s.io/mount-utils v0.36.0
+	k8s.io/mount-utils v0.0.0 => k8s.io/mount-utils v0.36.2
 	k8s.io/pod-security-admission v0.0.0 => k8s.io/pod-security-admission v0.36.0
 	k8s.io/sample-apiserver v0.0.0 => k8s.io/sample-apiserver v0.36.0
 )
