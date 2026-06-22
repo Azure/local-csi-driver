@@ -10,12 +10,11 @@ import (
 
 	"github.com/container-storage-interface/spec/lib/go/csi"
 	"go.opentelemetry.io/otel/codes"
-	grpcCodes "google.golang.org/grpc/codes"
-	"google.golang.org/grpc/status"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 
 	"local-csi-driver/internal/csi/capability"
+	"local-csi-driver/internal/csi/core"
 	"local-csi-driver/internal/pkg/events"
 	"local-csi-driver/internal/pkg/lvm"
 )
@@ -50,36 +49,36 @@ func (l *LVM) NodeExpandVolume(ctx context.Context, req *csi.NodeExpandVolumeReq
 	defer span.End()
 
 	if req.GetVolumeId() == "" {
-		return nil, status.Error(grpcCodes.InvalidArgument, "volume id is required")
+		return nil, fmt.Errorf("%w: volume id is required", core.ErrInvalidArgument)
 	}
 
 	id, err := newIdFromString(req.GetVolumeId())
 	if err != nil {
 		span.SetStatus(codes.Error, "failed to parse volume id")
-		return nil, status.Errorf(grpcCodes.InvalidArgument, "failed to parse volume id %s: %v", req.GetVolumeId(), err)
+		return nil, fmt.Errorf("%w: failed to parse volume id %s: %v", core.ErrInvalidArgument, req.GetVolumeId(), err)
 	}
 
 	lv, err := l.lvm.GetLogicalVolume(ctx, id.VolumeGroup, id.LogicalVolume)
 	if err != nil {
 		if lvm.IgnoreNotFound(err) != nil {
 			span.SetStatus(codes.Error, "failed to find volume")
-			return nil, status.Errorf(grpcCodes.Internal, "failed to find volume %s: %v", req.GetVolumeId(), err)
+			return nil, fmt.Errorf("failed to find volume %s: %w", req.GetVolumeId(), err)
 		}
 	}
 
 	if err != nil || lv == nil {
 		span.SetStatus(codes.Error, "unable to find volume")
-		return nil, status.Errorf(grpcCodes.NotFound, "volume %s not found", req.GetVolumeId())
+		return nil, fmt.Errorf("%w: volume %s not found", core.ErrVolumeNotFound, req.GetVolumeId())
 	}
 
 	if req.GetCapacityRange() == nil || req.GetCapacityRange().GetRequiredBytes() == 0 {
-		return nil, status.Error(grpcCodes.InvalidArgument, "capacity range is required")
+		return nil, fmt.Errorf("%w: capacity range is required", core.ErrOutOfRange)
 	}
 
 	capacityRequest := resource.NewQuantity(req.GetCapacityRange().GetRequiredBytes(), resource.BinarySI)
 	if capacityRequest == nil {
 		span.SetStatus(codes.Error, "invalid capacity range")
-		return nil, status.Error(grpcCodes.InvalidArgument, "invalid capacity range")
+		return nil, fmt.Errorf("%w: invalid capacity range", core.ErrOutOfRange)
 	}
 
 	// Expand the volume on the node.
@@ -110,16 +109,16 @@ func (l *LVM) NodeExpandVolume(ctx context.Context, req *csi.NodeExpandVolumeReq
 		span.SetStatus(codes.Error, "unable to expand volume")
 		recorder.Eventf(corev1.EventTypeWarning, expandingLogicalVolumeFailed, "Failed to expand volume %s/%s to %d: %v", id.VolumeGroup, id.LogicalVolume, capacityRequest.Value(), err)
 		if errors.Is(err, lvm.ErrResourceExhausted) {
-			return nil, status.Error(grpcCodes.OutOfRange, err.Error())
+			return nil, fmt.Errorf("%w: %v", core.ErrOutOfRange, err)
 		}
-		return nil, status.Errorf(grpcCodes.Internal, "failed to expand volume: %v", err)
+		return nil, fmt.Errorf("failed to expand volume: %w", err)
 	}
 
 	// Re-query the LV to get the actual allocated size after extend.
 	expandedLV, err := l.lvm.GetLogicalVolume(ctx, id.VolumeGroup, id.LogicalVolume)
 	if err != nil {
 		span.SetStatus(codes.Error, "failed to get volume after expand")
-		return nil, status.Errorf(grpcCodes.Internal, "failed to get volume after expand: %v", err)
+		return nil, fmt.Errorf("failed to get volume after expand: %w", err)
 	}
 	actualSize := int64(expandedLV.Size)
 

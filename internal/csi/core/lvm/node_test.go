@@ -5,13 +5,13 @@ package lvm_test
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/container-storage-interface/spec/lib/go/csi"
 	"go.uber.org/mock/gomock"
-	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/status"
 
+	"local-csi-driver/internal/csi/core"
 	lvmMgr "local-csi-driver/internal/pkg/lvm"
 )
 
@@ -37,7 +37,7 @@ func TestNodeExpandVolume(t *testing.T) {
 		name           string
 		req            *csi.NodeExpandVolumeRequest
 		expectLvm      func(*lvmMgr.MockManager)
-		expectErrCode  codes.Code
+		expectErrIs    error
 		expectErr      bool
 		expectResp     bool
 		expectCapacity int64
@@ -47,8 +47,8 @@ func TestNodeExpandVolume(t *testing.T) {
 			req: &csi.NodeExpandVolumeRequest{
 				CapacityRange: &csi.CapacityRange{RequiredBytes: expandedSize},
 			},
-			expectErr:     true,
-			expectErrCode: codes.InvalidArgument,
+			expectErr:   true,
+			expectErrIs: core.ErrInvalidArgument,
 		},
 		{
 			name: "invalid volume id format",
@@ -56,8 +56,8 @@ func TestNodeExpandVolume(t *testing.T) {
 				VolumeId:      "not-a-valid-id",
 				CapacityRange: &csi.CapacityRange{RequiredBytes: expandedSize},
 			},
-			expectErr:     true,
-			expectErrCode: codes.InvalidArgument,
+			expectErr:   true,
+			expectErrIs: core.ErrInvalidArgument,
 		},
 		{
 			name: "missing capacity range",
@@ -69,8 +69,8 @@ func TestNodeExpandVolume(t *testing.T) {
 					Return(&lvmMgr.LogicalVolume{Name: testLV, Size: lvmMgr.Int64String(currentSize)}, nil).
 					Times(1)
 			},
-			expectErr:     true,
-			expectErrCode: codes.InvalidArgument,
+			expectErr:   true,
+			expectErrIs: core.ErrOutOfRange,
 		},
 		{
 			name: "volume not found",
@@ -83,8 +83,8 @@ func TestNodeExpandVolume(t *testing.T) {
 					Return(nil, lvmMgr.ErrNotFound).
 					Times(1)
 			},
-			expectErr:     true,
-			expectErrCode: codes.NotFound,
+			expectErr:   true,
+			expectErrIs: core.ErrVolumeNotFound,
 		},
 		{
 			name: "requested less than current returns OK with actual size",
@@ -167,8 +167,8 @@ func TestNodeExpandVolume(t *testing.T) {
 					Times(1).
 					After(second)
 			},
-			expectErr:     true,
-			expectErrCode: codes.Internal,
+			expectErr:   true,
+			expectErrIs: lvmMgr.ErrNotFound,
 		},
 		{
 			name: "requested greater with mount capability sets ResizeFS",
@@ -219,8 +219,8 @@ func TestNodeExpandVolume(t *testing.T) {
 					Times(1).
 					After(first)
 			},
-			expectErr:     true,
-			expectErrCode: codes.OutOfRange,
+			expectErr:   true,
+			expectErrIs: core.ErrOutOfRange,
 		},
 	}
 
@@ -241,10 +241,10 @@ func TestNodeExpandVolume(t *testing.T) {
 			resp, err := l.NodeExpandVolume(context.Background(), tt.req)
 			if tt.expectErr {
 				if err == nil {
-					t.Fatalf("NodeExpandVolume() error = nil, want gRPC code %v", tt.expectErrCode)
+					t.Fatalf("NodeExpandVolume() error = nil, want error wrapping %v", tt.expectErrIs)
 				}
-				if st, ok := status.FromError(err); !ok || st.Code() != tt.expectErrCode {
-					t.Fatalf("NodeExpandVolume() error code = %v, want %v (err=%v)", st.Code(), tt.expectErrCode, err)
+				if tt.expectErrIs != nil && !errors.Is(err, tt.expectErrIs) {
+					t.Fatalf("NodeExpandVolume() error = %v, want it to wrap %v", err, tt.expectErrIs)
 				}
 				return
 			}
