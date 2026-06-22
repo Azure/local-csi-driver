@@ -422,7 +422,7 @@ func (ns *Server) NodeStageVolume(ctx context.Context, req *csi.NodeStageVolumeR
 		// volumes is acceptable for local volumes.
 
 		// Get the capacity request from the PV attributes.
-		capacityBytes, limitBytes, err := getCapacityAndLimit(pv.Spec.CSI.VolumeAttributes)
+		capacityBytes, limitBytes, err := getCapacityAndLimit(pv.Spec.CSI.VolumeAttributes, pv.Annotations)
 		if err != nil {
 			log.Error(err, "failed to get capacity and limit from pv attributes")
 			span.SetStatus(otcodes.Error, "failed to get capacity and limit from pv attributes")
@@ -484,8 +484,12 @@ func (ns *Server) NodeStageVolume(ctx context.Context, req *csi.NodeStageVolumeR
 	return &csi.NodeStageVolumeResponse{}, nil
 }
 
-// getCapacityAndLimit retrieves the capacity and limit from the PV attributes.
-func getCapacityAndLimit(attrs map[string]string) (capacityBytes, limitBytes int64, err error) {
+// getCapacityAndLimit retrieves the capacity and limit from the PV attributes
+// and annotations. If an expanded-capacity annotation is present (set after
+// NodeExpandVolume), it takes precedence over the immutable volumeAttributes
+// CapacityParam to ensure failover recovery recreates volumes at their
+// expanded size.
+func getCapacityAndLimit(attrs map[string]string, annotations map[string]string) (capacityBytes, limitBytes int64, err error) {
 	c, ok := attrs[lvm.CapacityParam]
 	if !ok {
 		return 0, 0, fmt.Errorf("volume request size is missing in pv attribute %s - recovery impossible", lvm.CapacityParam)
@@ -504,6 +508,18 @@ func getCapacityAndLimit(attrs map[string]string) (capacityBytes, limitBytes int
 			return 0, 0, fmt.Errorf("failed to parse volume limit size from pv attribute %s=%s: %w", lvm.LimitParam, attrs[lvm.LimitParam], err)
 		}
 		limitBytes = limit.Value()
+	}
+
+	// If the PV has been expanded, the expanded-capacity annotation holds the
+	// actual post-expansion LV size. Use it instead of the immutable
+	// create-time CapacityParam.
+	if ec, ok := annotations[lvm.ExpandedCapacityParam]; ok && len(ec) > 0 {
+		expanded, err := resource.ParseQuantity(ec)
+		if err == nil {
+			if expandedBytes := expanded.Value(); expandedBytes > capacityBytes {
+				capacityBytes = expandedBytes
+			}
+		}
 	}
 
 	return capacityBytes, limitBytes, nil
@@ -587,7 +603,21 @@ func (ns *Server) NodeExpandVolume(ctx context.Context, req *csi.NodeExpandVolum
 		return nil, status.Error(codes.Internal, err.Error())
 	}
 
-	log.V(2).Info("NodeExpandVolume resized volume")
+	// Persist the actual expanded LV size as a PV annotation so that
+	// failover-driven recovery in NodeStageVolume recreates the volume at the
+	// expanded size.
+	if pv.Name != "" {
+		original := pv.DeepCopy()
+		if pv.Annotations == nil {
+			pv.Annotations = make(map[string]string)
+		}
+		pv.Annotations[lvm.ExpandedCapacityParam] = fmt.Sprint(resp.GetCapacityBytes())
+		if err := ns.k8sClient.Patch(ctx, &pv, client.MergeFrom(original)); err != nil {
+			log.Error(err, "failed to patch PV with expanded capacity annotation")
+		}
+	}
+
+	log.V(2).Info("NodeExpandVolume resized volume", "capacityBytes", resp.GetCapacityBytes())
 	span.SetStatus(otcodes.Ok, "resized volume")
 	return resp, nil
 }
