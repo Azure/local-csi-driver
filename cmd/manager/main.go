@@ -59,6 +59,7 @@ func main() {
 	var certSecretName string
 	var metricsAddr string
 	var probeAddr string
+	var pprofAddr string
 	var secureMetrics bool
 	var enableHTTP2 bool
 	var leaderElectionID string
@@ -87,6 +88,8 @@ func main() {
 	flag.StringVar(&metricsAddr, "metrics-bind-address", "0", "The address the metrics endpoint binds to. "+
 		"Use :8443 for HTTPS or :8080 for HTTP, or leave as 0 to disable the metrics service.")
 	flag.StringVar(&probeAddr, "health-probe-bind-address", ":8081", "The address the probe endpoint binds to.")
+	flag.StringVar(&pprofAddr, "pprof-bind-address", "", "The address the pprof endpoint binds to (e.g. :6060). "+
+		"Leave empty to disable pprof. Exposes /debug/pprof/* for heap, goroutine, and CPU profiling.")
 	flag.BoolVar(&secureMetrics, "metrics-secure", true,
 		"If set, the metrics endpoint is served securely via HTTPS. Use --metrics-secure=false to use HTTP instead.")
 	flag.BoolVar(&enableHTTP2, "enable-http2", false,
@@ -198,6 +201,7 @@ func main() {
 		Metrics:                    metricsOptions,
 		WebhookServer:              webhookServer,
 		HealthProbeBindAddress:     probeAddr,
+		PprofBindAddress:           pprofAddr,
 		LeaderElection:             enableLeaderElection,
 		LeaderElectionID:           leaderElectionID, // Required for cert rotation.
 		LeaderElectionResourceLock: "leases",

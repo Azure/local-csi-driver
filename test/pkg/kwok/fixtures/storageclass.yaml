@@ -1,0 +1,12 @@
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: kwok-noop
+# A real StorageClass with a no-op provisioner. Used by kwok fake PVCs so the
+# kube-controller-manager pv_controller resolves the StorageClass (instead of
+# logging "storageclass not found" on every reconcile) but never attempts to
+# provision a volume. WaitForFirstConsumer further suppresses pv-binder churn
+# until a pod actually schedules onto the PVC, which kwok PVCs never trigger.
+provisioner: kubernetes.io/no-provisioner
+volumeBindingMode: WaitForFirstConsumer
+reclaimPolicy: Delete

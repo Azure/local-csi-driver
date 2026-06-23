@@ -50,22 +50,42 @@ jobs:
           - name: Kind E2E
             id: e2e
             make-target: test-e2e
+            cluster-type: kind
             kind-args: --kind-nodes single --kind-setup-vg
+            extra-make-vars: ""
           - name: Kind External E2E
             id: external-e2e
             make-target: test-external-e2e
+            cluster-type: kind
             kind-args: --kind-nodes single --kind-setup-vg
+            extra-make-vars: ""
           - name: Kind Sanity
             id: sanity
             make-target: test-sanity
+            cluster-type: kind
             kind-args: --kind-nodes single --kind-setup-vg
+            extra-make-vars: ""
+          - name: Kwok Scale
+            id: kwok
+            make-target: test-kwok
+            cluster-type: kwok
+            kind-args: ""
+            # SKIP_CLEANUP leaves the fake objects in place at end-of-suite
+            # and SKIP_UNINSTALL skips uninstalling kwok and the csi driver,
+            # so the run finishes quickly in CI; the cluster is torn down
+            # with the runner. SKIP_SUPPORT_BUNDLE skips support-bundle
+            # collection - it is not useful for the fake kwok nodes and
+            # only slows down teardown.
+            extra-make-vars: SKIP_CLEANUP=true SKIP_UNINSTALL=true SKIP_SUPPORT_BUNDLE=true
         exclude:
-          # external-e2e and sanity work on arm64 too, but to save CI minutes
-          # we only run them on amd64. Plain e2e still runs on both arches.
+          # external-e2e, sanity, and kwok work on arm64 too, but to save CI
+          # minutes we only run them on amd64. Plain e2e still runs on both.
           - arch: { tag-suffix: arm64 }
             test: { id: external-e2e }
           - arch: { tag-suffix: arm64 }
             test: { id: sanity }
+          - arch: { tag-suffix: arm64 }
+            test: { id: kwok }
     runs-on: ${{ matrix.arch.runs-on }}
     steps:
       - name: Harden Runner
@@ -133,6 +153,7 @@ jobs:
         run: |
           # Ensure kind binary is on PATH for any in-suite invocations
           # (e.g. external-e2e's `kind load docker-image` in BeforeSuite).
+          # run_tests.py creates the cluster itself based on --cluster-type.
           make kind
           echo "${PWD}/bin" >> "$GITHUB_PATH"
 
@@ -147,15 +168,20 @@ jobs:
       - name: Run ${{ matrix.test.name }}
         env:
           MAKE_TARGET: ${{ matrix.test.make-target }}
+          CLUSTER_TYPE: ${{ matrix.test.cluster-type }}
           KIND_ARGS: ${{ matrix.test.kind-args }}
+          EXTRA_MAKE_VARS: ${{ matrix.test.extra-make-vars }}
         run: |
           # PR builds never push to ACR. The suite consumes the pre-built chart
           # with pullPolicy=IfNotPresent so kubelet uses the locally-loaded
           # image instead of trying to pull from the registry.
-          # shellcheck disable=SC2086  # KIND_ARGS intentionally word-splits.
+          # cleanup.enabled=false stops the driver pod from running
+          # `vgremove` on shutdown - if it did, a pod restart mid-test
+          # would permanently delete the VG and every LV inside it.
+          # shellcheck disable=SC2086  # KIND_ARGS/EXTRA_MAKE_VARS intentionally word-split.
           python .github/workflows/scripts/run_tests.py \
-            --command "make ${MAKE_TARGET} REGISTRY=${REGISTRY} REPO_BASE=${REPO_BASE} TAG=${TAG} INSTALLATION_METHOD=localHelm CHART_SOURCE=/tmp/helm/local-csi-driver-${TAG#v}.tgz SKIP_BUILD=true HELM_ARGS='--set image.driver.pullPolicy=IfNotPresent --set image.manager.pullPolicy=IfNotPresent'" \
-            --cluster-type kind ${KIND_ARGS}
+            --command "make ${MAKE_TARGET} REGISTRY=${REGISTRY} REPO_BASE=${REPO_BASE} TAG=${TAG} INSTALLATION_METHOD=localHelm CHART_SOURCE=/tmp/helm/local-csi-driver-${TAG#v}.tgz SKIP_BUILD=true ${EXTRA_MAKE_VARS} HELM_ARGS='--set image.driver.pullPolicy=IfNotPresent --set image.manager.pullPolicy=IfNotPresent --set cleanup.enabled=false'" \
+            --cluster-type ${CLUSTER_TYPE} ${KIND_ARGS}
 
       - name: Upload test results
         if: always()

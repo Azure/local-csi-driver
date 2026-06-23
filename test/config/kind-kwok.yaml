@@ -1,0 +1,61 @@
+# Single-node kind config tuned for the kwok scale test (10k+ fake nodes,
+# 50k+ fake objects). Do NOT use for normal e2e - the apiserver, etcd,
+# and CIDR sizing are deliberately oversized.
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+nodes:
+- role: control-plane
+  kubeadmConfigPatches:
+  - |
+    kind: ClusterConfiguration
+    apiServer:
+      extraArgs:
+        # Default 60s causes 504s on DeleteCollection at ~50k objects.
+        request-timeout: "300s"
+        # Defaults: 400 RO / 200 mutating. High-QPS clients queue immediately.
+        max-requests-inflight: "3000"
+        max-mutating-requests-inflight: "1500"
+        # Default 100. With QPS=1000 client over a single TCP conn, HTTP/2
+        # head-of-line blocking caps you at 100 inflight per connection.
+        http2-max-streams-per-connection: "1000"
+        # Keep large object sets warm in apiserver to avoid re-LISTing etcd.
+        # Sized for the 10k-node / 50k-pod kwok scale tests with headroom.
+        watch-cache-sizes: "persistentvolumeclaims#75000,persistentvolumes#75000,pods#75000,nodes#15000"
+        default-watch-cache-size: "1000"
+    etcd:
+      local:
+        extraArgs:
+          # Default 2 GiB. At 50k+ objects with churn you hit
+          # "mvcc: database space exceeded" with no prior warning.
+          quota-backend-bytes: "8589934592"
+          # Aggressive compaction so deleted revisions don't accumulate.
+          auto-compaction-mode: "revision"
+          auto-compaction-retention: "1000"
+          # Smaller WAL = less memory pressure during heavy writes.
+          snapshot-count: "10000"
+    controllerManager:
+      extraArgs:
+        kube-api-qps: "1000"
+        kube-api-burst: "2000"
+        # Default 15s/10s/2s. At >5k kwok nodes the apiserver intermittently
+        # takes >5s to respond, which causes lease renewal Get() to time out
+        # and the controller-manager exits with "leaderelection lost".
+        leader-elect-lease-duration: "60s"
+        leader-elect-renew-deadline: "40s"
+        leader-elect-retry-period: "10s"
+        # Pin pod CIDR allocator to /24. Combined with podSubnet=10.0.0.0/10
+        # (set under networking) this yields 16384 /24 CIDRs, enough for 10k+
+        # kwok nodes without exhausting the cluster CIDR pool.
+        node-cidr-mask-size: "24"
+    scheduler:
+      extraArgs:
+        kube-api-qps: "1000"
+        kube-api-burst: "2000"
+        leader-elect-lease-duration: "60s"
+        leader-elect-renew-deadline: "40s"
+        leader-elect-retry-period: "10s"
+networking:
+  # Default 10.244.0.0/16 with /24 mask = 256 pod CIDRs, far short of 10k
+  # kwok nodes. /10 keeps us clear of the service CIDR (10.96.0.0/16) and
+  # provides 16384 /24 pod CIDRs.
+  podSubnet: "10.0.0.0/10"

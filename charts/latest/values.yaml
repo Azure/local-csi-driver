@@ -242,6 +242,9 @@ observability:
       port: 8080
     health:
       port: 8081
+    pprof:
+      enabled: false
+      port: 6060
   driver:
     log:
       level: 2
@@ -249,6 +252,9 @@ observability:
       port: 8080
     health:
       port: 8081
+    pprof:
+      enabled: false
+      port: 6060
     trace:
       # The address to send traces to. Disables tracing if not set.
       endpoint: ""
