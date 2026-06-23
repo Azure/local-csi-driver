@@ -199,7 +199,11 @@ func initTestControllerServer(ctrl *gomock.Controller) *Server {
 		{Mode: csi.VolumeCapability_AccessMode_SINGLE_NODE_WRITER},
 	}
 
-	return New(vc, caps, modes, m, client, "test-node", selectedNodeAnnotation, selectedInitialNodeAnnotation, true, r, tp)
+	selfPod := &corev1.Pod{
+		TypeMeta:   metav1.TypeMeta{Kind: "Pod", APIVersion: "v1"},
+		ObjectMeta: metav1.ObjectMeta{Name: "test-pod", Namespace: "test-namespace"},
+	}
+	return New(vc, caps, modes, m, client, "test-node", selfPod, selectedNodeAnnotation, selectedInitialNodeAnnotation, true, r, tp)
 }
 
 func TestServer_CreateVolume(t *testing.T) {

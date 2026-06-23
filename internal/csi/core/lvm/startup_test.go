@@ -12,9 +12,7 @@ import (
 	"go.uber.org/mock/gomock"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/runtime"
 	kevents "k8s.io/client-go/tools/events"
-	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	"local-csi-driver/internal/csi/core/lvm"
 	"local-csi-driver/internal/pkg/block"
@@ -28,17 +26,12 @@ const (
 
 func newTestPod() *corev1.Pod {
 	return &corev1.Pod{
+		TypeMeta: metav1.TypeMeta{Kind: "Pod", APIVersion: "v1"},
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "test-pod",
 			Namespace: "test-namespace",
 		},
 	}
-}
-
-func newTestScheme() *runtime.Scheme {
-	scheme := runtime.NewScheme()
-	_ = corev1.AddToScheme(scheme)
-	return scheme
 }
 
 func TestStartupDiagnostic_DisksAvailable(t *testing.T) {
@@ -67,9 +60,8 @@ func TestStartupDiagnostic_DisksAvailable(t *testing.T) {
 	mockBlock.EXPECT().IsFormatted("/dev/nvme1n1").Return(false, nil)
 
 	recorder := kevents.NewFakeRecorder(10)
-	k8sClient := fake.NewClientBuilder().WithScheme(newTestScheme()).WithObjects(newTestPod()).Build()
 
-	diag := lvm.NewStartupDiagnostic(mockProbe, mockBlock, probe.EphemeralDiskFilter, recorder, k8sClient, "test-pod", "test-namespace")
+	diag := lvm.NewStartupDiagnostic(mockProbe, mockBlock, probe.EphemeralDiskFilter, recorder, newTestPod())
 
 	if err := diag.Start(context.Background()); err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -115,9 +107,8 @@ func TestStartupDiagnostic_DisksAvailable_NoInUse(t *testing.T) {
 	mockBlock.EXPECT().IsFormatted("/dev/nvme0n1").Return(false, nil)
 
 	recorder := kevents.NewFakeRecorder(10)
-	k8sClient := fake.NewClientBuilder().WithScheme(newTestScheme()).WithObjects(newTestPod()).Build()
 
-	diag := lvm.NewStartupDiagnostic(mockProbe, mockBlock, probe.EphemeralDiskFilter, recorder, k8sClient, "test-pod", "test-namespace")
+	diag := lvm.NewStartupDiagnostic(mockProbe, mockBlock, probe.EphemeralDiskFilter, recorder, newTestPod())
 
 	if err := diag.Start(context.Background()); err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -155,9 +146,8 @@ func TestStartupDiagnostic_NoDisks_AllFormattedNVMe(t *testing.T) {
 	mockBlock.EXPECT().IsLVM2("/dev/nvme0n1").Return(false, nil)
 
 	recorder := kevents.NewFakeRecorder(10)
-	k8sClient := fake.NewClientBuilder().WithScheme(newTestScheme()).WithObjects(newTestPod()).Build()
 
-	diag := lvm.NewStartupDiagnostic(mockProbe, mockBlock, probe.EphemeralDiskFilter, recorder, k8sClient, "test-pod", "test-namespace")
+	diag := lvm.NewStartupDiagnostic(mockProbe, mockBlock, probe.EphemeralDiskFilter, recorder, newTestPod())
 
 	if err := diag.Start(context.Background()); err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -198,9 +188,8 @@ func TestStartupDiagnostic_NoDisks_NoNVMe(t *testing.T) {
 	}, nil)
 
 	recorder := kevents.NewFakeRecorder(10)
-	k8sClient := fake.NewClientBuilder().WithScheme(newTestScheme()).WithObjects(newTestPod()).Build()
 
-	diag := lvm.NewStartupDiagnostic(mockProbe, mockBlock, probe.EphemeralDiskFilter, recorder, k8sClient, "test-pod", "test-namespace")
+	diag := lvm.NewStartupDiagnostic(mockProbe, mockBlock, probe.EphemeralDiskFilter, recorder, newTestPod())
 
 	if err := diag.Start(context.Background()); err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -232,9 +221,8 @@ func TestStartupDiagnostic_ScanError(t *testing.T) {
 
 	mockBlock := block.NewMock(ctrl)
 	recorder := kevents.NewFakeRecorder(10)
-	k8sClient := fake.NewClientBuilder().WithScheme(newTestScheme()).WithObjects(newTestPod()).Build()
 
-	diag := lvm.NewStartupDiagnostic(mockProbe, mockBlock, probe.EphemeralDiskFilter, recorder, k8sClient, "test-pod", "test-namespace")
+	diag := lvm.NewStartupDiagnostic(mockProbe, mockBlock, probe.EphemeralDiskFilter, recorder, newTestPod())
 
 	if err := diag.Start(context.Background()); err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -244,30 +232,6 @@ func TestStartupDiagnostic_ScanError(t *testing.T) {
 	select {
 	case event := <-recorder.Events:
 		t.Fatalf("expected no event on scan error, got: %s", event)
-	default:
-	}
-}
-
-func TestStartupDiagnostic_PodNotFound(t *testing.T) {
-	t.Parallel()
-	ctrl := gomock.NewController(t)
-	defer ctrl.Finish()
-
-	mockProbe := probe.NewMock(ctrl)
-	mockBlock := block.NewMock(ctrl)
-	recorder := kevents.NewFakeRecorder(10)
-	// No pod object — simulates pod not found.
-	k8sClient := fake.NewClientBuilder().WithScheme(newTestScheme()).Build()
-
-	diag := lvm.NewStartupDiagnostic(mockProbe, mockBlock, probe.EphemeralDiskFilter, recorder, k8sClient, "test-pod", "test-namespace")
-
-	if err := diag.Start(context.Background()); err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	select {
-	case event := <-recorder.Events:
-		t.Fatalf("expected no event when pod not found, got: %s", event)
 	default:
 	}
 }
@@ -292,9 +256,8 @@ func TestStartupDiagnostic_MultipleNVMe_SomeFormatted(t *testing.T) {
 	mockBlock.EXPECT().IsFormatted("/dev/nvme1n1").Return(false, nil)
 
 	recorder := kevents.NewFakeRecorder(10)
-	k8sClient := fake.NewClientBuilder().WithScheme(newTestScheme()).WithObjects(newTestPod()).Build()
 
-	diag := lvm.NewStartupDiagnostic(mockProbe, mockBlock, probe.EphemeralDiskFilter, recorder, k8sClient, "test-pod", "test-namespace")
+	diag := lvm.NewStartupDiagnostic(mockProbe, mockBlock, probe.EphemeralDiskFilter, recorder, newTestPod())
 
 	if err := diag.Start(context.Background()); err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -318,7 +281,7 @@ func TestStartupDiagnostic_MultipleNVMe_SomeFormatted(t *testing.T) {
 
 func TestStartupDiagnostic_NeedLeaderElection(t *testing.T) {
 	t.Parallel()
-	diag := lvm.NewStartupDiagnostic(nil, nil, nil, nil, nil, "", "")
+	diag := lvm.NewStartupDiagnostic(nil, nil, nil, nil, nil)
 	if diag.NeedLeaderElection() {
 		t.Fatal("expected NeedLeaderElection to return false")
 	}
@@ -336,9 +299,8 @@ func TestStartupDiagnostic_GetDevicesError(t *testing.T) {
 	mockBlock.EXPECT().GetDevices(gomock.Any()).Return(nil, fmt.Errorf("lsblk failed"))
 
 	recorder := kevents.NewFakeRecorder(10)
-	k8sClient := fake.NewClientBuilder().WithScheme(newTestScheme()).WithObjects(newTestPod()).Build()
 
-	diag := lvm.NewStartupDiagnostic(mockProbe, mockBlock, probe.EphemeralDiskFilter, recorder, k8sClient, "test-pod", "test-namespace")
+	diag := lvm.NewStartupDiagnostic(mockProbe, mockBlock, probe.EphemeralDiskFilter, recorder, newTestPod())
 
 	if err := diag.Start(context.Background()); err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -372,9 +334,8 @@ func TestStartupDiagnostic_IsFormattedError(t *testing.T) {
 	mockBlock.EXPECT().IsFormatted("/dev/nvme0n1").Return(false, fmt.Errorf("blkid failed"))
 
 	recorder := kevents.NewFakeRecorder(10)
-	k8sClient := fake.NewClientBuilder().WithScheme(newTestScheme()).WithObjects(newTestPod()).Build()
 
-	diag := lvm.NewStartupDiagnostic(mockProbe, mockBlock, probe.EphemeralDiskFilter, recorder, k8sClient, "test-pod", "test-namespace")
+	diag := lvm.NewStartupDiagnostic(mockProbe, mockBlock, probe.EphemeralDiskFilter, recorder, newTestPod())
 
 	if err := diag.Start(context.Background()); err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -408,9 +369,8 @@ func TestStartupDiagnostic_IsLVM2Error(t *testing.T) {
 	mockBlock.EXPECT().IsLVM2("/dev/nvme0n1").Return(false, fmt.Errorf("check failed"))
 
 	recorder := kevents.NewFakeRecorder(10)
-	k8sClient := fake.NewClientBuilder().WithScheme(newTestScheme()).WithObjects(newTestPod()).Build()
 
-	diag := lvm.NewStartupDiagnostic(mockProbe, mockBlock, probe.EphemeralDiskFilter, recorder, k8sClient, "test-pod", "test-namespace")
+	diag := lvm.NewStartupDiagnostic(mockProbe, mockBlock, probe.EphemeralDiskFilter, recorder, newTestPod())
 
 	if err := diag.Start(context.Background()); err != nil {
 		t.Fatalf("unexpected error: %v", err)
