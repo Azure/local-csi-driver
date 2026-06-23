@@ -24,6 +24,8 @@ linters:
     - unparam
     - unused
   settings:
+    goconst:
+      ignore-tests: true
     importas:
       alias:
         - pkg: k8s.io/api/core/v1

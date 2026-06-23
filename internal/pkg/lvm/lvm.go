@@ -70,6 +70,18 @@ var (
 	ErrPVAlreadyInVolumeGroup = errors.New("physical volume already in volume group")
 )
 
+const (
+	// binaryFlag instructs LVM reporting commands to emit binary (0/1) values
+	// for boolean fields instead of localized strings.
+	binaryFlag = "--binary"
+
+	// jsonReportFlag selects JSON output for LVM reporting commands.
+	jsonReportFlag = "--reportformat=json"
+
+	// bytesUnitFlag forces LVM reporting commands to emit sizes in bytes.
+	bytesUnitFlag = "--units=b"
+)
+
 // IgnoreNotFound returns nil if the error is ErrNotFound.
 func IgnoreNotFound(err error) error {
 	if errors.Is(err, ErrNotFound) {
@@ -156,7 +168,7 @@ func (c *Client) ListPhysicalVolumes(ctx context.Context, opts *ListPVOptions) (
 	ctx, span := c.tracer.Start(ctx, "lvm/ListPhysicalVolumes")
 	defer span.End()
 
-	cmdArgs := []string{"pvs", "--reportformat=json", "--binary", "--options=pv_all,vg_name", "--units=b"}
+	cmdArgs := []string{"pvs", jsonReportFlag, binaryFlag, "--options=pv_all,vg_name", bytesUnitFlag}
 	if opts != nil {
 		span.SetAttributes(
 			attribute.StringSlice("pv.names", opts.Names),
@@ -347,7 +359,7 @@ func (c *Client) ListVolumeGroups(ctx context.Context, opts *ListVGOptions) ([]V
 	ctx, span := c.tracer.Start(ctx, "lvm/ListVolumeGroups")
 	defer span.End()
 
-	cmdArgs := []string{"vgs", "--reportformat=json", "--binary", "--options=vg_all", "--units=b"}
+	cmdArgs := []string{"vgs", jsonReportFlag, binaryFlag, "--options=vg_all", bytesUnitFlag}
 	if opts != nil {
 		span.SetAttributes(
 			attribute.StringSlice("vg.names", opts.Names),
@@ -633,7 +645,7 @@ func (c *Client) ListLogicalVolumes(ctx context.Context, opts *ListLVOptions) ([
 	// Note: seg_all option will include all segments of the logical volume and
 	// the same logical volume may be listed multiple times. Do not use seg_all
 	// option in this case.
-	cmdArgs := []string{"lvs", "--reportformat=json", "--binary", "--options=lv_all,vg_name", "--units=b"}
+	cmdArgs := []string{"lvs", jsonReportFlag, binaryFlag, "--options=lv_all,vg_name", bytesUnitFlag}
 	if opts != nil {
 		span.SetAttributes(
 			attribute.StringSlice("lv.names", opts.Names),

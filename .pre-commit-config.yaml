@@ -12,7 +12,7 @@ repos:
   - id: check-xml
   - id: check-json
 - repo: https://github.com/golangci/golangci-lint
-  rev: 8f3b0c7ed018e57905fbd873c697e0b1ede605a5 # v2.11.4
+  rev: c0d3ddc9cf3faa61a4e378e879ece580256d76e5 # v2.12.2
   hooks:
   - id: golangci-lint-full
 - repo: https://github.com/hadolint/hadolint
@@ -20,7 +20,7 @@ repos:
   hooks:
     - id: hadolint-docker
 - repo: https://github.com/igorshubovych/markdownlint-cli
-  rev: e72a3ca1632f0b11a07d171449fe447a7ff6795e # v0.48.0
+  rev: a4d5d37e66ebcd6b3705204a1d6dbb56dea66338 # v0.49.0
   hooks:
   - id: markdownlint-fix-docker
 - repo: https://github.com/pycqa/flake8
