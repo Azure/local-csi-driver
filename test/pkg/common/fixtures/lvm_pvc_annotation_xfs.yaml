@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  labels:
+    part-of: e2e-test
+  annotations:
+    localdisk.csi.acstor.io/accept-ephemeral-storage: "true"
+  name: lvm-pvc-annotation-xfs
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 10Gi
+  storageClassName: local-xfs

@@ -22,6 +22,7 @@ const (
 var (
 	ErrVolumeNotFound     = fmt.Errorf("volume not found")
 	ErrInvalidArgument    = fmt.Errorf("invalid argument")
+	ErrOutOfRange         = fmt.Errorf("capacity range not allowed")
 	ErrResourceExhausted  = fmt.Errorf("resource exhausted")
 	ErrAlreadyExists      = fmt.Errorf("volume already exists")
 	ErrVolumeSizeMismatch = fmt.Errorf("volume size mismatch")

@@ -25,10 +25,18 @@ var testLvmStoragePool = func() {
 			_, err := utils.Run(cmd)
 			Expect(err).NotTo(HaveOccurred(), "Failed to apply storageclass")
 
+			cmd = exec.CommandContext(ctx, "kubectl", "apply", "-f", common.LvmStorageClassXfsFixture)
+			_, err = utils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred(), "Failed to apply xfs storageclass")
+
 			Eventually(func(g Gomega, ctx context.Context) {
 				cmd := exec.CommandContext(ctx, "kubectl", "get", "storageclass", "local")
 				_, err := utils.Run(cmd)
 				g.Expect(err).NotTo(HaveOccurred(), "local storageclass does not exist")
+
+				cmd = exec.CommandContext(ctx, "kubectl", "get", "storageclass", "local-xfs")
+				_, err = utils.Run(cmd)
+				g.Expect(err).NotTo(HaveOccurred(), "local-xfs storageclass does not exist")
 			}).WithContext(ctx).Should(Succeed(), "Failed to create storageclass")
 		})
 
@@ -41,7 +49,10 @@ var testLvmStoragePool = func() {
 
 		lvmWebhookRejectTest("should reject statefulset with non-ephemeral local storagepool", common.LvmPvcNoAnnotationFixture)
 		lvmHyperconvergedTest("should create hyperconverged pod with local storagepool", common.LvmPvcAnnotationFixure, common.LvmPodAnnotationFixture)
-		lvmExpansionTest("should expand a PVC and grow the backing LV", common.LvmPvcAnnotationFixure, common.LvmPodAnnotationFixture)
+		lvmExpansionTest("should expand an ext4 PVC and grow the backing LV", common.LvmPvcAnnotationFixure, common.LvmPodAnnotationFixture, "Filesystem", "/mnt/lcd")
+		lvmExpansionTest("should expand an xfs PVC and grow the backing LV", common.LvmPvcAnnotationXfsFixture, common.LvmPodAnnotationXfsFixture, "Filesystem", "/mnt/lcd")
+		lvmExpansionTest("should expand a block PVC and grow the backing LV", common.LvmPvcAnnotationBlockFixture, common.LvmPodAnnotationBlockFixture, "Block", "/dev/lcd")
+		lvmFailoverExpansionTest("should recreate the volume at the expanded size after failover to a different node", common.LvmPvcAnnotationFixure, common.LvmPodAnnotationFixture)
 	})
 
 }

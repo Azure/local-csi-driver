@@ -18,19 +18,25 @@ import (
 )
 
 const (
-	// expansionPVCTargetSize is the size we resize the PVC to. A 1 GiB bump
-	// is enough to be unambiguous (LVM aligns on 4 MiB extents) while staying
-	// friendly to constrained test environments.
-	expansionPVCTargetSize = "11Gi"
+	// expansionPVCTargetSize is the size we resize the PVC to. The fixtures
+	// request 10Gi, so doubling to 20Gi (a 100% increase) makes the growth
+	// unambiguous: even after filesystem metadata overhead the post-expansion
+	// capacity observed by the workload (~19+ GiB) cannot be confused with the
+	// original ~10 GiB volume. The kind e2e VG is 100GiB and AKS NVMe disks are
+	// far larger, so this comfortably fits.
+	expansionPVCTargetSize = "20Gi"
 	// expansionPVCTargetBytes is expansionPVCTargetSize expressed in bytes.
-	// 11 * 1024^3 == 11811160064. Kept in sync with expansionPVCTargetSize.
-	expansionPVCTargetBytes int64 = 11 * 1024 * 1024 * 1024
+	// 20 * 1024^3 == 21474836480. Kept in sync with expansionPVCTargetSize.
+	expansionPVCTargetBytes int64 = 20 * 1024 * 1024 * 1024
 )
 
-// lvmExpansionTest exercises the full PVC -> CSI -> lvextend resize path:
+// lvmExpansionTest exercises the full PVC -> CSI -> lvextend resize path. It
+// works for both filesystem (ext4, xfs) and raw block volumes, since the
+// assertions only look at the on-disk LV size, the PVC/PV capacity and the
+// expanded-capacity annotation, none of which depend on the volume mode:
 //
-//  1. create the annotation-style PVC + pod and wait for it to be Running so
-//     that the LV exists on disk;
+//  1. create the PVC + pod and wait for it to be Running so that the LV exists
+//     on disk;
 //  2. patch the PVC storage request to a larger size;
 //  3. assert that the LV on the owning node actually grew (the original bug
 //     was that lvextend was never invoked because the early-return branch
@@ -38,7 +44,19 @@ const (
 //  4. assert that PVC.status, PV.spec.capacity, and the PV's
 //     expanded-capacity annotation all reflect the new size so a subsequent
 //     failover-driven re-provisioning recreates the LV at the expanded size.
-func lvmExpansionTest(name, pvcFixture, podFixture string) {
+//
+// In addition to the control-plane and on-disk LV assertions, it execs into
+// the workload pod and checks the capacity the container itself observes - the
+// filesystem total (df) for Filesystem volumes or the block device size for
+// Block volumes - so that a regression where the LV grows but the resize never
+// reaches the workload (e.g. a missing online fs resize) is caught.
+//
+// volMode must be "Filesystem" or "Block" and podPath is the in-pod mount path
+// (Filesystem) or device path (Block) declared by the pod fixture.
+//
+// The storageclass(es) referenced by the fixtures must already exist (created
+// in the enclosing context's storageclass spec).
+func lvmExpansionTest(name, pvcFixture, podFixture, volMode, podPath string) {
 	It(name, func(ctx context.Context) {
 		By("applying the PVC fixture")
 		cmd := exec.CommandContext(ctx, "kubectl", "apply", "-f", pvcFixture)
@@ -63,30 +81,17 @@ func lvmExpansionTest(name, pvcFixture, podFixture string) {
 		})
 
 		By("waiting for the pod to be Running")
-		Eventually(func(g Gomega, ctx context.Context) {
-			out, err := utils.Run(exec.CommandContext(ctx, "kubectl", "get", "pod", "-l", "part-of=e2e-test", "-o", "jsonpath={.items[0].status.phase}"))
-			g.Expect(err).NotTo(HaveOccurred(), "Failed to get pod phase")
-			g.Expect(out).To(Equal("Running"), "Pod should be Running before expansion")
-		}).WithContext(ctx).Should(Succeed(), "Failed to wait for pod to be Running")
+		podName := waitForE2EPodRunning(ctx)
 
 		By("looking up the PVC's bound PV and owning node")
 		pvcName, err := getPVCName(ctx, pvcFixture)
 		Expect(err).NotTo(HaveOccurred(), "Failed to read PVC name from fixture")
 
-		var pvName, nodeName string
-		Eventually(func(g Gomega, ctx context.Context) {
-			out, err := utils.Run(exec.CommandContext(ctx, "kubectl", "get", "pvc", pvcName, "-o", "jsonpath={.spec.volumeName}"))
-			g.Expect(err).NotTo(HaveOccurred(), "Failed to get PVC volumeName")
-			pvName = strings.TrimSpace(out)
-			g.Expect(pvName).NotTo(BeEmpty(), "PVC should be bound to a PV")
-		}).WithContext(ctx).Should(Succeed(), "PVC was never bound to a PV")
+		pvName := getPVCVolumeName(ctx, pvcName)
+		Expect(pvName).NotTo(BeEmpty(), "PVC should be bound to a PV")
 
-		Eventually(func(g Gomega, ctx context.Context) {
-			out, err := utils.Run(exec.CommandContext(ctx, "kubectl", "get", "pod", "-l", "part-of=e2e-test", "-o", "jsonpath={.items[0].spec.nodeName}"))
-			g.Expect(err).NotTo(HaveOccurred(), "Failed to get pod nodeName")
-			nodeName = strings.TrimSpace(out)
-			g.Expect(nodeName).NotTo(BeEmpty(), "Pod should be scheduled on a node")
-		}).WithContext(ctx).Should(Succeed(), "Pod did not have a nodeName")
+		nodeName := getE2EPodNode(ctx)
+		Expect(nodeName).NotTo(BeEmpty(), "Pod should be scheduled on a node")
 
 		driverPod, err := getDriverPodOnNode(ctx, nodeName)
 		Expect(err).NotTo(HaveOccurred(), "Failed to locate csi-local-node pod on %s", nodeName)
@@ -99,6 +104,12 @@ func lvmExpansionTest(name, pvcFixture, podFixture string) {
 		Expect(originalLVBytes).To(BeNumerically("<", expansionPVCTargetBytes),
 			"Test precondition: original LV size (%d) must be smaller than target (%d)", originalLVBytes, expansionPVCTargetBytes)
 		_, _ = fmt.Fprintf(GinkgoWriter, "Original LV %s on %s = %d bytes\n", pvName, driverPod, originalLVBytes)
+
+		By("recording the capacity observed by the workload pod before expansion")
+		originalPodBytes, err := getWorkloadVisibleCapacityBytes(ctx, podName, volMode, podPath)
+		Expect(err).NotTo(HaveOccurred(), "Failed to read workload-visible capacity before expansion")
+		Expect(originalPodBytes).To(BeNumerically(">", int64(0)), "Workload-visible capacity must be positive")
+		_, _ = fmt.Fprintf(GinkgoWriter, "Original workload-visible capacity (%s %s) = %d bytes\n", volMode, podPath, originalPodBytes)
 
 		By(fmt.Sprintf("patching PVC %s storage request to %s", pvcName, expansionPVCTargetSize))
 		patch := fmt.Sprintf(`{"spec":{"resources":{"requests":{"storage":"%s"}}}}`, expansionPVCTargetSize)
@@ -129,21 +140,31 @@ func lvmExpansionTest(name, pvcFixture, podFixture string) {
 
 		By("verifying the PV expanded-capacity annotation records the actual LV size")
 		Eventually(func(g Gomega, ctx context.Context) {
-			jsonpath := fmt.Sprintf("{.metadata.annotations.%s}", strings.ReplaceAll(lvm.ExpandedCapacityParam, ".", "\\."))
-			out, err := utils.Run(exec.CommandContext(ctx, "kubectl", "get", "pv", pvName, "-o", fmt.Sprintf("jsonpath=%s", jsonpath)))
-			g.Expect(err).NotTo(HaveOccurred(), "Failed to get PV expanded-capacity annotation")
-			raw := strings.TrimSpace(out)
-			g.Expect(raw).NotTo(BeEmpty(), "PV should have the expanded-capacity annotation")
-			annotationBytes, err := strconv.ParseInt(raw, 10, 64)
-			g.Expect(err).NotTo(HaveOccurred(), "expanded-capacity annotation should be a valid integer")
-			g.Expect(annotationBytes).To(BeNumerically(">=", expansionPVCTargetBytes),
-				"expanded-capacity annotation (%d) should be >= requested expansion size (%d)", annotationBytes, expansionPVCTargetBytes)
+			g.Expect(getExpandedCapacityAnnotation(ctx, pvName)).To(BeNumerically(">=", expansionPVCTargetBytes),
+				"expanded-capacity annotation should be >= requested expansion size (%d)", expansionPVCTargetBytes)
 		}).WithContext(ctx).Should(Succeed(), "PV expanded-capacity annotation never set")
 
 		By("verifying the workload is still Running after the expand")
 		out, err := utils.Run(exec.CommandContext(ctx, "kubectl", "get", "pod", "-l", "part-of=e2e-test", "-o", "jsonpath={.items[0].status.phase}"))
 		Expect(err).NotTo(HaveOccurred(), "Failed to re-check pod phase after expand")
 		Expect(strings.TrimSpace(out)).To(Equal("Running"), "Pod should remain Running after PVC expansion")
+
+		By("verifying the workload pod observes the expanded capacity")
+		// The filesystem total is always a little smaller than the backing
+		// device because of metadata overhead, so allow a margin for
+		// Filesystem volumes. A Block volume is the device itself, so it must
+		// reach the full expanded size.
+		minPodBytes := expansionPVCTargetBytes
+		if volMode != "Block" {
+			minPodBytes = expansionPVCTargetBytes * 9 / 10
+		}
+		Eventually(func(g Gomega, ctx context.Context) {
+			sz, err := getWorkloadVisibleCapacityBytes(ctx, podName, volMode, podPath)
+			g.Expect(err).NotTo(HaveOccurred(), "Failed to read workload-visible capacity during expansion")
+			_, _ = fmt.Fprintf(GinkgoWriter, "Workload-visible capacity (%s %s) = %d bytes (want >= %d, was %d)\n", volMode, podPath, sz, minPodBytes, originalPodBytes)
+			g.Expect(sz).To(BeNumerically(">", originalPodBytes), "Workload-visible capacity should have grown after expansion")
+			g.Expect(sz).To(BeNumerically(">=", minPodBytes), "Workload should observe the expanded capacity")
+		}).WithContext(ctx).Should(Succeed(), "workload pod never observed the expanded capacity")
 	})
 }
 
@@ -190,6 +211,31 @@ func getLVSizeBytes(ctx context.Context, driverPod, lvName string) (int64, error
 	raw := strings.TrimSpace(out)
 	if raw == "" {
 		return 0, fmt.Errorf("lvs %s returned empty output", lvPath)
+	}
+	return strconv.ParseInt(raw, 10, 64)
+}
+
+// getWorkloadVisibleCapacityBytes returns the capacity, in bytes, of the volume
+// as observed from inside the workload pod. For Filesystem volumes it reports
+// the filesystem total at the mount path (df); for Block volumes it reports the
+// block device size at the device path (blockdev). Both tools ship with the
+// busybox image used by the fixtures.
+func getWorkloadVisibleCapacityBytes(ctx context.Context, podName, volMode, path string) (int64, error) {
+	var script string
+	if volMode == "Block" {
+		// blockdev reports the device size directly in bytes.
+		script = fmt.Sprintf("blockdev --getsize64 %s", path)
+	} else {
+		// df -B1 reports the filesystem total in bytes in the second column.
+		script = fmt.Sprintf("df -P -B1 %s | awk 'NR==2 {print $2}'", path)
+	}
+	out, err := utils.Run(exec.CommandContext(ctx, "kubectl", "exec", podName, "--", "/bin/sh", "-c", script))
+	if err != nil {
+		return 0, fmt.Errorf("reading volume capacity in pod %s: %w", podName, err)
+	}
+	raw := strings.TrimSpace(out)
+	if raw == "" {
+		return 0, fmt.Errorf("empty capacity output from pod %s", podName)
 	}
 	return strconv.ParseInt(raw, 10, 64)
 }

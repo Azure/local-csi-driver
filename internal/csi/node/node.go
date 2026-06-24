@@ -5,6 +5,7 @@ package node
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -600,7 +601,7 @@ func (ns *Server) NodeExpandVolume(ctx context.Context, req *csi.NodeExpandVolum
 		log.Error(err, "failed to expand volume")
 		span.SetStatus(otcodes.Error, "failed to expand volume")
 		span.RecordError(err)
-		return nil, status.Error(codes.Internal, err.Error())
+		return nil, fromVolumeError(err)
 	}
 
 	// Persist the actual expanded LV size as a PV annotation so that
@@ -614,6 +615,9 @@ func (ns *Server) NodeExpandVolume(ctx context.Context, req *csi.NodeExpandVolum
 		pv.Annotations[lvm.ExpandedCapacityParam] = fmt.Sprint(resp.GetCapacityBytes())
 		if err := ns.k8sClient.Patch(ctx, &pv, client.MergeFrom(original)); err != nil {
 			log.Error(err, "failed to patch PV with expanded capacity annotation")
+			span.SetStatus(otcodes.Error, "failed to patch PV with expanded capacity annotation")
+			span.RecordError(err)
+			return nil, status.Errorf(codes.Internal, "failed to persist expanded capacity on PV %s: %v", pv.Name, err)
 		}
 	}
 
@@ -666,4 +670,28 @@ func CheckMountError(err error) error {
 		return status.Error(codes.InvalidArgument, err.Error())
 	}
 	return status.Error(codes.Internal, err.Error())
+}
+
+// fromVolumeError maps an error returned by the volume layer to a gRPC status
+// error for NodeExpandVolume, mirroring the controller's fromCoreError. The
+// kubelet relies on the code to decide whether to retry: a wrong "Internal"
+// can cause an infinite retry loop. The CSI spec's NodeExpandVolume error table
+// (v1.12.0) lists only OUT_OF_RANGE for capacity problems, so both an invalid
+// capacity_range and an unsatisfiable expansion (not enough free space) surface
+// as ErrOutOfRange -> OutOfRange. (CreateVolume keeps RESOURCE_EXHAUSTED for
+// exhaustion because its own error table lists that code.) Errors without a
+// recognized core type default to Internal.
+func fromVolumeError(err error) error {
+	switch {
+	case err == nil:
+		return nil
+	case errors.Is(err, core.ErrInvalidArgument):
+		return status.Error(codes.InvalidArgument, err.Error())
+	case errors.Is(err, core.ErrVolumeNotFound):
+		return status.Error(codes.NotFound, err.Error())
+	case errors.Is(err, core.ErrOutOfRange):
+		return status.Error(codes.OutOfRange, err.Error())
+	default:
+		return status.Error(codes.Internal, err.Error())
+	}
 }
