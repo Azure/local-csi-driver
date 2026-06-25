@@ -1,4 +1,4 @@
-FROM mcr.microsoft.com/oss/go/microsoft/golang:1.26-azurelinux3.0@sha256:3a4668e57d254fde772ec5f4d6b023c6d2d8873f36bdc72ba00fcb1b4b5f8d9d AS builder
+FROM mcr.microsoft.com/oss/go/microsoft/golang:1.26-azurelinux3.0@sha256:8dbce1c5f7fde5702cdbaa7a352c31477327ca2cec236c8e6c1cae3acb7f936a AS builder
 ARG TARGETOS
 ARG TARGETARCH
 
@@ -48,7 +48,7 @@ RUN --mount=type=cache,target=/go/pkg/mod \
 
 
 # Generate NOTICE.txt from dependency licenses. Built in parallel with `builder`.
-FROM mcr.microsoft.com/oss/go/microsoft/golang:1.26-azurelinux3.0@sha256:3a4668e57d254fde772ec5f4d6b023c6d2d8873f36bdc72ba00fcb1b4b5f8d9d AS notice
+FROM mcr.microsoft.com/oss/go/microsoft/golang:1.26-azurelinux3.0@sha256:8dbce1c5f7fde5702cdbaa7a352c31477327ca2cec236c8e6c1cae3acb7f936a AS notice
 ARG GO_LICENSES_VERSION=v2.0.1
 WORKDIR /workspace
 RUN --mount=type=cache,target=/go/pkg/mod \
