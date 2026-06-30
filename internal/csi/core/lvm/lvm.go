@@ -41,8 +41,12 @@ const (
 	DefaultVolumeGroupTag = "local-csi"
 
 	// TopologyKey is the expected key used in the volume request to specify the
-	// node where the volume should be placed.
-	TopologyKey = "topology.localdisk.csi.acstor.io/node"
+	// node where the volume should be placed. We use the standard
+	// kubernetes.io/hostname Node label so that PV nodeAffinity and
+	// CSIStorageCapacity nodeTopology selectors target a label that already
+	// exists on every Node, rather than a driver-specific label managed by
+	// kubelet's CSI registration.
+	TopologyKey = corev1.LabelHostname
 
 	// Raid0LvType is the logical volume type for raid0.
 	raid0LvType = "raid0"

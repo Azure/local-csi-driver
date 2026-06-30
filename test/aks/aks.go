@@ -359,7 +359,7 @@ func pvAffinityForExistingNode(nodeAffinity *corev1.VolumeNodeAffinity, nodes ma
 
 	for _, term := range nodeAffinity.Required.NodeSelectorTerms {
 		for _, expr := range term.MatchExpressions {
-			if expr.Key == "topology.localdisk.csi.acstor.io/node" && expr.Operator == corev1.NodeSelectorOpIn {
+			if expr.Key == corev1.LabelHostname && expr.Operator == corev1.NodeSelectorOpIn {
 				for _, value := range expr.Values {
 					if _, exists := nodes[value]; exists {
 						return true

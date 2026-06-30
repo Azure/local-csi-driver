@@ -47,7 +47,7 @@ const (
 	isNotMountPoint          = validTargetPath + "notmount"
 	invalidTargetPath        = "invalidTargetPath"
 	permissionError          = "permissionError"
-	testTopologyKey          = "topology." + driverName + "/node"
+	testTopologyKey          = corev1.LabelHostname
 	selectedNodeAnnotation   = "testlocaldisk.csi.acstor.io/selected-node"
 	selectedInitialNodeParam = "testlocaldisk.csi.acstor.io/selected-initial-node"
 )

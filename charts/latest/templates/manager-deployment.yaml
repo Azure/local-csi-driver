@@ -1,4 +1,4 @@
-{{- if or .Values.webhook.enforceEphemeral.enabled .Values.webhook.hyperconverged.enabled .Values.cleanup.pvCleanup.enabled }}
+{{- if or .Values.webhook.enforceEphemeral.enabled .Values.webhook.hyperconverged.enabled .Values.cleanup.pvCleanup.enabled .Values.cleanup.capacityTemplate.enabled }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -64,6 +64,8 @@ spec:
         - --kube-api-burst={{ .Values.scalability.manager.kubeApi.burst }}
         - --v={{ .Values.observability.manager.log.level }}
         - --enable-pv-cleanup={{ .Values.cleanup.pvCleanup.enabled }}
+        - --enable-capacity-template={{ .Values.cleanup.capacityTemplate.enabled }}
+        - --capacity-template-node-group-label={{ .Values.cleanup.capacityTemplate.nodeGroupLabelKey }}
         {{- if .Values.webhook.enforceEphemeral.enabled }}
         - --enforce-ephemeral-webhook-config={{ .Values.name }}-enforce-ephemeral
         {{- end }}
