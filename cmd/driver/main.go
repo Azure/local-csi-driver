@@ -219,9 +219,6 @@ func main() {
 			Cache: &client.CacheOptions{
 				DisableFor: []client.Object{
 					&storagev1.CSIDriver{},
-					&metav1.PartialObjectMetadata{
-						TypeMeta: metav1.TypeMeta{APIVersion: "v1", Kind: "Node"},
-					},
 				},
 			},
 		},
