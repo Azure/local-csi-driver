@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -412,10 +413,21 @@ func VerifyDriverUp(ctx context.Context, namespace string) {
 		g.Expect(err).NotTo(HaveOccurred(), "Failed to get daemonset ready status")
 		g.Expect(output).NotTo(BeEmpty(), "Empty output when checking daemonset readiness")
 
-		// Split and verify all pods are ready
+		// Parse the ready/desired counts. The daemonset controller may not
+		// have populated .status yet right after install, in which case
+		// jsonpath renders "0/0" (or "/"). A naive string compare treats that
+		// as "0 == 0" and passes, letting the suite proceed before any node
+		// plugin is actually running. Volume-provisioning specs then flake,
+		// timing out while waiting for pods to go Ready. Require at least one
+		// desired pod and an integer match instead.
 		readyCount := strings.Split(output, "/")
-		g.Expect(readyCount).To(HaveLen(2), "Unexpected format in daemonset ready count")
-		g.Expect(readyCount[0]).To(Equal(readyCount[1]), fmt.Sprintf("Not all daemonset pods are ready: %s/%s", readyCount[0], readyCount[1]))
+		g.Expect(readyCount).To(HaveLen(2), "Unexpected format in daemonset ready count: %q", output)
+		ready, err := strconv.Atoi(strings.TrimSpace(readyCount[0]))
+		g.Expect(err).NotTo(HaveOccurred(), "Failed to parse daemonset numberReady: %q", output)
+		desired, err := strconv.Atoi(strings.TrimSpace(readyCount[1]))
+		g.Expect(err).NotTo(HaveOccurred(), "Failed to parse daemonset desiredNumberScheduled: %q", output)
+		g.Expect(desired).To(BeNumerically(">", 0), "Daemonset has not scheduled any pods yet: %s", output)
+		g.Expect(ready).To(Equal(desired), fmt.Sprintf("Not all daemonset pods are ready: %d/%d", ready, desired))
 
 		// Verify that webhooks are available.
 		cmd = exec.CommandContext(ctx, "kubectl", "get", "endpoints", "csi-local-webhook-service",

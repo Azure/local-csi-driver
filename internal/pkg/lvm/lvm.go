@@ -28,6 +28,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 
 	"github.com/dpeckett/args"
@@ -51,6 +52,13 @@ var (
 
 	// AlreadyExists is returned when the lvm object already exists.
 	ErrAlreadyExists = errors.New("already exists")
+
+	// ErrStaleDeviceNode is returned when a leftover /dev node or directory
+	// blocks an LVM operation even though no matching LVM metadata exists (for
+	// example, vgcreate failing with "/dev/<vg>: already exists in filesystem"
+	// after udev-disabled cleanup left a stale node behind). This is distinct
+	// from ErrAlreadyExists, which means the object exists in LVM metadata.
+	ErrStaleDeviceNode = errors.New("stale device node")
 
 	// ErrTooMany is returned when multiple objects are found with the same
 	// name, when only one is expected. This should never happen.
@@ -841,13 +849,17 @@ func (c *Client) RenameLogicalVolume(ctx context.Context, opts RenameLVOptions) 
 }
 
 func (c *Client) run(ctx context.Context, cmdArgs ...string) ([]byte, error) {
-	ctx, span := c.tracer.Start(ctx, "lvm/run", trace.WithAttributes(
-		attribute.String("cmd.name", c.lvmPath),
+	return c.runCmd(ctx, "lvm/run", c.lvmPath, cmdArgs...)
+}
+
+func (c *Client) runCmd(ctx context.Context, spanName, binary string, cmdArgs ...string) ([]byte, error) {
+	ctx, span := c.tracer.Start(ctx, spanName, trace.WithAttributes(
+		attribute.String("cmd.name", binary),
 		attribute.StringSlice("cmd.args", cmdArgs),
 	))
 	defer span.End()
 
-	cmd := exec.CommandContext(ctx, c.lvmPath, cmdArgs...)
+	cmd := exec.CommandContext(ctx, binary, cmdArgs...)
 
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
@@ -867,7 +879,7 @@ func (c *Client) run(ctx context.Context, cmdArgs ...string) ([]byte, error) {
 		return nil, fmt.Errorf("%w: %s", err, strings.TrimSpace(stderr.String()))
 	}
 
-	span.SetStatus(codes.Ok, "lvm command succeeded")
+	span.SetStatus(codes.Ok, "command succeeded")
 	return stdout.Bytes(), nil
 }
 
@@ -893,6 +905,11 @@ func getErrorType(err error) error {
 		return fmt.Errorf("%w: %s", ErrNotFound, err.Error())
 	case containsIgnoreCase(err.Error(), "contains a filesystem in use"):
 		return fmt.Errorf("%w: %s", ErrInUse, err.Error())
+	case containsIgnoreCase(err.Error(), "already exists in filesystem"):
+		// A stale /dev node or directory is blocking the operation even though
+		// no matching LVM metadata exists. Distinct from ErrAlreadyExists,
+		// which means the object exists in LVM metadata.
+		return fmt.Errorf("%w: %s", ErrStaleDeviceNode, err.Error())
 	case containsIgnoreCase(err.Error(), "already exists") || (containsIgnoreCase(err.Error(), "of volume group") && containsIgnoreCase(err.Error(), "Can't initialize physical volume")):
 		return fmt.Errorf("%w: %s", ErrAlreadyExists, err.Error())
 	case containsIgnoreCase(err.Error(), "insufficient free space"):
@@ -962,4 +979,103 @@ func (c *Client) IsLogicalVolumeCorrupted(ctx context.Context, vgName string, lv
 
 	// LV exists in metadata and device file exists - not corrupted
 	return false, nil
+}
+
+// RemoveStaleDeviceMapperNodes removes leftover LVM device nodes and the
+// /dev/<vg> directory for a volume group that has no backing LVM metadata.
+//
+// With udev disabled (DM_DISABLE_UDEV=1) LVM manages device nodes itself and
+// can leave behind stale /dev/<vg>/<lv> nodes or an empty /dev/<vg> directory
+// after a removal or a crash. These leaked artifacts can block a subsequent
+// vgcreate for the same volume group name ("/dev/<vg>: already exists in
+// filesystem").
+//
+// Cleanup runs vgmknodes to let LVM reconcile device nodes against its
+// metadata (removing nodes for logical volumes that no longer exist), then
+// removes any residual node files and the now-empty /dev/<vg> directory. The
+// directory removal is best-effort: if it cannot be emptied it is left in
+// place rather than forcibly recursed.
+//
+// It is a no-op when the volume group still exists in LVM metadata.
+//
+// Callers must ensure this does not run concurrently with CreateVolumeGroup for
+// the same volume group. The CSI provisioning path guarantees this by calling
+// cleanup immediately before CreateVolumeGroup within a per-volume-group
+// singleflight, so a concurrent provision cannot create the volume group (and
+// its logical volumes) midway through cleanup and have a live node removed.
+func (c *Client) RemoveStaleDeviceMapperNodes(ctx context.Context, vgName string) error {
+	ctx, span := c.tracer.Start(ctx, "lvm/RemoveStaleDeviceMapperNodes", trace.WithAttributes(
+		attribute.String("vg.name", vgName),
+	))
+	defer span.End()
+
+	if vgName == "" {
+		return fmt.Errorf("%w: volume group name cannot be empty", ErrInvalidInput)
+	}
+
+	// Guard against path traversal. filepath.Join cleans the path, so requiring
+	// the result to be a direct child of /dev rejects empty, ".", "..", names
+	// containing separators, and any traversal that would resolve to /dev
+	// itself or escape it.
+	devDir := filepath.Join("/dev", vgName)
+	if filepath.Dir(devDir) != "/dev" {
+		return fmt.Errorf("%w: invalid volume group name %q", ErrInvalidInput, vgName)
+	}
+
+	// Safety: if the volume group still exists in LVM metadata, its device
+	// nodes are legitimate and must not be removed.
+	vg, err := c.GetVolumeGroup(ctx, vgName)
+	if IgnoreNotFound(err) != nil {
+		span.RecordError(err)
+		return fmt.Errorf("failed to check volume group %s: %w", vgName, err)
+	}
+	if vg != nil {
+		span.SetAttributes(attribute.Bool("vg.exists", true))
+		return nil
+	}
+
+	// Reconcile device nodes against LVM metadata. With udev disabled this
+	// removes nodes for logical volumes that no longer exist. Since this volume
+	// group has no metadata, its stale nodes are reclaimed.
+	if err := c.MakeVolumeGroupDeviceNodes(ctx, MakeVGDeviceNodesOptions{}); err != nil {
+		span.RecordError(err)
+		return fmt.Errorf("failed to reconcile device nodes: %w", err)
+	}
+
+	// Remove any residual node files left under /dev/<vg>, then remove the
+	// directory itself so a subsequent vgcreate does not fail on it.
+	entries, err := os.ReadDir(devDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			span.SetStatus(codes.Ok, "no stale device directory")
+			return nil
+		}
+		span.RecordError(err)
+		return fmt.Errorf("failed to read device directory %s: %w", devDir, err)
+	}
+	removed := 0
+	for _, entry := range entries {
+		p := filepath.Join(devDir, entry.Name())
+		if err := os.Remove(p); err != nil {
+			span.RecordError(err)
+			return fmt.Errorf("failed to remove stale device node %s: %w", p, err)
+		}
+		removed++
+	}
+
+	// Best-effort removal of the /dev/<vg> directory. os.Remove only removes an
+	// empty directory, so it can never recurse into unexpected contents. If it
+	// is not empty (a node vgmknodes could not reclaim), leave it in place.
+	dirRemoved := true
+	if err := os.Remove(devDir); err != nil && !os.IsNotExist(err) {
+		dirRemoved = false
+		span.RecordError(err)
+	}
+
+	span.SetAttributes(
+		attribute.Int("dev.nodes.removed", removed),
+		attribute.Bool("dev.dir.removed", dirRemoved),
+	)
+	span.SetStatus(codes.Ok, "removed stale device nodes")
+	return nil
 }

@@ -98,3 +98,8 @@ func (l *Noop) ExtendLogicalVolume(ctx context.Context, opts ExtendLVOptions) er
 func (l *Noop) IsLogicalVolumeCorrupted(ctx context.Context, vgName string, lvName string) (bool, error) {
 	return false, ErrUnsupported
 }
+
+// RemoveStaleDeviceMapperNodes implements Manager.
+func (l *Noop) RemoveStaleDeviceMapperNodes(ctx context.Context, vgName string) error {
+	return ErrUnsupported
+}

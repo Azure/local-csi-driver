@@ -169,3 +169,8 @@ func (f *Fake) IsLogicalVolumeCorrupted(ctx context.Context, vgName string, lvNa
 	// For fake implementation, we never simulate corruption by default
 	return false, nil
 }
+
+// RemoveStaleDeviceMapperNodes is a no-op for the fake implementation.
+func (f *Fake) RemoveStaleDeviceMapperNodes(ctx context.Context, vgName string) error {
+	return f.Err
+}

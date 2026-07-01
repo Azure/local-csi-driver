@@ -248,6 +248,20 @@ func (mr *MockManagerMockRecorder) RemovePhysicalVolume(ctx, opts any) *gomock.C
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "RemovePhysicalVolume", reflect.TypeOf((*MockManager)(nil).RemovePhysicalVolume), ctx, opts)
 }
 
+// RemoveStaleDeviceMapperNodes mocks base method.
+func (m *MockManager) RemoveStaleDeviceMapperNodes(ctx context.Context, vgName string) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "RemoveStaleDeviceMapperNodes", ctx, vgName)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// RemoveStaleDeviceMapperNodes indicates an expected call of RemoveStaleDeviceMapperNodes.
+func (mr *MockManagerMockRecorder) RemoveStaleDeviceMapperNodes(ctx, vgName any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "RemoveStaleDeviceMapperNodes", reflect.TypeOf((*MockManager)(nil).RemoveStaleDeviceMapperNodes), ctx, vgName)
+}
+
 // RemoveVolumeGroup mocks base method.
 func (m *MockManager) RemoveVolumeGroup(ctx context.Context, opts RemoveVGOptions) error {
 	m.ctrl.T.Helper()

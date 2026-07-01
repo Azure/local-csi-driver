@@ -13,6 +13,7 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
+	"golang.org/x/sync/singleflight"
 	corev1 "k8s.io/api/core/v1"
 	storagev1 "k8s.io/api/storage/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -55,6 +56,7 @@ const (
 	provisioningPhysicalVolumeFailed = "ProvisioningPhysicalVolumeFailed"
 
 	// Volume Group (VG) related event reasons.
+	provisioningVolumeGroup       = "ProvisioningVolumeGroup"
 	provisionedVolumeGroup        = "ProvisionedVolumeGroup"
 	provisioningVolumeGroupFailed = "ProvisioningVolumeGroupFailed"
 
@@ -163,6 +165,10 @@ type LVM struct {
 	probe            probe.Interface
 	lvm              lvm.Manager
 	tracer           trace.Tracer
+
+	// vgGroup deduplicates concurrent EnsureVolumeGroup calls for the same
+	// volume group so that only one goroutine provisions it at a time.
+	vgGroup singleflight.Group
 }
 
 // New creates a new LVM volume manager.
@@ -242,7 +248,6 @@ func (l *LVM) GetVolumeName(volumeId string) (string, error) {
 // returns an error.
 func (l *LVM) EnsureVolumeGroup(ctx context.Context, name string, devices []string) (*lvm.VolumeGroup, error) {
 	log := log.FromContext(ctx).WithValues("vg", name)
-	recorder := events.FromContext(ctx)
 	ctx, span := l.tracer.Start(ctx, "volume.lvm.csi/EnsureVolumeGroup", trace.WithAttributes(
 		attribute.String("vol.group", name),
 	))
@@ -258,11 +263,40 @@ func (l *LVM) EnsureVolumeGroup(ctx context.Context, name string, devices []stri
 		return nil, fmt.Errorf("%w: no disks found", core.ErrResourceExhausted)
 	}
 
+	// Multiple workers may try to provision the same volume group at the same
+	// time. Use singleflight to ensure only one goroutine provisions a given
+	// volume group at a time; concurrent callers share the same result and
+	// avoid racing on vgcreate.
+	res, err, _ := l.vgGroup.Do(name, func() (any, error) {
+		return l.provisionVolumeGroup(ctx, name, devices)
+	})
+	if err != nil {
+		span.SetStatus(codes.Error, "failed to provision volume group")
+		span.RecordError(err)
+		return nil, err
+	}
+	vg, ok := res.(*lvm.VolumeGroup)
+	if !ok {
+		err := fmt.Errorf("unexpected type %T returned for volume group %q", res, name)
+		log.Error(err, "unexpected singleflight result type")
+		span.SetStatus(codes.Error, "unexpected singleflight result type")
+		span.RecordError(err)
+		return nil, fmt.Errorf("unexpected singleflight result type %T for volume group %q", res, name)
+	}
+	return vg, nil
+}
+
+// provisionVolumeGroup returns the volume group with the given name, creating it
+// from devices if it does not already exist. It is intended to be called via
+// singleflight so that only one goroutine provisions a given volume group at a
+// time.
+func (l *LVM) provisionVolumeGroup(ctx context.Context, name string, devices []string) (*lvm.VolumeGroup, error) {
+	log := log.FromContext(ctx).WithValues("vg", name)
+	recorder := events.FromContext(ctx)
+
 	// Check if the volume group already exists.
 	vg, err := l.lvm.GetVolumeGroup(ctx, name)
 	if lvm.IgnoreNotFound(err) != nil {
-		span.SetStatus(codes.Error, "failed to get volume group")
-		span.RecordError(err)
 		return nil, fmt.Errorf("failed to get volume group: %w", err)
 	}
 	if vg != nil {
@@ -270,21 +304,38 @@ func (l *LVM) EnsureVolumeGroup(ctx context.Context, name string, devices []stri
 		return vg, nil
 	}
 
-	// Create the volume group.
+	recorder.Eventf(corev1.EventTypeNormal, provisioningVolumeGroup, "Provisioning volume group %s", name)
+
+	// Remove any leftover device-mapper nodes or /dev/<vg> directory from a
+	// previous removal or crash. With udev disabled these stale artifacts can
+	// block vgcreate ("/dev/<vg>: already exists in filesystem"). This runs
+	// immediately before CreateVolumeGroup and inside the per-volume-group
+	// singleflight, so cleanup can never race a concurrent create of the same
+	// volume group.
+	if err := l.lvm.RemoveStaleDeviceMapperNodes(ctx, name); err != nil {
+		log.Error(err, "failed to remove stale device-mapper nodes")
+		recorder.Eventf(corev1.EventTypeWarning, provisioningVolumeGroupFailed, "Failed to remove stale device-mapper nodes for volume group %s: %s", name, err)
+		return nil, fmt.Errorf("failed to remove stale device-mapper nodes: %w", err)
+	}
+
+	// Create the volume group. The per-volume-group singleflight already
+	// prevents concurrent callers in this process from racing on vgcreate, so
+	// AlreadyExists here means the volume group was created out of band by
+	// another process (e.g. a second driver instance briefly overlapping during
+	// a DaemonSet restart, or an admin). Treat that as success and fall through
+	// to fetch it. Note that a stale /dev/<vg> node blocking vgcreate maps to
+	// ErrStaleDeviceNode (not ErrAlreadyExists), so this does not mask a cleanup
+	// failure.
 	if err := l.lvm.CreateVolumeGroup(ctx, lvm.CreateVGOptions{
 		Name:    name,
 		PVNames: devices,
 		Tags:    []string{DefaultVolumeGroupTag},
-	}); err != nil {
-		// Multiple workers may try to create the same volume group at the same time,
-		// so ignore the already exists error and return the existing volume group.
-		if !errors.Is(err, lvm.ErrAlreadyExists) {
-			log.Error(err, "failed to create volume group")
-			span.SetStatus(codes.Error, "failed to create volume group")
-			span.RecordError(err)
-			recorder.Eventf(corev1.EventTypeWarning, provisioningVolumeGroupFailed, "Provisioning volume group %s failed: %s", name, err)
-			return nil, fmt.Errorf("failed to create volume group: %w", err)
-		}
+	}); lvm.IgnoreAlreadyExists(err) != nil {
+		log.Error(err, "failed to create volume group")
+		recorder.Eventf(corev1.EventTypeWarning, provisioningVolumeGroupFailed, "Provisioning volume group %s failed: %s", name, err)
+		return nil, fmt.Errorf("failed to create volume group: %w", err)
+	} else if err != nil {
+		log.V(1).Info("volume group already exists")
 	}
 	recorder.Eventf(corev1.EventTypeNormal, provisionedVolumeGroup, "Successfully provisioned volume group %s", name)
 	log.V(1).Info("created volume group")
@@ -292,8 +343,6 @@ func (l *LVM) EnsureVolumeGroup(ctx context.Context, name string, devices []stri
 	// Get the newly created volume group.
 	vg, err = l.lvm.GetVolumeGroup(ctx, name)
 	if err != nil {
-		span.SetStatus(codes.Error, "failed to get volume group after creation")
-		span.RecordError(err)
 		return nil, fmt.Errorf("failed to get volume group after creation: %w", err)
 	}
 	return vg, nil
