@@ -26,11 +26,13 @@ import (
 	"errors"
 	"fmt"
 	"math/big"
+	"os"
 	"os/exec"
 	"os/user"
 	"strings"
 	"testing"
 
+	"local-csi-driver/internal/pkg/block"
 	"local-csi-driver/internal/pkg/lvm"
 	testUtils "local-csi-driver/test/pkg/utils/device"
 )
@@ -680,4 +682,119 @@ func mustRandomInt(max int) int {
 		panic(err)
 	}
 	return int(n.Int64())
+}
+
+// TestRemoveStaleDeviceMapperNodesValidation covers input validation that does
+// not require LVM or root privileges.
+func TestRemoveStaleDeviceMapperNodesValidation(t *testing.T) {
+	c := lvm.NewClient()
+	ctx := context.Background()
+
+	cases := []struct {
+		name   string
+		vgName string
+	}{
+		{"empty", ""},
+		{"slash", "foo/bar"},
+		{"absolute", "/dev/foo"},
+		{"dot", "."},
+		{"dotdot", ".."},
+		{"traversal", "foo/../.."},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := c.RemoveStaleDeviceMapperNodes(ctx, tc.vgName)
+			if !errors.Is(err, lvm.ErrInvalidInput) {
+				t.Fatalf("expected ErrInvalidInput for vg name %q, got: %v", tc.vgName, err)
+			}
+		})
+	}
+}
+
+// TestRemoveStaleDeviceMapperNodes verifies that leaked device nodes and the
+// /dev/<vg> directory are reclaimed for a volume group that no longer has
+// backing LVM metadata, while volume groups that still exist are left alone.
+func TestRemoveStaleDeviceMapperNodes(t *testing.T) {
+	if !isRoot() {
+		t.Skip("Skipping TestRemoveStaleDeviceMapperNodes as it requires root permissions.")
+	}
+
+	if _, err := os.Stat("/sbin/lvm"); err != nil {
+		t.Skip("Skipping TestRemoveStaleDeviceMapperNodes as /sbin/lvm is not available.")
+	}
+
+	c := lvm.NewClient(lvm.WithBlockDeviceUtilities(block.New()))
+	ctx := context.Background()
+
+	// Leaked empty /dev/<vg> directory for a non-existent volume group is
+	// removed.
+	t.Run("RemovesLeakedDevDirectory", func(t *testing.T) {
+		vgName := fmt.Sprintf("stalevg%d", mustRandomInt(100000))
+		devDir := "/dev/" + vgName
+		if err := os.MkdirAll(devDir, 0o755); err != nil {
+			t.Fatalf("failed to create leaked dev dir %s: %v", devDir, err)
+		}
+		defer func() { _ = os.RemoveAll(devDir) }()
+
+		if err := c.RemoveStaleDeviceMapperNodes(ctx, vgName); err != nil {
+			t.Fatalf("RemoveStaleDeviceMapperNodes returned error: %v", err)
+		}
+		if _, err := os.Stat(devDir); !os.IsNotExist(err) {
+			t.Fatalf("expected %s to be removed, stat err: %v", devDir, err)
+		}
+	})
+
+	// Residual node files under /dev/<vg> for a non-existent volume group are
+	// removed along with the directory.
+	t.Run("RemovesResidualNodeFiles", func(t *testing.T) {
+		vgName := fmt.Sprintf("stalevg%d", mustRandomInt(100000))
+		devDir := "/dev/" + vgName
+		if err := os.MkdirAll(devDir, 0o755); err != nil {
+			t.Fatalf("failed to create leaked dev dir %s: %v", devDir, err)
+		}
+		defer func() { _ = os.RemoveAll(devDir) }()
+
+		node := devDir + "/pvc-leak"
+		if err := os.WriteFile(node, nil, 0o600); err != nil {
+			t.Fatalf("failed to create residual node file %s: %v", node, err)
+		}
+
+		if err := c.RemoveStaleDeviceMapperNodes(ctx, vgName); err != nil {
+			t.Fatalf("RemoveStaleDeviceMapperNodes returned error: %v", err)
+		}
+		if _, err := os.Stat(devDir); !os.IsNotExist(err) {
+			t.Fatalf("expected %s to be removed, stat err: %v", devDir, err)
+		}
+	})
+
+	// An existing volume group must not be touched.
+	t.Run("NoOpWhenVolumeGroupExists", func(t *testing.T) {
+		device, cleanup, err := testUtils.CreateLoopDevWithSize(int64(GiB))
+		if err != nil {
+			t.Fatalf("failed to create loop device: %v", err)
+		}
+		defer cleanup()
+
+		vgName := fmt.Sprintf("livevg%d", mustRandomInt(100000))
+
+		if err := c.CreatePhysicalVolume(ctx, lvm.CreatePVOptions{Name: device}); err != nil {
+			t.Fatalf("failed to create PV: %v", err)
+		}
+		defer func() { _ = c.RemovePhysicalVolume(ctx, lvm.RemovePVOptions{Name: device}) }()
+
+		if err := c.CreateVolumeGroup(ctx, lvm.CreateVGOptions{Name: vgName, PVNames: []string{device}}); err != nil {
+			t.Fatalf("failed to create VG: %v", err)
+		}
+		defer func() { _ = c.RemoveVolumeGroup(ctx, lvm.RemoveVGOptions{Name: vgName}) }()
+
+		// Cleanup must be a no-op for a volume group that exists in metadata.
+		if err := c.RemoveStaleDeviceMapperNodes(ctx, vgName); err != nil {
+			t.Fatalf("RemoveStaleDeviceMapperNodes returned error: %v", err)
+		}
+
+		// The live volume group must still be present.
+		if _, err := c.GetVolumeGroup(ctx, vgName); err != nil {
+			t.Fatalf("expected volume group %s to remain after no-op cleanup: %v", vgName, err)
+		}
+	})
 }

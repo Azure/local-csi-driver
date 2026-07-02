@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"strconv"
 	"strings"
+	"time"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -188,13 +189,8 @@ func lvmHyperconvergedTest(name, pvcFixture, podFixture string) {
 			Expect(err).NotTo(HaveOccurred(), "Failed to delete pod")
 		})
 
-		By("Waiting for pod to be Running")
-		Eventually(func(g Gomega, ctx context.Context) {
-			cmd := exec.CommandContext(ctx, "kubectl", "get", "pod", "-l", "part-of=e2e-test", "-o", "jsonpath={.items[0].status.phase}")
-			out, err := utils.Run(cmd)
-			g.Expect(err).NotTo(HaveOccurred(), "Failed to get pod status")
-			g.Expect(out).To(Equal("Running"), "Pod should be in Running state")
-		}).WithContext(ctx).Should(Succeed(), "Failed to wait for pod to be Running")
+		By("Waiting for pod to be Ready")
+		waitForE2EPodReady(ctx)
 
 		By("Deleting pod to test recreation with the same PVC")
 		cmd = exec.CommandContext(ctx, "kubectl", "delete", "--wait", "--ignore-not-found", "-f", podFixture)
@@ -206,13 +202,8 @@ func lvmHyperconvergedTest(name, pvcFixture, podFixture string) {
 		_, err = utils.Run(cmd)
 		Expect(err).NotTo(HaveOccurred(), "Failed to apply pod fixture")
 
-		By("Waiting for pod to be Running after recreation")
-		Eventually(func(g Gomega, ctx context.Context) {
-			cmd := exec.CommandContext(ctx, "kubectl", "get", "pod", "-l", "part-of=e2e-test", "-o", "jsonpath={.items[0].status.phase}")
-			out, err := utils.Run(cmd)
-			g.Expect(err).NotTo(HaveOccurred(), "Failed to get pod status")
-			g.Expect(out).To(Equal("Running"), "Pod should be in Running state after recreation")
-		}).WithContext(ctx).Should(Succeed(), "Failed to wait for pod to be Running after recreation")
+		By("Waiting for pod to be Ready after recreation")
+		waitForE2EPodReady(ctx)
 
 		// check thate spec.affinity.nodeAffinity is set
 		cmd = exec.CommandContext(ctx, "kubectl", "get", "pod", "-l", "part-of=e2e-test", "-o", "jsonpath={.items[0].spec.affinity.nodeAffinity}")
@@ -222,6 +213,24 @@ func lvmHyperconvergedTest(name, pvcFixture, podFixture string) {
 		Expect(out).To(ContainSubstring("preferredDuringSchedulingIgnoredDuringExecution"), "Node affinity should be required during scheduling")
 	})
 
+}
+
+// Volume provisioning for the "local" storageclass uses WaitForFirstConsumer,
+// so the bind, logical volume creation, mkfs, and mount only happen once the
+// pod is scheduled. Together with the busybox image pull, that whole chain can
+// take longer than the suite's default 2 minute Eventually timeout under CI
+// load, which made this test flaky. Wait on the Ready condition with an
+// explicit 5 minute budget (matching the statefulset rollout and AKS readiness
+// waits) and retry through the brief window after recreation where no pod
+// matches the selector yet.
+func waitForE2EPodReady(ctx context.Context) {
+	GinkgoHelper()
+	Eventually(func(g Gomega, ctx context.Context) {
+		cmd := exec.CommandContext(ctx, "kubectl", "wait", "--for=condition=Ready",
+			"pod", "-l", "part-of=e2e-test", "--timeout=30s")
+		_, err := utils.Run(cmd)
+		g.Expect(err).NotTo(HaveOccurred(), "pod did not become Ready")
+	}).WithContext(ctx).WithTimeout(5*time.Minute).WithPolling(5*time.Second).Should(Succeed(), "Failed to wait for pod to be Ready")
 }
 
 // get the numbder of application pods that are on the same node as the pod passed in.

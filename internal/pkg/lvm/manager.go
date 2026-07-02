@@ -57,4 +57,10 @@ type Manager interface {
 	// A logical volume is considered corrupted if it exists in LVM metadata
 	// but the device file (/dev/<vg>/<lv>) does not exist.
 	IsLogicalVolumeCorrupted(ctx context.Context, vgName string, lvName string) (bool, error)
+	// RemoveStaleDeviceMapperNodes removes leftover device-mapper nodes and the
+	// /dev/<vg> directory for a volume group that has no backing LVM metadata.
+	//
+	// It is a no-op when the volume group still exists in LVM metadata (the
+	// nodes are not stale) or when there is nothing to clean up.
+	RemoveStaleDeviceMapperNodes(ctx context.Context, vgName string) error
 }

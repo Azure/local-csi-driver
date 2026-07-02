@@ -6,7 +6,9 @@ package lvm_test
 import (
 	"context"
 	"errors"
+	"sync"
 	"testing"
+	"time"
 
 	"go.opentelemetry.io/otel/trace"
 	"go.uber.org/mock/gomock"
@@ -394,27 +396,27 @@ func TestEnsureVolumeGroup(t *testing.T) {
 			expectedVG:  testVg,
 		},
 		{
-			name:    "create vg error",
+			name:    "stale device-mapper cleanup error",
 			vgName:  "vg",
 			devices: []string{"/dev/pv1", "/dev/pv2"},
 			expectLvm: func(m *lvmMgr.MockManager) {
 				m.EXPECT().GetVolumeGroup(gomock.Any(), gomock.Any()).Return(nil, nil)
-				m.EXPECT().CreateVolumeGroup(gomock.Any(), gomock.Any()).Return(errTestInternal)
+				m.EXPECT().RemoveStaleDeviceMapperNodes(gomock.Any(), gomock.Any()).Return(errTestInternal)
 			},
 			expectedErr: errTestInternal,
 			expectedVG:  nil,
 		},
 		{
-			name:    "create vg concurrent error, already exists",
+			name:    "create vg error",
 			vgName:  "vg",
 			devices: []string{"/dev/pv1", "/dev/pv2"},
 			expectLvm: func(m *lvmMgr.MockManager) {
 				m.EXPECT().GetVolumeGroup(gomock.Any(), gomock.Any()).Return(nil, nil)
-				m.EXPECT().CreateVolumeGroup(gomock.Any(), gomock.Any()).Return(lvmMgr.ErrAlreadyExists)
-				m.EXPECT().GetVolumeGroup(gomock.Any(), gomock.Any()).Return(testVg, nil)
+				m.EXPECT().RemoveStaleDeviceMapperNodes(gomock.Any(), gomock.Any()).Return(nil)
+				m.EXPECT().CreateVolumeGroup(gomock.Any(), gomock.Any()).Return(errTestInternal)
 			},
-			expectedErr: nil,
-			expectedVG:  testVg,
+			expectedErr: errTestInternal,
+			expectedVG:  nil,
 		},
 		{
 			name:    "create vg success, get fails",
@@ -422,6 +424,7 @@ func TestEnsureVolumeGroup(t *testing.T) {
 			devices: []string{"/dev/pv1", "/dev/pv2"},
 			expectLvm: func(m *lvmMgr.MockManager) {
 				m.EXPECT().GetVolumeGroup(gomock.Any(), gomock.Any()).Return(nil, nil)
+				m.EXPECT().RemoveStaleDeviceMapperNodes(gomock.Any(), gomock.Any()).Return(nil)
 				m.EXPECT().CreateVolumeGroup(gomock.Any(), gomock.Any()).Return(nil)
 				m.EXPECT().GetVolumeGroup(gomock.Any(), gomock.Any()).Return(nil, errTestInternal)
 			},
@@ -434,11 +437,41 @@ func TestEnsureVolumeGroup(t *testing.T) {
 			devices: []string{"/dev/pv1", "/dev/pv2"},
 			expectLvm: func(m *lvmMgr.MockManager) {
 				m.EXPECT().GetVolumeGroup(gomock.Any(), gomock.Any()).Return(nil, nil)
+				m.EXPECT().RemoveStaleDeviceMapperNodes(gomock.Any(), gomock.Any()).Return(nil)
 				m.EXPECT().CreateVolumeGroup(gomock.Any(), gomock.Any()).Return(nil)
 				m.EXPECT().GetVolumeGroup(gomock.Any(), gomock.Any()).Return(testVg, nil)
 			},
 			expectedErr: nil,
 			expectedVG:  testVg,
+		},
+		{
+			// The volume group was created concurrently between our existence
+			// check and CreateVolumeGroup; AlreadyExists is treated as success.
+			name:    "create vg already exists is not an error",
+			vgName:  "vg",
+			devices: []string{"/dev/pv1", "/dev/pv2"},
+			expectLvm: func(m *lvmMgr.MockManager) {
+				m.EXPECT().GetVolumeGroup(gomock.Any(), gomock.Any()).Return(nil, nil)
+				m.EXPECT().RemoveStaleDeviceMapperNodes(gomock.Any(), gomock.Any()).Return(nil)
+				m.EXPECT().CreateVolumeGroup(gomock.Any(), gomock.Any()).Return(lvmMgr.ErrAlreadyExists)
+				m.EXPECT().GetVolumeGroup(gomock.Any(), gomock.Any()).Return(testVg, nil)
+			},
+			expectedErr: nil,
+			expectedVG:  testVg,
+		},
+		{
+			// A stale /dev/<vg> node blocking vgcreate must NOT be swallowed
+			// like AlreadyExists; it surfaces as an error.
+			name:    "create vg stale device node is an error",
+			vgName:  "vg",
+			devices: []string{"/dev/pv1", "/dev/pv2"},
+			expectLvm: func(m *lvmMgr.MockManager) {
+				m.EXPECT().GetVolumeGroup(gomock.Any(), gomock.Any()).Return(nil, nil)
+				m.EXPECT().RemoveStaleDeviceMapperNodes(gomock.Any(), gomock.Any()).Return(nil)
+				m.EXPECT().CreateVolumeGroup(gomock.Any(), gomock.Any()).Return(lvmMgr.ErrStaleDeviceNode)
+			},
+			expectedErr: lvmMgr.ErrStaleDeviceNode,
+			expectedVG:  nil,
 		},
 	}
 
@@ -460,6 +493,58 @@ func TestEnsureVolumeGroup(t *testing.T) {
 				t.Errorf("EnsureVolumeGroup() = %v, want %v", vg, tt.expectedVG)
 			}
 		})
+	}
+}
+
+// TestEnsureVolumeGroupConcurrent verifies that concurrent EnsureVolumeGroup
+// calls for the same volume group are deduplicated by singleflight, so the
+// volume group is only provisioned once even under a create race.
+func TestEnsureVolumeGroupConcurrent(t *testing.T) {
+	t.Parallel()
+	testVg := &lvmMgr.VolumeGroup{Name: "vg"}
+	devices := []string{"/dev/pv1", "/dev/pv2"}
+
+	l, _, m, err := initTestLVM(gomock.NewController(t))
+	if err != nil {
+		t.Fatalf("failed to initialize LVM: %v", err)
+	}
+
+	// release blocks the in-flight provision until all callers have parked in
+	// singleflight, guaranteeing they share the single flight.
+	release := make(chan struct{})
+	m.EXPECT().GetVolumeGroup(gomock.Any(), gomock.Any()).DoAndReturn(
+		func(context.Context, string) (*lvmMgr.VolumeGroup, error) {
+			<-release
+			return nil, nil
+		}).Times(1)
+	m.EXPECT().RemoveStaleDeviceMapperNodes(gomock.Any(), gomock.Any()).Return(nil).Times(1)
+	m.EXPECT().CreateVolumeGroup(gomock.Any(), gomock.Any()).Return(nil).Times(1)
+	m.EXPECT().GetVolumeGroup(gomock.Any(), gomock.Any()).Return(testVg, nil).Times(1)
+
+	const workers = 8
+	var wg sync.WaitGroup
+	results := make([]*lvmMgr.VolumeGroup, workers)
+	errs := make([]error, workers)
+	for i := range workers {
+		wg.Add(1)
+		go func(idx int) {
+			defer wg.Done()
+			results[idx], errs[idx] = l.EnsureVolumeGroup(context.Background(), "vg", devices)
+		}(i)
+	}
+
+	// Give all workers time to park in the singleflight before releasing.
+	time.Sleep(50 * time.Millisecond)
+	close(release)
+	wg.Wait()
+
+	for i := range workers {
+		if errs[i] != nil {
+			t.Errorf("worker %d: EnsureVolumeGroup() error = %v, want nil", i, errs[i])
+		}
+		if results[i] != testVg {
+			t.Errorf("worker %d: EnsureVolumeGroup() = %v, want %v", i, results[i], testVg)
+		}
 	}
 }
 
@@ -622,6 +707,7 @@ func TestEnsureVolume(t *testing.T) {
 				m.EXPECT().GetPhysicalVolume(gomock.Any(), gomock.Any()).Return(&lvmMgr.PhysicalVolume{Name: "/dev/pv1"}, nil)
 				m.EXPECT().GetPhysicalVolume(gomock.Any(), gomock.Any()).Return(&lvmMgr.PhysicalVolume{Name: "/dev/pv2"}, nil)
 				m.EXPECT().GetVolumeGroup(gomock.Any(), gomock.Any()).Return(nil, lvmMgr.ErrNotFound)
+				m.EXPECT().RemoveStaleDeviceMapperNodes(gomock.Any(), gomock.Any()).Return(nil)
 				m.EXPECT().CreateVolumeGroup(gomock.Any(), gomock.Any()).Return(errTestInternal)
 
 			},
