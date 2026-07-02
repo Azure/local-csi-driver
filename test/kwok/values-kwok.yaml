@@ -12,22 +12,9 @@ manager:
   deployment:
     tolerations: []
 
-# Bump memory limits well above the chart defaults so the driver and
-# manager don't OOMKill before we can capture heap profiles. Pair with
-# pprof enablement below to investigate memory growth.
-resources:
-  driver:
-    limits:
-      memory: 4Gi
-    requests:
-      cpu: 10m
-      memory: 60Mi
-  manager:
-    limits:
-      memory: 4Gi
-    requests:
-      cpu: 10m
-      memory: 64Mi
+# Use the chart default memory limits (driver 600Mi, manager 500Mi) so the
+# kwok scale test verifies the driver and manager stay within their shipped
+# limits at scale. pprof is enabled below to investigate memory growth.
 
 observability:
   driver:
