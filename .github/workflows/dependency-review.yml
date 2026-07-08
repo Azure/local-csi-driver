@@ -19,6 +19,7 @@ permissions: {}
 
 jobs:
   dependency-review:
+    name: Dependency Review
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:

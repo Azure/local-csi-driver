@@ -161,8 +161,10 @@ jobs:
         env:
           TAG_SUFFIX: ${{ matrix.arch.tag-suffix }}
           TEST_ID: ${{ matrix.test.id }}
+          RUN_ID: ${{ github.run_id }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
         run: |
-          TEST_RUN_ID="${{ github.run_id }}-kind-${TEST_ID}-${TAG_SUFFIX}-${{ github.run_attempt }}"
+          TEST_RUN_ID="${RUN_ID}-kind-${TEST_ID}-${TAG_SUFFIX}-${RUN_ATTEMPT}"
           echo "TestRunId=${TEST_RUN_ID}" >> "$GITHUB_ENV"
 
       - name: Run ${{ matrix.test.name }}

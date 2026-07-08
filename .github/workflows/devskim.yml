@@ -20,9 +20,9 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
-      security-events: write
-      contents: read
-      actions: read
+      security-events: write # upload DevSkim analysis results (SARIF)
+      contents: read # checkout the repository source
+      actions: read # read workflow run metadata for private repos
 
     steps:
       - name: Harden Runner

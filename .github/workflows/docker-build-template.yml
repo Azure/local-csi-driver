@@ -23,6 +23,7 @@ permissions:
 
 jobs:
   build-docker:
+    name: Build Docker
     timeout-minutes: 30
     strategy:
       matrix:

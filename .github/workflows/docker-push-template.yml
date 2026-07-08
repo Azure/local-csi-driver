@@ -23,12 +23,12 @@ on:
       AZURE_SUBSCRIPTION_ID:
         required: true
 
-permissions:
-  contents: read
-  id-token: write
+# No workflow-level privileges; each job grants exactly what it needs.
+permissions: {}
 
 jobs:
   push-arch:
+    name: Push Arch
     strategy:
       matrix:
         image:
@@ -41,8 +41,8 @@ jobs:
     timeout-minutes: 15
     environment: pull-request
     permissions:
-      contents: read
-      id-token: write
+      contents: read # checkout and load the built image artifact
+      id-token: write # federated Azure login to push to ACR
     steps:
       - name: Harden the runner (Audit all outbound calls)
         uses: step-security/harden-runner@bf7454d06d71f1098171f2acdf0cd4708d7b5920 # v2.20.0
@@ -111,13 +111,14 @@ jobs:
           done <<< "${TAGS}"
 
   push-manifest:
+    name: Push Manifest
     needs: push-arch
     runs-on: ubuntu-latest
     timeout-minutes: 10
     environment: pull-request
     permissions:
-      contents: read
-      id-token: write
+      contents: read # required by harden-runner / checkout context
+      id-token: write # federated Azure login to push the manifest to ACR
     strategy:
       matrix:
         image:
