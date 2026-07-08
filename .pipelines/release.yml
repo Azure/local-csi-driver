@@ -1,0 +1,338 @@
+#################################################################################
+#                               OneBranch Pipelines                             #
+# Documentation:  https://aka.ms/obpipelines                                    #
+# Yaml Schema:    https://aka.ms/obpipelines/yaml/schema                        #
+# Retail Tasks:   https://aka.ms/obpipelines/tasks                              #
+# Support:        https://aka.ms/onebranchsup                                   #
+#################################################################################
+#
+# Release pipeline: builds and pushes the local-csi-driver and local-csi-manager
+# container images (multi-arch: amd64 + arm64) and the Helm chart to ACR on
+# pushes to main and on release tags. Replaces the GitHub Actions release flow
+# formerly in .github/workflows/push-tag.yml.
+#
+# Runs on the shared OneBranch managed fleet - jobs declare pool "type"
+# (docker/linux) and OneBranch routes them to its managed pool; no pool name or
+# custom pool provisioning is required.
+#
+# Image push uses a container registry service connection via the OneBranch
+# container tasks; the Helm push uses an ARM service connection (workload
+# identity federation). See .pipelines/README.md for the one-time setup.
+
+trigger:
+  branches:
+    include:
+      - main
+  tags:
+    include:
+      - v[0-9]*.[0-9]*.[0-9]*
+      - v[0-9]*.[0-9]*.[0-9]*-preview.[0-9]*
+      - v[0-9]*.[0-9]*.[0-9]*-hotfix.[0-9]*
+
+# Release-only: pull-request validation stays in GitHub Actions.
+pr: none
+
+parameters:
+  # ARM service connection (workload identity federation) with AcrPush on the
+  # target registry. Used by the OneBranch container tasks (containercontrol
+  # login + imagebuildinfo push) and the Helm chart push (az acr login via
+  # AzureCLI).
+  - name: acrServiceConnection
+    type: string
+    default: local-csi-driver-acr
+  # Registry host and repository base. Defaults match the current
+  # GitHub Actions target (localcsidriver.azurecr.io/acstor). The ACR name
+  # is derived from the registry host (the label before .azurecr.io).
+  - name: registry
+    type: string
+    default: localcsidriver.azurecr.io
+  - name: repoBase
+    type: string
+    default: acstor
+  # Base version used to derive per-commit and floating tags on main
+  # (e.g. v0.0.1-g<sha> and v0.0.1-latest). Mirrors push-tag.yml.
+  - name: major
+    type: string
+    default: "0"
+  - name: minor
+    type: string
+    default: "0"
+  - name: patch
+    type: string
+    default: "1"
+  # Container images to build. jobKey must be a valid pipeline identifier.
+  - name: images
+    type: object
+    default:
+      - jobKey: Driver
+        name: local-csi-driver
+        dockerfile: Dockerfile
+        containerStructureTest: test/container-structure/local-csi-driver.yaml
+      - jobKey: Manager
+        name: local-csi-manager
+        dockerfile: Dockerfile.manager
+        containerStructureTest: test/container-structure/local-csi-manager.yaml
+
+variables:
+  # Needed for onebranch.pipeline.version task https://aka.ms/obpipelines/versioning
+  - name: CDP_DEFINITION_BUILD_COUNT
+    value: $[counter('', 0)]
+  - name: build_date
+    value: $[format('{0:yyyy}-{0:MM}-{0:dd}T{0:HH}:{0:mm}:{0:ss}Z', pipeline.startTime)]
+
+resources:
+  repositories:
+    - repository: templates
+      type: git
+      name: OneBranch.Pipelines/GovernedTemplates
+      ref: refs/heads/main
+
+extends:
+  # NonOfficial suits this team/dev ACR target. Switch to
+  # v2/OneBranch.Official.CrossPlat.yml@templates for a production/MCR publish.
+  template: v2/OneBranch.NonOfficial.CrossPlat.yml@templates  # https://aka.ms/obpipelines/templates
+  parameters:
+    globalSdl:  # https://aka.ms/obpipelines/sdl
+      tsa:
+        enabled: false
+      binskim:
+        break: true
+      policheck:
+        break: true
+
+    stages:
+      - stage: Release
+        displayName: Build and push to ACR
+        jobs:
+          # ---------------------------------------------------------------
+          # Derive the image/chart tag(s) from the triggering ref.
+          # ---------------------------------------------------------------
+          - job: SetVars
+            displayName: "Set tags from ref"
+            pool:
+              type: linux
+            variables:
+              ob_outputDirectory: $(Build.SourcesDirectory)/out
+            steps:
+              - bash: |
+                  set -eou pipefail
+                  LATEST_TAG=""
+                  case "${BUILD_SOURCEBRANCH}" in
+                    refs/tags/*)
+                      # Release: use the git tag verbatim; no floating tag.
+                      TAG="${BUILD_SOURCEBRANCH#refs/tags/}"
+                      ;;
+                    refs/heads/main)
+                      # Main: per-commit tag vMAJOR.MINOR.PATCH-g<sha> plus a
+                      # floating vMAJOR.MINOR.PATCH-latest tag. The 'g' prefix
+                      # keeps the pre-release identifier valid SemVer (numeric
+                      # identifiers cannot have leading zeros).
+                      SHORT_SHA=$(echo "${BUILD_SOURCEVERSION}" | cut -c1-7)
+                      TAG="v${MAJOR}.${MINOR}.${PATCH}-g${SHORT_SHA}"
+                      LATEST_TAG="v${MAJOR}.${MINOR}.${PATCH}-latest"
+                      ;;
+                    *)
+                      echo "##vso[task.logissue type=error]Unsupported ref ${BUILD_SOURCEBRANCH}; this pipeline only runs on main or version tags"
+                      exit 1
+                      ;;
+                  esac
+                  echo "##vso[task.setvariable variable=TAG;isOutput=true]${TAG}"
+                  echo "##vso[task.setvariable variable=LATEST_TAG;isOutput=true]${LATEST_TAG}"
+                  echo "Using tag: ${TAG}${LATEST_TAG:+ (+ ${LATEST_TAG})}"
+                name: setvars
+                displayName: "Set tag from ref"
+                env:
+                  MAJOR: ${{ parameters.major }}
+                  MINOR: ${{ parameters.minor }}
+                  PATCH: ${{ parameters.patch }}
+
+          # ---------------------------------------------------------------
+          # Per-image, per-arch build and push on the OneBranch docker fleet.
+          # The amd64 job also runs the container-structure test before push.
+          # ---------------------------------------------------------------
+          - ${{ each image in parameters.images }}:
+              # --- amd64 ---
+              - job: Build_${{ image.jobKey }}_amd64
+                displayName: "Build ${{ image.name }} (amd64)"
+                dependsOn: SetVars
+                pool:
+                  type: docker
+                  os: linux
+                variables:
+                  TAG: $[ dependencies.SetVars.outputs['setvars.TAG'] ]
+                steps:
+                  - task: onebranch.pipeline.containercontrol@1
+                    displayName: "Login to ACR"
+                    inputs:
+                      command: login
+                      acr_name: ${{ split(parameters.registry, '.')[0] }}
+                      endpoint: ${{ parameters.acrServiceConnection }}
+                  - task: onebranch.pipeline.imagebuildinfo@1
+                    displayName: "Build, test and push (amd64)"
+                    inputs:
+                      repositoryName: ${{ parameters.repoBase }}/${{ image.name }}
+                      dockerFileRelPath: ${{ image.dockerfile }}
+                      dockerFileContextPath: $(Build.SourcesDirectory)
+                      containerTestsYAMLPath: ${{ image.containerStructureTest }}
+                      arguments: >-
+                        --provenance false
+                        --platform linux/amd64
+                        --build-arg BUILD_ID=$(Build.BuildNumber)
+                        --build-arg GIT_COMMIT=$(Build.SourceVersion)
+                        --build-arg VERSION=$(TAG)
+                        --build-arg BUILD_DATE=$(build_date)
+                      registry: ${{ parameters.registry }}
+                      saveImageToPath: ${{ image.name }}-amd64.tar.gz
+                      compress: true
+                      enable_network: true
+                      build_tag: $(TAG)-amd64
+                      enable_acr_push: true
+                      enable_isolated_acr_push: false
+                      enable_service_tree_acr_path: false
+                      endpoint: ${{ parameters.acrServiceConnection }}
+                      buildkit: 1
+
+              # --- arm64 ---
+              - job: Build_${{ image.jobKey }}_arm64
+                displayName: "Build ${{ image.name }} (arm64)"
+                dependsOn: SetVars
+                pool:
+                  type: docker
+                  os: linux
+                  hostArchitecture: arm64
+                variables:
+                  TAG: $[ dependencies.SetVars.outputs['setvars.TAG'] ]
+                steps:
+                  - task: onebranch.pipeline.containercontrol@1
+                    displayName: "Login to ACR"
+                    inputs:
+                      command: login
+                      acr_name: ${{ split(parameters.registry, '.')[0] }}
+                      endpoint: ${{ parameters.acrServiceConnection }}
+                  - task: onebranch.pipeline.imagebuildinfo@1
+                    displayName: "Build and push (arm64)"
+                    inputs:
+                      repositoryName: ${{ parameters.repoBase }}/${{ image.name }}
+                      dockerFileRelPath: ${{ image.dockerfile }}
+                      dockerFileContextPath: $(Build.SourcesDirectory)
+                      arguments: >-
+                        --provenance false
+                        --platform linux/arm64
+                        --build-arg BUILD_ID=$(Build.BuildNumber)
+                        --build-arg GIT_COMMIT=$(Build.SourceVersion)
+                        --build-arg VERSION=$(TAG)
+                        --build-arg BUILD_DATE=$(build_date)
+                      registry: ${{ parameters.registry }}
+                      saveImageToPath: ${{ image.name }}-arm64.tar.gz
+                      compress: true
+                      enable_network: true
+                      build_tag: $(TAG)-arm64
+                      enable_acr_push: true
+                      enable_isolated_acr_push: false
+                      enable_service_tree_acr_path: false
+                      endpoint: ${{ parameters.acrServiceConnection }}
+                      buildkit: 1
+
+              # --- multi-arch manifest (TAG, plus -latest on main) ---
+              - job: Manifest_${{ image.jobKey }}
+                displayName: "Manifest ${{ image.name }}"
+                dependsOn:
+                  - SetVars
+                  - Build_${{ image.jobKey }}_amd64
+                  - Build_${{ image.jobKey }}_arm64
+                pool:
+                  type: docker
+                  os: linux
+                variables:
+                  TAG: $[ dependencies.SetVars.outputs['setvars.TAG'] ]
+                  LATEST_TAG: $[ dependencies.SetVars.outputs['setvars.LATEST_TAG'] ]
+                steps:
+                  - task: onebranch.pipeline.containercontrol@1
+                    displayName: "Login to ACR"
+                    inputs:
+                      command: login
+                      acr_name: ${{ split(parameters.registry, '.')[0] }}
+                      endpoint: ${{ parameters.acrServiceConnection }}
+                  - task: onebranch.pipeline.imagebuildinfo@1
+                    displayName: "Publish manifest ($(TAG))"
+                    inputs:
+                      repositoryName: ${{ parameters.repoBase }}/${{ image.name }}
+                      registry: ${{ parameters.registry }}
+                      saveImageToPath: ${{ image.name }}.tar.gz
+                      compress: true
+                      build_tag: $(TAG)
+                      enable_isolated_acr_push: false
+                      enable_service_tree_acr_path: false
+                      endpoint: ${{ parameters.acrServiceConnection }}
+                      manifest_push: true
+                      manifest: |
+                        [
+                          {
+                            "image": "${{ parameters.repoBase }}/${{ image.name }}:$(TAG)-amd64",
+                            "annotate": "--os linux --arch amd64"
+                          },
+                          {
+                            "image": "${{ parameters.repoBase }}/${{ image.name }}:$(TAG)-arm64",
+                            "annotate": "--os linux --arch arm64"
+                          }
+                        ]
+                  # On main, also publish the floating -latest manifest pointing
+                  # at the same arch images.
+                  - task: onebranch.pipeline.imagebuildinfo@1
+                    displayName: "Publish manifest ($(LATEST_TAG))"
+                    condition: and(succeeded(), ne(variables['LATEST_TAG'], ''))
+                    inputs:
+                      repositoryName: ${{ parameters.repoBase }}/${{ image.name }}
+                      registry: ${{ parameters.registry }}
+                      saveImageToPath: ${{ image.name }}-latest.tar.gz
+                      compress: true
+                      build_tag: $(LATEST_TAG)
+                      enable_isolated_acr_push: false
+                      enable_service_tree_acr_path: false
+                      endpoint: ${{ parameters.acrServiceConnection }}
+                      manifest_push: true
+                      manifest: |
+                        [
+                          {
+                            "image": "${{ parameters.repoBase }}/${{ image.name }}:$(TAG)-amd64",
+                            "annotate": "--os linux --arch amd64"
+                          },
+                          {
+                            "image": "${{ parameters.repoBase }}/${{ image.name }}:$(TAG)-arm64",
+                            "annotate": "--os linux --arch arm64"
+                          }
+                        ]
+
+          # ---------------------------------------------------------------
+          # Build and push the Helm chart for each tag (ARM/WIF auth).
+          # ---------------------------------------------------------------
+          - job: Helm
+            displayName: "Build and push Helm chart"
+            dependsOn: SetVars
+            pool:
+              type: linux
+            variables:
+              ob_outputDirectory: $(Build.SourcesDirectory)/out
+              TAG: $[ dependencies.SetVars.outputs['setvars.TAG'] ]
+              LATEST_TAG: $[ dependencies.SetVars.outputs['setvars.LATEST_TAG'] ]
+            steps:
+              - task: AzureCLI@2
+                displayName: "Build and push Helm chart packages"
+                inputs:
+                  azureSubscription: ${{ parameters.acrServiceConnection }}
+                  scriptType: bash
+                  scriptLocation: inlineScript
+                  inlineScript: |
+                    set -eou pipefail
+                    make helm-login REGISTRY="${REGISTRY}"
+                    for tag in "${TAG}" "${LATEST_TAG}"; do
+                      [[ -z "${tag}" ]] && continue
+                      echo "Building and pushing Helm chart for tag: ${tag}"
+                      make helm-push \
+                        REGISTRY="${REGISTRY}" \
+                        REPO_BASE="${REPO_BASE}" \
+                        TAG="${tag}"
+                    done
+                env:
+                  REGISTRY: ${{ parameters.registry }}
+                  REPO_BASE: ${{ parameters.repoBase }}
