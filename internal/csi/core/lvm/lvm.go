@@ -620,7 +620,7 @@ func (l *LVM) Cleanup(ctx context.Context) error {
 	defer span.End()
 	log := log.FromContext(ctx)
 
-	volumeGroup, err := l.lvm.ListVolumeGroups(ctx, &lvm.ListVGOptions{Select: "vg_tags=" + DefaultVolumeGroupTag})
+	volumeGroups, err := l.lvm.ListVolumeGroups(ctx, &lvm.ListVGOptions{Select: "vg_tags=" + DefaultVolumeGroupTag})
 	if err != nil {
 		span.SetStatus(codes.Error, "failed to list volume groups")
 		span.RecordError(err)
@@ -628,9 +628,15 @@ func (l *LVM) Cleanup(ctx context.Context) error {
 		return fmt.Errorf("failed to list volume groups: %w", err)
 	}
 
+	if len(volumeGroups) == 0 {
+		return nil
+	}
+
 	totalLVCount := 0
-	for _, vg := range volumeGroup {
+	managedVGNames := make(map[string]struct{}, len(volumeGroups))
+	for _, vg := range volumeGroups {
 		totalLVCount += int(vg.LVCount)
+		managedVGNames[vg.Name] = struct{}{}
 	}
 	if totalLVCount > 0 {
 		log.V(1).Info("found existing logical volumes, skipping VG and PV cleanup", "count", totalLVCount)
@@ -639,7 +645,20 @@ func (l *LVM) Cleanup(ctx context.Context) error {
 		return nil
 	}
 
-	for _, vg := range volumeGroup {
+	// Capture PV membership before removing VGs, since removing a VG clears
+	// its name from the associated PVs.
+	pvs, err := l.lvm.ListPhysicalVolumes(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("failed to list physical volumes: %w", err)
+	}
+	devices := make([]string, 0, len(pvs))
+	for _, pv := range pvs {
+		if _, managed := managedVGNames[pv.VGName]; managed {
+			devices = append(devices, pv.Name)
+		}
+	}
+
+	for _, vg := range volumeGroups {
 		if err := l.removeVolumeGroup(ctx, vg.Name); err != nil {
 			log.Error(err, "failed to remove volume group", "vg", vg.Name)
 			span.SetStatus(codes.Error, "failed to remove volume group")
@@ -648,19 +667,11 @@ func (l *LVM) Cleanup(ctx context.Context) error {
 		}
 	}
 
-	pvs, err := l.lvm.ListPhysicalVolumes(ctx, nil)
-	if err != nil {
-		return fmt.Errorf("failed to list physical volumes: %w", err)
-	}
-
-	devices := make([]string, 0, len(pvs))
-	for _, pv := range pvs {
-		devices = append(devices, pv.Name)
-	}
-
-	if err := l.removePhysicalVolumes(ctx, devices); err != nil {
-		log.Error(err, "failed to remove physical volumes", "devices", devices)
-		return err
+	if len(devices) > 0 {
+		if err := l.removePhysicalVolumes(ctx, devices); err != nil {
+			log.Error(err, "failed to remove physical volumes", "devices", devices)
+			return err
+		}
 	}
 	log.V(1).Info("cleanup completed")
 	return nil
@@ -689,20 +700,7 @@ func (l *LVM) removeVolumeGroup(ctx context.Context, vgName string) error {
 
 // removePhysicalVolumes removes the PVs from the node.
 func (l *LVM) removePhysicalVolumes(ctx context.Context, devicePaths []string) error {
-	pvs := map[string]struct{}{}
-	// lists all the available PVs
-	listResult, err := l.lvm.ListPhysicalVolumes(ctx, nil)
-	if err != nil {
-		return fmt.Errorf("failed to list physical volumes: %w", err)
-	}
-	for _, pv := range listResult {
-		pvs[pv.Name] = struct{}{}
-	}
-
 	for _, device := range devicePaths {
-		if _, ok := pvs[device]; !ok {
-			continue
-		}
 		pvRemoveOptions := lvm.RemovePVOptions{
 			Name: device,
 		}
