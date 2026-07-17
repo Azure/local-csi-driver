@@ -94,15 +94,9 @@ spec:
         - --lvm-orphan-cleanup-interval={{ .Values.cleanup.lvmOrphanCleanup.interval }}
         - --run-alongside-webhook={{ .Values.webhook.hyperconverged.enabled | default false }}
 
-        {{- if .Values.diskSelection.pathPrefixes }}
-        - --disk-path-prefixes={{ join "," .Values.diskSelection.pathPrefixes }}
-        {{- end }}
-        {{- if .Values.diskSelection.models }}
-        - --disk-models={{ join "," .Values.diskSelection.models }}
-        {{- end }}
-        {{- if .Values.diskSelection.types }}
-        - --disk-types={{ join "," .Values.diskSelection.types }}
-        {{- end }}
+        - --disk-path-prefixes={{ join "," (.Values.diskSelection.pathPrefixes | default (list "/dev/nvme")) }}
+        - --disk-models={{ join "," (.Values.diskSelection.models | default (list "Microsoft NVMe Direct Disk" "Microsoft NVMe Direct Disk v2")) }}
+        - --disk-types={{ join "," (.Values.diskSelection.types | default (list "disk")) }}
 
         command:
         - /local-csi-driver
