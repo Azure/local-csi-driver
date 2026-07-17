@@ -78,6 +78,28 @@ raid:
   # StorageClass in the `VolumeGroup` parameter.
   volumeGroup: containerstorage
 
+
+# Disk selection configuration.
+# Controls which block devices the driver picks up as LVM physical volumes.
+# A device must match ALL of the criteria below (path prefix AND model AND
+# type). Within each list, a device matches if it satisfies ANY entry.
+# Leave a list empty to disable filtering on that attribute. The defaults
+# target NVMe disks found on Azure VMs.
+diskSelection:
+  # Path prefixes a device must start with, e.g. /dev/nvme.
+  pathPrefixes:
+  - /dev/nvme
+  # NVMe disk models to match. Add new models here as new SKUs are introduced.
+  models:
+  - Microsoft NVMe Direct Disk
+  - Microsoft NVMe Direct Disk v2
+  - Amazon EC2 NVMe Instance Storage
+  - Amazon Elastic Block Store
+  # Device types to match, e.g. disk (as opposed to loop, part, etc.).
+  types:
+  - disk
+
+
 # Garbage collection and cleanup configuration.
 cleanup:
   # Cleanup volume groups and physical volumes on pod termination if logical volume are not in use.

@@ -9,8 +9,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
-
 	// Import all Kubernetes client auth plugins (e.g. Azure, GCP, OIDC, etc.)
 	// to ensure that exec-entrypoint and run can make use of them.
 
@@ -88,6 +88,9 @@ func main() {
 	var enableLVMOrphanCleanup bool
 	var lvmOrphanCleanupInterval time.Duration
 	var runAlongsideWebhook bool
+	var diskPathPrefixes string
+	var diskModels string
+	var diskTypes string
 	flag.StringVar(&nodeName, "node-name", "",
 		"The name of the node this agent is running on.")
 	flag.StringVar(&podName, "pod-name", "",
@@ -129,6 +132,12 @@ func main() {
 		"Interval for the LVM orphan cleanup controller to scan and clean up orphaned volumes.")
 	flag.BoolVar(&runAlongsideWebhook, "run-alongside-webhook", false,
 		"If set, indicates that the driver is running alongside a separate webhook deployment. This affects PV node affinity behavior.")
+	flag.StringVar(&diskPathPrefixes, "disk-path-prefixes", strings.Join(probe.DefaultDiskPathPrefixes, ","),
+		"Comma-separated list of device path prefixes to select, e.g. /dev/nvme. Empty disables path filtering.")
+	flag.StringVar(&diskModels, "disk-models", strings.Join(probe.DefaultDiskModels, ","),
+		"Comma-separated list of device models to select. Empty disables model filtering.")
+	flag.StringVar(&diskTypes, "disk-types", strings.Join(probe.DefaultDiskTypes, ","),
+		"Comma-separated list of device types to select, e.g. disk. Empty disables type filtering.")
 	// Initialize logger flagsconfig.
 	logConfig := textlogger.NewConfig(textlogger.VerbosityFlagName("v"))
 	logConfig.AddFlags(flag.CommandLine)
@@ -239,8 +248,17 @@ func main() {
 
 	// TODO(sc): move filter to controller so we can read filters from
 	// storageclass params. Hardcoded for now.
+
+	// Build the disk selection filter from CLI args. Defaults preserve the
+	// historical NVMe selection behavior when the flags are not overridden.
+	diskFilter := probe.NewEphemeralDiskFilter(
+		strings.Split(diskPathPrefixes, ","),
+		strings.Split(diskModels, ","),
+		strings.Split(diskTypes, ","),
+	)
+
 	blockDevUtils := block.New()
-	deviceProbe := probe.New(blockDevUtils, probe.EphemeralDiskFilter)
+	deviceProbe := probe.New(blockDevUtils, diskFilter)
 
 	// Create the LVM manager.
 	// LVM manager is an abstraction that understands how to create and
@@ -276,7 +294,7 @@ func main() {
 
 	// Run startup diagnostic to check disk availability and emit a Warning
 	// event on the pod if no disks are available for volume group creation.
-	startupDiag := lvm.NewStartupDiagnostic(deviceProbe, blockDevUtils, probe.EphemeralDiskFilter, recorder, selfPod)
+	startupDiag := lvm.NewStartupDiagnostic(deviceProbe, blockDevUtils, diskFilter, recorder, selfPod)
 	if err := mgr.Add(startupDiag); err != nil {
 		logAndExit(err, "unable to add startup diagnostic to manager")
 	}
