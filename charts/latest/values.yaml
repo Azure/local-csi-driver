@@ -86,19 +86,13 @@ raid:
 # Leave a list empty to disable filtering on that attribute. The defaults
 # target NVMe disks found on Azure VMs.
 diskSelection:
-  # Path prefixes a device must start with, e.g. /dev/nvme.
-  pathPrefixes:
-  - /dev/nvme
-  # NVMe disk models to match. Add new models here as new SKUs are introduced.
-  models:
-  - Microsoft NVMe Direct Disk
-  - Microsoft NVMe Direct Disk v2
-  - Amazon EC2 NVMe Instance Storage
-  - Amazon Elastic Block Store
-  # Device types to match, e.g. disk (as opposed to loop, part, etc.).
-  types:
-  - disk
-
+  # Additional device path prefixes to select, appended to the built-in defaults.
+  extraPathPrefixes: []
+  # Additional disk models to select, appended to the built-in defaults.
+  # Add new SKUs here as they are introduced.
+  extraModels: []
+  # Additional device types to select, appended to the built-in defaults.
+  extraTypes: []
 
 # Garbage collection and cleanup configuration.
 cleanup:

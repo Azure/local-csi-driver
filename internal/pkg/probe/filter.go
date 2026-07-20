@@ -13,49 +13,59 @@ import (
 // behavior when no overrides are provided via CLI flags.
 var (
 	DefaultDiskPathPrefixes = []string{"/dev/nvme"}
-	DefaultDiskModels       = []string{"Microsoft NVMe Direct Disk", "Microsoft NVMe Direct Disk v2"}
-	DefaultDiskTypes        = []string{"disk"}
+	DefaultDiskModels       = []string{
+		"Microsoft NVMe Direct Disk",
+		"Microsoft NVMe Direct Disk v2",
+		"Amazon EC2 NVMe Instance Storage",
+	}
+	DefaultDiskTypes = []string{"disk"}
 )
 
-// EphemeralDiskFilter is a filter for ephemeral disks using default values.
-var EphemeralDiskFilter = NewEphemeralDiskFilter(DefaultDiskPathPrefixes, DefaultDiskModels, DefaultDiskTypes)
+// NewEphemeralDiskFilter builds a Filter from the built-in defaults plus any
+// extra path prefixes, models, and types (for example, sourced from CLI flags).
+// A device must match all three categories (path AND model AND type); within a
+// category it matches if it satisfies any entry. Extra entries are appended to
+// the defaults; empty/whitespace entries and case-insensitive duplicates are
+// ignored.
+func NewEphemeralDiskFilter(extraPathPrefixes, extraModels, extraTypes []string) *Filter {
+	pathPrefixes := appendUnique(DefaultDiskPathPrefixes, extraPathPrefixes)
+	models := appendUnique(DefaultDiskModels, extraModels)
+	types := appendUnique(DefaultDiskTypes, extraTypes)
 
-// NewEphemeralDiskFilter builds a Filter from the given path prefixes, models,
-// and types. A device must match all non-empty categories (path AND model AND
-// type); within a category it matches if it satisfies any entry. Empty or
-// whitespace-only entries are ignored, and an empty category is skipped so it
-// does not filter anything out.
-func NewEphemeralDiskFilter(pathPrefixes, models, types []string) *Filter {
-	filters := make([]FilterPredicate, 0, 3)
-
-	if paths := nonEmpty(pathPrefixes); len(paths) > 0 {
-		anyPath := make([]FilterPredicate, 0, len(paths))
-		for _, p := range paths {
-			anyPath = append(anyPath, &PathFilter{Path: p})
-		}
-		filters = append(filters, &anyFilter{filters: anyPath})
+	anyPath := make([]FilterPredicate, 0, len(pathPrefixes))
+	for _, p := range pathPrefixes {
+		anyPath = append(anyPath, &PathFilter{Path: p})
 	}
 
-	if m := nonEmpty(models); len(m) > 0 {
-		filters = append(filters, NewModelFilter(m...))
+	anyType := make([]FilterPredicate, 0, len(types))
+	for _, t := range types {
+		anyType = append(anyType, &TypeFilter{Type: t})
 	}
 
-	if ts := nonEmpty(types); len(ts) > 0 {
-		anyType := make([]FilterPredicate, 0, len(ts))
-		for _, t := range ts {
-			anyType = append(anyType, &TypeFilter{Type: t})
-		}
-		filters = append(filters, &anyFilter{filters: anyType})
-	}
-
-	return &Filter{Filters: filters}
+	return &Filter{Filters: []FilterPredicate{
+		&anyFilter{filters: anyPath},
+		NewModelFilter(models...),
+		&anyFilter{filters: anyType},
+	}}
 }
 
-// nonEmpty returns the input with whitespace trimmed and empty entries removed.
-func nonEmpty(in []string) []string {
-	out := make([]string, 0, len(in))
-	for _, s := range in {
-		if s = strings.TrimSpace(s); s != "" {
+// appendUnique returns base followed by the entries of extra that are not
+// already present. Entries are trimmed, empty entries are dropped, and
+// de-duplication is case-insensitive.
+func appendUnique(base, extra []string) []string {
+	seen := make(map[string]struct{})
+	out := make([]string, 0, len(base)+len(extra))
+	for _, list := range [][]string{base, extra} {
+		for _, s := range list {
+			s = strings.TrimSpace(s)
+			if s == "" {
+				continue
+			}
+			key := strings.ToLower(s)
+			if _, ok := seen[key]; ok {
+				continue
+			}
+			seen[key] = struct{}{}
 			out = append(out, s)
 		}
 	}

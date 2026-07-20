@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
 	// Import all Kubernetes client auth plugins (e.g. Azure, GCP, OIDC, etc.)
 	// to ensure that exec-entrypoint and run can make use of them.
 
@@ -132,13 +133,12 @@ func main() {
 		"Interval for the LVM orphan cleanup controller to scan and clean up orphaned volumes.")
 	flag.BoolVar(&runAlongsideWebhook, "run-alongside-webhook", false,
 		"If set, indicates that the driver is running alongside a separate webhook deployment. This affects PV node affinity behavior.")
-	flag.StringVar(&diskPathPrefixes, "disk-path-prefixes", strings.Join(probe.DefaultDiskPathPrefixes, ","),
-		"Comma-separated list of device path prefixes to select, e.g. /dev/nvme. Empty disables path filtering.")
-	flag.StringVar(&diskModels, "disk-models", strings.Join(probe.DefaultDiskModels, ","),
-		"Comma-separated list of device models to select. Empty disables model filtering.")
-	flag.StringVar(&diskTypes, "disk-types", strings.Join(probe.DefaultDiskTypes, ","),
-		"Comma-separated list of device types to select, e.g. disk. Empty disables type filtering.")
-	// Initialize logger flagsconfig.
+	flag.StringVar(&diskPathPrefixes, "disk-path-prefixes", "",
+		"Comma-separated list of additional device path prefixes to select (e.g. /dev/sda), appended to the built-in defaults.")
+	flag.StringVar(&diskModels, "disk-models", "",
+		"Comma-separated list of additional device models to select, appended to the built-in defaults.")
+	flag.StringVar(&diskTypes, "disk-types", "",
+		"Comma-separated list of additional device types to select (e.g. loop), appended to the built-in defaults.") // Initialize logger flagsconfig.
 	logConfig := textlogger.NewConfig(textlogger.VerbosityFlagName("v"))
 	logConfig.AddFlags(flag.CommandLine)
 
@@ -249,8 +249,9 @@ func main() {
 	// TODO(sc): move filter to controller so we can read filters from
 	// storageclass params. Hardcoded for now.
 
-	// Build the disk selection filter from CLI args. Defaults preserve the
-	// historical NVMe selection behavior when the flags are not overridden.
+	// Build the disk selection filter by appending any CLI-provided entries to
+	// the built-in defaults. This preserves the default NVMe selection while
+	// letting operators add extra path prefixes, models, or types via Helm.
 	diskFilter := probe.NewEphemeralDiskFilter(
 		strings.Split(diskPathPrefixes, ","),
 		strings.Split(diskModels, ","),
