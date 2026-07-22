@@ -59,6 +59,31 @@ When `raid.enabled=true`, an init container will automatically:
 
 For more details on RAID configuration, see the [Helm chart README](../charts/latest/README.md#raid-configuration).
 
+### Disk Selection
+
+The driver discovers NVMe devices on each node and uses a filter to decide which
+of them are eligible for volume groups. The filter combines a built-in set of
+defaults with any extra values you provide via `diskSelection.` in the Helm
+chart. Extra values are **appended** to the defaults.
+
+By default the extra lists are empty, so only the built-in defaults are used:
+
+- **Path prefix** - default: `/dev/nvme`
+- **Model** - defaults: `Microsoft NVMe Direct Disk`,
+  `Microsoft NVMe Direct Disk v2`, `Amazon EC2 NVMe Instance Storage`
+- **Type** - default: `disk`
+
+If your nodes expose NVMe disks with a model, path prefix, or type not covered
+by the defaults, add the extra value(s) at install time:
+
+```sh
+helm install local-csi-driver oci://localcsidriver.azurecr.io/acstor/charts/local-csi-driver \
+  --version <release> --namespace kube-system \
+  --set 'diskSelection.extraModels={Contoso NVMe Disk,Contoso NVMe Disk v2}'
+```
+
+For more details and examples, see the [Helm chart README](../charts/latest/README.md#disk-selection).
+
 ## Creating a StorageClass
 
 To create a StorageClass for the local-csi-driver, apply the following YAML:

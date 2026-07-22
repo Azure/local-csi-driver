@@ -51,6 +51,9 @@ and their default values.
 | `daemonset.serviceAccount.annotations`        | Annotations for the service account. If empty, no annotations are applied.                                                                                                  |                                                                                                                          |
 | `raid.enabled`                                | **EXPERIMENTAL**: Enables mdadm RAID 0 setup. Combines unused NVMe devices into a RAID 0 array with LVM on top. When disabled, LVM raid is used. Migration not supported.   | `false`                                                                                                                  |
 | `raid.volumeGroup`                            | The volume group name to create on the RAID device. Must match the `volumeGroup` parameter in StorageClass if using a custom name.                                          | `containerstorage`                                                                                                       |
+| `diskSelection.extraPathPrefixes`             | Extra device path prefixes to select for volume groups, **appended** to the built-in defaults (`/dev/nvme`). Empty and duplicate entries are ignored.                       | `[]`                                                                                                                     |
+| `diskSelection.extraModels`                   | Extra NVMe disk models to select, **appended** to the built-in defaults. Matching is case-insensitive; empty/duplicate entries are ignored.                                 | `[]`                                                                                                                     |
+| `diskSelection.extraTypes`                    | Extra device types to select, **appended** to the built-in defaults (`disk`). Empty and duplicate entries are ignored.                                                      | `[]`                                                                                                                     |
 | `cleanup.enabled`                             | Cleanup volume groups and physical volumes on pod termination if logical volumes are not in use.                                                                            | `true`                                                                                                                   |
 | `cleanup.lvGarbageCollection.enabled`         | Enable event-driven LV garbage collection for node annotation mismatches.                                                                                                   | `true`                                                                                                                   |
 | `cleanup.lvmOrphanCleanup.enabled`            | Enable periodic LVM orphan cleanup scanning.                                                                                                                                | `true`                                                                                                                   |
@@ -154,6 +157,39 @@ for certain workloads.
 - Two or more unused NVMe devices on the node (or one device for single-disk setup)
 - Node must support either `tdnf` or `apt-get` package manager for mdadm installation
 - Sufficient privileges for the init container (runs as root with privileged mode)
+
+## Disk Selection
+
+The driver discovers NVMe devices on each node and uses a filter to decide which
+of them are eligible for volume groups. This filter is built from a set of
+values that ship with the driver (the defaults below), combined with any extra
+values you provide via `diskSelection.*`. Extra values are **appended** to the
+defaults; they never replace them.
+
+A device is eligible when it matches **all** of the following categories, and
+within each category it matches if it satisfies **any** value (default or
+extra):
+
+- **Path prefix** - default: `/dev/nvme`
+- **Model** - defaults: `Microsoft NVMe Direct Disk`,
+  `Microsoft NVMe Direct Disk v2`, `Amazon EC2 NVMe Instance Storage`
+- **Type** - default: `disk`
+
+By default, `diskSelection.extraPathPrefixes`, `diskSelection.extraModels`, and
+`diskSelection.extraTypes` are all empty, so the driver uses only the built-in
+defaults. If your nodes expose NVMe disks with a model, path prefix, or type
+that is not covered by the defaults, add the extra value(s) so they are included
+alongside the defaults. Empty and case-insensitive duplicate entries are
+ignored.Example:
+
+```console
+helm install local-csi-driver oci://localcsidriver.azurecr.io/acstor/charts/local-csi-driver \
+  --version <release> \
+  --namespace kube-system \
+  --set 'diskSelection.extraPathPrefixes={/dev/custom-nvme}' \
+  --set 'diskSelection.extraModels={Contoso NVMe Disk,Contoso NVMe Disk v2}' \
+  --set 'diskSelection.extraTypes={loop}'
+```
 
 ## Troubleshooting
 
