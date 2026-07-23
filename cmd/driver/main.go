@@ -138,7 +138,8 @@ func main() {
 	flag.StringVar(&diskModels, "disk-models", "",
 		"Comma-separated list of additional device models to select, appended to the built-in defaults.")
 	flag.StringVar(&diskTypes, "disk-types", "",
-		"Comma-separated list of additional device types to select (e.g. loop), appended to the built-in defaults.") // Initialize logger flagsconfig.
+		"Comma-separated list of additional device types to select (e.g. loop), appended to the built-in defaults.")
+	// Initialize logger flagsconfig.
 	logConfig := textlogger.NewConfig(textlogger.VerbosityFlagName("v"))
 	logConfig.AddFlags(flag.CommandLine)
 

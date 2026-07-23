@@ -218,10 +218,10 @@ func TestAppendUnique(t *testing.T) {
 			expected: []string{"/dev/nvme", "/dev/sda"},
 		},
 		{
-			name:     "drops case-insensitive duplicates",
+			name:     "drops exact duplicates but keeps case variants",
 			base:     []string{"Microsoft NVMe Direct Disk"},
-			extra:    []string{"microsoft nvme direct disk", "Contoso Disk"},
-			expected: []string{"Microsoft NVMe Direct Disk", "Contoso Disk"},
+			extra:    []string{"Microsoft NVMe Direct Disk", "microsoft nvme direct disk", "Contoso Disk"},
+			expected: []string{"Microsoft NVMe Direct Disk", "microsoft nvme direct disk", "Contoso Disk"},
 		},
 		{
 			name:     "trims and drops empty extras",

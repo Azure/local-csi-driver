@@ -179,8 +179,7 @@ By default, `diskSelection.extraPathPrefixes`, `diskSelection.extraModels`, and
 `diskSelection.extraTypes` are all empty, so the driver uses only the built-in
 defaults. If your nodes expose NVMe disks with a model, path prefix, or type
 that is not covered by the defaults, add the extra value(s) so they are included
-alongside the defaults. Empty and case-insensitive duplicate entries are
-ignored.Example:
+alongside the defaults. Empty and duplicate entries are ignored. Example:
 
 ```console
 helm install local-csi-driver oci://localcsidriver.azurecr.io/acstor/charts/local-csi-driver \

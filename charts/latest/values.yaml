@@ -83,8 +83,10 @@ raid:
 # Controls which block devices the driver picks up as LVM physical volumes.
 # A device must match ALL of the criteria below (path prefix AND model AND
 # type). Within each list, a device matches if it satisfies ANY entry.
-# Leave a list empty to disable filtering on that attribute. The defaults
-# target NVMe disks found on Azure VMs.
+# The lists below are appended to the driver's built-in defaults; the defaults
+# always apply and cannot be removed or overridden. Leaving a list empty simply
+# means only the built-in defaults are used for that attribute. The built-in
+# defaults target NVMe disks found on Azure and AWS VMs.
 diskSelection:
   # Additional device path prefixes to select, appended to the built-in defaults.
   extraPathPrefixes: []
