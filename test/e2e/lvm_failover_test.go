@@ -232,7 +232,7 @@ func pickDifferentDriverNode(ctx context.Context, exclude string) string {
 		"-l", "app.kubernetes.io/component=csi-local-node",
 		"-o", "jsonpath={range .items[*]}{.spec.nodeName}{\"\\n\"}{end}"))
 	Expect(err).NotTo(HaveOccurred(), "Failed to list csi-local-node pods")
-	for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
+	for line := range strings.SplitSeq(strings.TrimSpace(out), "\n") {
 		node := strings.TrimSpace(line)
 		if node != "" && node != exclude {
 			return node

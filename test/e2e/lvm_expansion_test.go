@@ -186,7 +186,7 @@ func getDriverPodOnNode(ctx context.Context, node string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
+	for line := range strings.SplitSeq(strings.TrimSpace(out), "\n") {
 		fields := strings.Split(line, "\t")
 		if len(fields) != 2 {
 			continue

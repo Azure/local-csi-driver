@@ -78,6 +78,24 @@ raid:
   # StorageClass in the `VolumeGroup` parameter.
   volumeGroup: containerstorage
 
+
+# Disk selection configuration.
+# Controls which block devices the driver picks up as LVM physical volumes.
+# A device must match ALL of the criteria below (path prefix AND model AND
+# type). Within each list, a device matches if it satisfies ANY entry.
+# The lists below are appended to the driver's built-in defaults; the defaults
+# always apply and cannot be removed or overridden. Leaving a list empty simply
+# means only the built-in defaults are used for that attribute. The built-in
+# defaults target NVMe disks found on Azure and AWS VMs.
+diskSelection:
+  # Additional device path prefixes to select, appended to the built-in defaults.
+  addonPathPrefixes: []
+  # Additional disk models to select, appended to the built-in defaults.
+  # Add new SKUs here as they are introduced.
+  addonModels: []
+  # Additional device types to select, appended to the built-in defaults.
+  addonTypes: []
+
 # Garbage collection and cleanup configuration.
 cleanup:
   # Cleanup volume groups and physical volumes on pod termination if logical volume are not in use.

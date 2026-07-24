@@ -61,7 +61,7 @@ func TestStartupDiagnostic_DisksAvailable(t *testing.T) {
 
 	recorder := kevents.NewFakeRecorder(10)
 
-	diag := lvm.NewStartupDiagnostic(mockProbe, mockBlock, probe.EphemeralDiskFilter, recorder, newTestPod())
+	diag := lvm.NewStartupDiagnostic(mockProbe, mockBlock, probe.NewEphemeralDiskFilter(nil, nil, nil), recorder, newTestPod())
 
 	if err := diag.Start(context.Background()); err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -108,7 +108,7 @@ func TestStartupDiagnostic_DisksAvailable_NoInUse(t *testing.T) {
 
 	recorder := kevents.NewFakeRecorder(10)
 
-	diag := lvm.NewStartupDiagnostic(mockProbe, mockBlock, probe.EphemeralDiskFilter, recorder, newTestPod())
+	diag := lvm.NewStartupDiagnostic(mockProbe, mockBlock, probe.NewEphemeralDiskFilter(nil, nil, nil), recorder, newTestPod())
 
 	if err := diag.Start(context.Background()); err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -147,7 +147,7 @@ func TestStartupDiagnostic_NoDisks_AllFormattedNVMe(t *testing.T) {
 
 	recorder := kevents.NewFakeRecorder(10)
 
-	diag := lvm.NewStartupDiagnostic(mockProbe, mockBlock, probe.EphemeralDiskFilter, recorder, newTestPod())
+	diag := lvm.NewStartupDiagnostic(mockProbe, mockBlock, probe.NewEphemeralDiskFilter(nil, nil, nil), recorder, newTestPod())
 
 	if err := diag.Start(context.Background()); err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -189,7 +189,7 @@ func TestStartupDiagnostic_NoDisks_NoNVMe(t *testing.T) {
 
 	recorder := kevents.NewFakeRecorder(10)
 
-	diag := lvm.NewStartupDiagnostic(mockProbe, mockBlock, probe.EphemeralDiskFilter, recorder, newTestPod())
+	diag := lvm.NewStartupDiagnostic(mockProbe, mockBlock, probe.NewEphemeralDiskFilter(nil, nil, nil), recorder, newTestPod())
 
 	if err := diag.Start(context.Background()); err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -222,7 +222,7 @@ func TestStartupDiagnostic_ScanError(t *testing.T) {
 	mockBlock := block.NewMock(ctrl)
 	recorder := kevents.NewFakeRecorder(10)
 
-	diag := lvm.NewStartupDiagnostic(mockProbe, mockBlock, probe.EphemeralDiskFilter, recorder, newTestPod())
+	diag := lvm.NewStartupDiagnostic(mockProbe, mockBlock, probe.NewEphemeralDiskFilter(nil, nil, nil), recorder, newTestPod())
 
 	if err := diag.Start(context.Background()); err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -257,7 +257,7 @@ func TestStartupDiagnostic_MultipleNVMe_SomeFormatted(t *testing.T) {
 
 	recorder := kevents.NewFakeRecorder(10)
 
-	diag := lvm.NewStartupDiagnostic(mockProbe, mockBlock, probe.EphemeralDiskFilter, recorder, newTestPod())
+	diag := lvm.NewStartupDiagnostic(mockProbe, mockBlock, probe.NewEphemeralDiskFilter(nil, nil, nil), recorder, newTestPod())
 
 	if err := diag.Start(context.Background()); err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -300,7 +300,7 @@ func TestStartupDiagnostic_GetDevicesError(t *testing.T) {
 
 	recorder := kevents.NewFakeRecorder(10)
 
-	diag := lvm.NewStartupDiagnostic(mockProbe, mockBlock, probe.EphemeralDiskFilter, recorder, newTestPod())
+	diag := lvm.NewStartupDiagnostic(mockProbe, mockBlock, probe.NewEphemeralDiskFilter(nil, nil, nil), recorder, newTestPod())
 
 	if err := diag.Start(context.Background()); err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -335,7 +335,7 @@ func TestStartupDiagnostic_IsFormattedError(t *testing.T) {
 
 	recorder := kevents.NewFakeRecorder(10)
 
-	diag := lvm.NewStartupDiagnostic(mockProbe, mockBlock, probe.EphemeralDiskFilter, recorder, newTestPod())
+	diag := lvm.NewStartupDiagnostic(mockProbe, mockBlock, probe.NewEphemeralDiskFilter(nil, nil, nil), recorder, newTestPod())
 
 	if err := diag.Start(context.Background()); err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -370,7 +370,7 @@ func TestStartupDiagnostic_IsLVM2Error(t *testing.T) {
 
 	recorder := kevents.NewFakeRecorder(10)
 
-	diag := lvm.NewStartupDiagnostic(mockProbe, mockBlock, probe.EphemeralDiskFilter, recorder, newTestPod())
+	diag := lvm.NewStartupDiagnostic(mockProbe, mockBlock, probe.NewEphemeralDiskFilter(nil, nil, nil), recorder, newTestPod())
 
 	if err := diag.Start(context.Background()); err != nil {
 		t.Fatalf("unexpected error: %v", err)

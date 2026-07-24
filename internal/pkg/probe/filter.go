@@ -9,13 +9,79 @@ import (
 	"local-csi-driver/internal/pkg/block"
 )
 
-// EphemeralDiskFilter is a filter for ephemeral disks.
-var EphemeralDiskFilter = &Filter{
-	Filters: []FilterPredicate{
-		&PathFilter{Path: "/dev/nvme"},
-		NewModelFilter("Microsoft NVMe Direct Disk", "Microsoft NVMe Direct Disk v2"),
-		&TypeFilter{Type: "disk"},
-	},
+// Default disk selection values. These preserve the historical hardcoded
+// behavior when no overrides are provided via CLI flags.
+var (
+	DefaultDiskPathPrefixes = []string{"/dev/nvme"}
+	DefaultDiskModels       = []string{
+		"Microsoft NVMe Direct Disk",
+		"Microsoft NVMe Direct Disk v2",
+		"Amazon EC2 NVMe Instance Storage",
+	}
+	DefaultDiskTypes = []string{"disk"}
+)
+
+// NewEphemeralDiskFilter builds a Filter from the built-in defaults plus any
+// addon path prefixes, models, and types (for example, sourced from CLI flags).
+// A device must match all three categories (path AND model AND type); within a
+// category it matches if it satisfies any entry. Addon entries are appended to
+// the defaults; empty/whitespace entries and duplicates are ignored.
+func NewEphemeralDiskFilter(addonPathPrefixes, addonModels, addonTypes []string) *Filter {
+	pathPrefixes := appendUnique(DefaultDiskPathPrefixes, addonPathPrefixes)
+	models := appendUnique(DefaultDiskModels, addonModels)
+	types := appendUnique(DefaultDiskTypes, addonTypes)
+
+	anyPath := make([]FilterPredicate, 0, len(pathPrefixes))
+	for _, p := range pathPrefixes {
+		anyPath = append(anyPath, &PathFilter{Path: p})
+	}
+
+	anyType := make([]FilterPredicate, 0, len(types))
+	for _, t := range types {
+		anyType = append(anyType, &TypeFilter{Type: t})
+	}
+
+	return &Filter{Filters: []FilterPredicate{
+		&anyFilter{filters: anyPath},
+		NewModelFilter(models...),
+		&anyFilter{filters: anyType},
+	}}
+}
+
+// appendUnique returns base followed by the entries of addon that are not
+// already present. Entries are trimmed, empty entries are dropped and
+// duplicates are removed.
+func appendUnique(base, addon []string) []string {
+	seen := make(map[string]struct{})
+	out := make([]string, 0, len(base)+len(addon))
+	for _, list := range [][]string{base, addon} {
+		for _, s := range list {
+			s = strings.TrimSpace(s)
+			if s == "" {
+				continue
+			}
+			if _, ok := seen[s]; ok {
+				continue
+			}
+			seen[s] = struct{}{}
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
+// anyFilter matches if any of its contained predicates match (OR).
+type anyFilter struct {
+	filters []FilterPredicate
+}
+
+func (f *anyFilter) Match(device block.Device) bool {
+	for _, filter := range f.filters {
+		if filter.Match(device) {
+			return true
+		}
+	}
+	return false
 }
 
 // FilterPredicate defines a predicate for filtering devices.
