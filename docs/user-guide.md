@@ -62,24 +62,33 @@ For more details on RAID configuration, see the [Helm chart README](../charts/la
 ### Disk Selection
 
 The driver discovers NVMe devices on each node and uses a filter to decide which
-of them are eligible for volume groups. The filter combines a built-in set of
-defaults with any extra values you provide via `diskSelection.` in the Helm
-chart. Extra values are **appended** to the defaults.
+of them are eligible for LVM physical volumes. The filter combines a built-in
+set of defaults with any addon values you provide via `diskSelection.` in the
+Helm chart. Addon values are **appended** to the defaults.
 
 By default the extra lists are empty, so only the built-in defaults are used:
 
 - **Path prefix** - default: `/dev/nvme`
-- **Model** - defaults: `Microsoft NVMe Direct Disk`,
+- **Model** - defaults: `Microsoft NVMe Direct Disk`
   `Microsoft NVMe Direct Disk v2`, `Amazon EC2 NVMe Instance Storage`
 - **Type** - default: `disk`
 
-If your nodes expose NVMe disks with a model, path prefix, or type not covered
-by the defaults, add the extra value(s) at install time:
+If your nodes expose NVMe disks with a model, path prefix or type not covered
+by the defaults, add the addon value(s) at install time:
 
 ```sh
 helm install local-csi-driver oci://localcsidriver.azurecr.io/acstor/charts/local-csi-driver \
   --version <release> --namespace kube-system \
-  --set 'diskSelection.extraModels={Contoso NVMe Disk,Contoso NVMe Disk v2}'
+  --set 'diskSelection.addonModels={Contoso NVMe Disk,Contoso NVMe Disk v2}'
+```
+
+If the driver is already installed, addon value(s) for model, path prefix or
+type can be added through helm upgrade:
+
+```sh
+helm upgrade local-csi-driver oci://localcsidriver.azurecr.io/acstor/charts/local-csi-driver \
+  --version <release> --namespace kube-system --reuse-values \
+  --set 'diskSelection.addonModels={Contoso NVMe Disk,Contoso NVMe Disk v2}'
 ```
 
 For more details and examples, see the [Helm chart README](../charts/latest/README.md#disk-selection).

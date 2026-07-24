@@ -94,9 +94,9 @@ spec:
         - --lvm-orphan-cleanup-interval={{ .Values.cleanup.lvmOrphanCleanup.interval }}
         - --run-alongside-webhook={{ .Values.webhook.hyperconverged.enabled | default false }}
 
-        - --disk-path-prefixes={{ join "," (.Values.diskSelection.extraPathPrefixes | default list) }}
-        - --disk-models={{ join "," (.Values.diskSelection.extraModels | default list) }}
-        - --disk-types={{ join "," (.Values.diskSelection.extraTypes | default list) }}
+        - --disk-path-prefixes={{ join "," (.Values.diskSelection.addonPathPrefixes | default list) }}
+        - --disk-models={{ join "," (.Values.diskSelection.addonModels | default list) }}
+        - --disk-types={{ join "," (.Values.diskSelection.addonTypes | default list) }}       
         command:
         - /local-csi-driver
         env:

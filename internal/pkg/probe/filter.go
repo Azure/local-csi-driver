@@ -22,14 +22,14 @@ var (
 )
 
 // NewEphemeralDiskFilter builds a Filter from the built-in defaults plus any
-// extra path prefixes, models, and types (for example, sourced from CLI flags).
+// addon path prefixes, models, and types (for example, sourced from CLI flags).
 // A device must match all three categories (path AND model AND type); within a
-// category it matches if it satisfies any entry. Extra entries are appended to
+// category it matches if it satisfies any entry. Addon entries are appended to
 // the defaults; empty/whitespace entries and duplicates are ignored.
-func NewEphemeralDiskFilter(extraPathPrefixes, extraModels, extraTypes []string) *Filter {
-	pathPrefixes := appendUnique(DefaultDiskPathPrefixes, extraPathPrefixes)
-	models := appendUnique(DefaultDiskModels, extraModels)
-	types := appendUnique(DefaultDiskTypes, extraTypes)
+func NewEphemeralDiskFilter(addonPathPrefixes, addonModels, addonTypes []string) *Filter {
+	pathPrefixes := appendUnique(DefaultDiskPathPrefixes, addonPathPrefixes)
+	models := appendUnique(DefaultDiskModels, addonModels)
+	types := appendUnique(DefaultDiskTypes, addonTypes)
 
 	anyPath := make([]FilterPredicate, 0, len(pathPrefixes))
 	for _, p := range pathPrefixes {
@@ -48,13 +48,13 @@ func NewEphemeralDiskFilter(extraPathPrefixes, extraModels, extraTypes []string)
 	}}
 }
 
-// appendUnique returns base followed by the entries of extra that are not
+// appendUnique returns base followed by the entries of addon that are not
 // already present. Entries are trimmed, empty entries are dropped and
 // duplicates are removed.
-func appendUnique(base, extra []string) []string {
+func appendUnique(base, addon []string) []string {
 	seen := make(map[string]struct{})
-	out := make([]string, 0, len(base)+len(extra))
-	for _, list := range [][]string{base, extra} {
+	out := make([]string, 0, len(base)+len(addon))
+	for _, list := range [][]string{base, addon} {
 		for _, s := range list {
 			s = strings.TrimSpace(s)
 			if s == "" {

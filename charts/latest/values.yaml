@@ -89,12 +89,12 @@ raid:
 # defaults target NVMe disks found on Azure and AWS VMs.
 diskSelection:
   # Additional device path prefixes to select, appended to the built-in defaults.
-  extraPathPrefixes: []
+  addonPathPrefixes: []
   # Additional disk models to select, appended to the built-in defaults.
   # Add new SKUs here as they are introduced.
-  extraModels: []
+  addonModels: []
   # Additional device types to select, appended to the built-in defaults.
-  extraTypes: []
+  addonTypes: []
 
 # Garbage collection and cleanup configuration.
 cleanup:

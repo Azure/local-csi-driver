@@ -255,9 +255,9 @@ func TestAppendUnique(t *testing.T) {
 func TestNewEphemeralDiskFilter(t *testing.T) {
 	tests := []struct {
 		name        string
-		extraPaths  []string
-		extraModels []string
-		extraTypes  []string
+		addonPaths  []string
+		addonModels []string
+		addonTypes  []string
 		device      block.Device
 		expected    bool
 	}{
@@ -273,25 +273,25 @@ func TestNewEphemeralDiskFilter(t *testing.T) {
 		},
 		{
 			name:        "extra model is matched",
-			extraModels: []string{"Contoso NVMe Disk"},
+			addonModels: []string{"Contoso NVMe Disk"},
 			device:      block.Device{Path: "/dev/nvme0n1", Model: "Contoso NVMe Disk", Type: "disk"},
 			expected:    true,
 		},
 		{
 			name:        "default model still matches after adding an extra",
-			extraModels: []string{"Contoso NVMe Disk"},
+			addonModels: []string{"Contoso NVMe Disk"},
 			device:      block.Device{Path: "/dev/nvme0n1", Model: "Microsoft NVMe Direct Disk v2", Type: "disk"},
 			expected:    true,
 		},
 		{
 			name:       "extra path prefix matches with a default model",
-			extraPaths: []string{"/dev/sda"},
+			addonPaths: []string{"/dev/sda"},
 			device:     block.Device{Path: "/dev/sda", Model: "Microsoft NVMe Direct Disk", Type: "disk"},
 			expected:   true,
 		},
 		{
 			name:       "extra type is matched with a default model",
-			extraTypes: []string{"loop"},
+			addonTypes: []string{"loop"},
 			device:     block.Device{Path: "/dev/nvme0n1", Model: "Microsoft NVMe Direct Disk", Type: "loop"},
 			expected:   true,
 		},
@@ -309,7 +309,7 @@ func TestNewEphemeralDiskFilter(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			filter := NewEphemeralDiskFilter(tt.extraPaths, tt.extraModels, tt.extraTypes)
+			filter := NewEphemeralDiskFilter(tt.addonPaths, tt.addonModels, tt.addonTypes)
 			if got := filter.Match(tt.device); got != tt.expected {
 				t.Errorf("Match(%v) = %v, want %v", tt.device, got, tt.expected)
 			}
