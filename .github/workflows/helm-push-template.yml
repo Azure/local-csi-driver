@@ -29,18 +29,18 @@ on:
       AZURE_SUBSCRIPTION_ID:
         required: true
 
-permissions:
-  contents: read
-  id-token: write
+# No workflow-level privileges; the job grants exactly what it needs.
+permissions: {}
 
 jobs:
   push-helm:
+    name: push-helm
     runs-on: ubuntu-latest
     timeout-minutes: 10
     environment: pull-request
     permissions:
-      contents: read
-      id-token: write
+      contents: read # checkout Makefile/hack scripts and chart artifact
+      id-token: write # federated Azure login to push the chart to ACR
     steps:
       - name: Harden the runner (Audit all outbound calls)
         uses: step-security/harden-runner@bf7454d06d71f1098171f2acdf0cd4708d7b5920 # v2.20.0

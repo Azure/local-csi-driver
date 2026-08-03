@@ -28,6 +28,7 @@ env:
 
 jobs:
   build-vars:
+    name: build-vars
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
@@ -89,8 +90,8 @@ jobs:
     needs: [build-vars, build-docker]
     uses: ./.github/workflows/docker-push-template.yml
     permissions:
-      contents: read
-      id-token: write
+      contents: read # required by the reusable push workflow
+      id-token: write # federated Azure login to push images to ACR
     with:
       registry: "localcsidriver.azurecr.io"
       repo_base: "acstor"
@@ -118,8 +119,8 @@ jobs:
     needs: [build-vars, build-helm]
     uses: ./.github/workflows/helm-push-template.yml
     permissions:
-      contents: read
-      id-token: write
+      contents: read # required by the reusable push workflow
+      id-token: write # federated Azure login to push the chart to ACR
     with:
       registry: "localcsidriver.azurecr.io"
       repo_base: "acstor"

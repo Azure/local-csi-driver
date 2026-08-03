@@ -14,6 +14,8 @@ updates:
     commit-message:
       prefix: "ci"
       include: "scope"
+    cooldown:
+      default-days: 7
 
   - package-ecosystem: docker
     directory: /
@@ -29,6 +31,8 @@ updates:
     commit-message:
       prefix: "build"
       include: "scope"
+    cooldown:
+      default-days: 7
 
   - package-ecosystem: gomod
     directory: /
@@ -55,6 +59,8 @@ updates:
     commit-message:
       prefix: "build"
       include: "scope"
+    cooldown:
+      default-days: 7
 
   - package-ecosystem: pip
     directory: /.github/workflows
@@ -70,6 +76,8 @@ updates:
     commit-message:
       prefix: "build"
       include: "scope"
+    cooldown:
+      default-days: 7
 
   - package-ecosystem: pre-commit
     directory: /
@@ -85,3 +93,5 @@ updates:
     commit-message:
       prefix: "build"
       include: "scope"
+    cooldown:
+      default-days: 7
