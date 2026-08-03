@@ -16,7 +16,7 @@ repos:
   hooks:
   - id: golangci-lint-full
 - repo: https://github.com/hadolint/hadolint
-  rev: 57e1618d78fd469a92c1e584e8c9313024656623 # v2.14.0
+  rev: f177f71e7bf435eacc344754b8acde98a6186df7 # v2.15.0
   hooks:
     - id: hadolint-docker
 - repo: https://github.com/igorshubovych/markdownlint-cli
@@ -38,7 +38,7 @@ repos:
   hooks:
   - id: actionlint-docker
 - repo: https://github.com/tcort/markdown-link-check
-  rev: 3a8992dcbb083a248671812c7027b6995ef88523 # v3.14.2
+  rev: 275c27c5035a5b4a656fe0e21a4c1403c118c767 # v3.15.0
   hooks:
     - id: markdown-link-check
       args: [--verbose, --config, .markdown-links-config.json]
