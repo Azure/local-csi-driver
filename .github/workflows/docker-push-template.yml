@@ -28,7 +28,7 @@ permissions: {}
 
 jobs:
   push-arch:
-    name: Push Arch
+    name: push-arch
     strategy:
       matrix:
         image:
@@ -111,7 +111,7 @@ jobs:
           done <<< "${TAGS}"
 
   push-manifest:
-    name: Push Manifest
+    name: push-manifest
     needs: push-arch
     runs-on: ubuntu-latest
     timeout-minutes: 10

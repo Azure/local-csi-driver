@@ -17,7 +17,7 @@ env:
 
 jobs:
   linter:
-    name: Linter
+    name: linter
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:

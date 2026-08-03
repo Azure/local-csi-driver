@@ -34,7 +34,7 @@ permissions: {}
 
 jobs:
   push-helm:
-    name: Push Helm
+    name: push-helm
     runs-on: ubuntu-latest
     timeout-minutes: 10
     environment: pull-request

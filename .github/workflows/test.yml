@@ -14,7 +14,7 @@ permissions: {}
 
 jobs:
   unit-tests:
-    name: Unit Tests
+    name: unit-tests
     runs-on: ubuntu-latest
     timeout-minutes: 20
     permissions:

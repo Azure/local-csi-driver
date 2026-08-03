@@ -28,7 +28,7 @@ env:
 
 jobs:
   build-vars:
-    name: Build Vars
+    name: build-vars
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
