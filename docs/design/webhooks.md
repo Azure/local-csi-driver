@@ -113,7 +113,7 @@ spec:
     required:
       nodeSelectorTerms:
         - matchExpressions:
-            - key: topology.localdisk.csi.acstor.io/node
+            - key: kubernetes.io/hostname
               operator: In
               values:
                 - nvme-node-0

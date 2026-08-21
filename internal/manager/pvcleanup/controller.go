@@ -156,7 +156,7 @@ func (r *PVCleanupReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 }
 
 // extractHostnamesFromPV extracts hostnames from PV's node affinity
-// Specifically looks for topology.localdisk.csi.acstor.io/node topology constraints.
+// Specifically looks for kubernetes.io/hostname topology constraints (lvm.TopologyKey).
 func extractHostnamesFromPV(pv *corev1.PersistentVolume) []string {
 	if pv.Spec.NodeAffinity == nil || pv.Spec.NodeAffinity.Required == nil {
 		return nil
