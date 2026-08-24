@@ -86,24 +86,10 @@ func (r *LVMOrphanScanner) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 	// First, list volume groups with the correct tag
 	log.V(3).Info("Listing volume groups with tag", "tag", lvm.DefaultVolumeGroupTag)
 
-	vgs, err := r.lvmManager.ListVolumeGroups(ctx, &lvmMgr.ListVGOptions{
-		Select: fmt.Sprintf("vg_tags=%s", lvm.DefaultVolumeGroupTag),
-	})
+	vgNamesToScan, err := lvm.ManagedVolumeGroups(ctx, r.lvmManager)
 	if err != nil {
 		log.Error(err, "Failed to list volume groups with tag", "tag", lvm.DefaultVolumeGroupTag)
 		return ctrl.Result{}, err
-	}
-
-	// If no volume groups found with the tag, also check the default volume group
-	vgNamesToScan := []string{}
-	if len(vgs) == 0 {
-		log.V(3).Info("No volume groups found with tag, checking default volume group",
-			"tag", lvm.DefaultVolumeGroupTag, "defaultVG", lvm.DefaultVolumeGroup)
-		vgNamesToScan = append(vgNamesToScan, lvm.DefaultVolumeGroup)
-	} else {
-		for _, vg := range vgs {
-			vgNamesToScan = append(vgNamesToScan, vg.Name)
-		}
 	}
 
 	for _, vgName := range vgNamesToScan {
@@ -118,6 +104,27 @@ func (r *LVMOrphanScanner) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 		}
 
 		for _, lv := range lvs {
+			// Skip volumes that are already committed to sanitization.
+			//
+			// Such a volume is renamed out of the volume ID namespace and its
+			// PersistentVolume is gone by construction, so it would otherwise
+			// be classified as an orphan on every scan and removed without
+			// being zeroed, which is exactly what quarantine exists to
+			// prevent. The reaper owns it. The check comes before the PV
+			// lookup so that it costs no API traffic.
+			//
+			// A volume that only carries the tag is deliberately *not* skipped.
+			// Its quarantine was never committed, so it is still under its own
+			// name and still has a volume ID: if it has a PersistentVolume the
+			// normal orphan check leaves it alone, and if it does not, it is a
+			// genuine orphan and routing it through quarantine both commits it
+			// and gets it wiped. Skipping it instead would make it
+			// unreclaimable by any component.
+			if lvm.IsQuarantineCommitted(lv) {
+				log.V(4).Info("Skipping volume awaiting sanitization", "vg", vgName, "lv", lv.Name)
+				continue
+			}
+
 			totalVolumes++
 			volumeID := fmt.Sprintf("%s#%s", vgName, lv.Name)
 

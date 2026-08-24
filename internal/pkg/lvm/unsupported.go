@@ -79,6 +79,21 @@ func (l *Noop) RemoveLogicalVolume(ctx context.Context, opts RemoveLVOptions) er
 	return ErrUnsupported
 }
 
+// UpdateLogicalVolume implements Manager.
+func (l *Noop) UpdateLogicalVolume(ctx context.Context, opts UpdateLVOptions) error {
+	return ErrUnsupported
+}
+
+// RenameLogicalVolume implements Manager.
+func (l *Noop) RenameLogicalVolume(ctx context.Context, opts RenameLVOptions) error {
+	return ErrUnsupported
+}
+
+// SanitizeLogicalVolume implements Manager.
+func (l *Noop) SanitizeLogicalVolume(ctx context.Context, vgName string, lvName string) error {
+	return ErrUnsupported
+}
+
 // RemovePhysicalVolume implements Manager.
 func (l *Noop) RemovePhysicalVolume(ctx context.Context, opts RemovePVOptions) error {
 	return ErrUnsupported

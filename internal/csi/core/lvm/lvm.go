@@ -7,7 +7,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"time"
 
 	"github.com/container-storage-interface/spec/lib/go/csi"
 	"go.opentelemetry.io/otel/attribute"
@@ -64,8 +63,9 @@ const (
 	provisioningLogicalVolumeFailed      = "ProvisioningLogicalVolumeFailed"
 	provisionedLogicalVolumeSizeMismatch = "ProvisionedLogicalVolumeSizeMismatch"
 	provisionedEmptyVolume               = "ProvisionedEmptyVolume"
-	removedCorruptedLogicalVolume        = "RemovedCorruptedLogicalVolume"
-	failedToRemoveCorruptedLogicalVolume = "FailedToRemoveCorruptedLogicalVolume"
+	activatedLogicalVolume               = "ActivatedLogicalVolume"
+	quarantinedLogicalVolume             = "QuarantinedLogicalVolume"
+	failedToQuarantineLogicalVolume      = "FailedToQuarantineLogicalVolume"
 )
 
 // Volume context parameters.
@@ -89,13 +89,10 @@ var (
 	// provisioning.
 	ErrNoDisksFound = fmt.Errorf("no disks found")
 
-	// removeVolumeRetryPoll is the time to wait between retries when removing
-	// a volume.
-	removeVolumeRetryPoll = 500 * time.Millisecond
-
-	// removeVolumeRetryTimeout is the time to wait before giving up on
-	// removing a volume.
-	removeVolumeRetryTimeout = 10 * time.Second
+	// ErrVolumeUnusable is returned when a logical volume exists but cannot be
+	// brought online, so it can neither be served to the caller nor have its
+	// extents cleared for reuse.
+	ErrVolumeUnusable = fmt.Errorf("logical volume is unusable")
 )
 
 // csiDriver is the CSI driver object that is registered with the Kubernetes API
@@ -169,6 +166,14 @@ type LVM struct {
 	// vgGroup deduplicates concurrent EnsureVolumeGroup calls for the same
 	// volume group so that only one goroutine provisions it at a time.
 	vgGroup singleflight.Group
+
+	// wipeSignal wakes the wipe reaper when a volume is quarantined.
+	//
+	// The channel is owned here rather than by the reaper so that the deletion
+	// path has nothing to look up and no back-pointer to a component that may
+	// not be running: signalling is always safe, and is simply not observed if
+	// no reaper has started.
+	wipeSignal chan struct{}
 }
 
 // New creates a new LVM volume manager.
@@ -190,6 +195,10 @@ func New(podName, nodeName, releaseNamespace string, enableCleanup bool, probe p
 		probe:            probe,
 		lvm:              lvmMgr,
 		tracer:           tp.Tracer("localdisk.csi.acstor.io/internal/csi/api/volume/lvm"),
+		// Buffered with a single slot. A pending wakeup already covers any
+		// number of subsequent quarantines, because each sweep processes
+		// everything it finds.
+		wipeSignal: make(chan struct{}, 1),
 	}, nil
 }
 
@@ -485,38 +494,11 @@ func (l *LVM) EnsureVolume(ctx context.Context, volumeId string, capacity int64,
 		return 0, err
 	}
 
-	// Check if the logical volume is corrupted
 	if lv != nil {
-		corrupted, err := l.lvm.IsLogicalVolumeCorrupted(ctx, id.VolumeGroup, id.LogicalVolume)
-		if err != nil {
-			log.Error(err, "failed to check if logical volume is corrupted")
-			span.SetStatus(codes.Error, "failed to check if logical volume is corrupted")
-			span.RecordError(err)
-			return 0, fmt.Errorf("failed to check if logical volume is corrupted: %w", err)
-		}
-
-		if corrupted {
-			log.V(1).Info("found corrupted logical volume, removing it", "vg", id.VolumeGroup, "lv", id.LogicalVolume) // Remove the corrupted LV
-			opts := lvm.RemoveLVOptions{
-				Name: fmt.Sprintf("%s/%s", id.VolumeGroup, id.LogicalVolume),
-			}
-			if err := l.lvm.RemoveLogicalVolume(ctx, opts); err != nil {
-				log.Error(err, "failed to remove corrupted logical volume", "vg", id.VolumeGroup, "lv", id.LogicalVolume)
-				span.SetStatus(codes.Error, "failed to remove corrupted logical volume")
-				span.RecordError(err)
-				recorder.Eventf(corev1.EventTypeWarning, failedToRemoveCorruptedLogicalVolume,
-					"Failed to remove corrupted logical volume %s/%s: %s",
-					id.VolumeGroup, id.LogicalVolume, err.Error())
-				return 0, fmt.Errorf("failed to remove corrupted logical volume %s/%s: %w", id.VolumeGroup, id.LogicalVolume, err)
-			}
-
-			log.V(1).Info("removed corrupted logical volume", "vg", id.VolumeGroup, "lv", id.LogicalVolume)
-			recorder.Eventf(corev1.EventTypeNormal, removedCorruptedLogicalVolume,
-				"Successfully removed corrupted logical volume %s/%s",
-				id.VolumeGroup, id.LogicalVolume)
-
-			// Set lv to nil so it will be recreated below
-			lv = nil
+		if prepErr := l.prepareExistingVolume(ctx, id, lv); prepErr != nil {
+			span.SetStatus(codes.Error, "failed to prepare existing logical volume")
+			span.RecordError(prepErr)
+			return 0, prepErr
 		}
 	}
 
@@ -606,6 +588,118 @@ func (l *LVM) EnsureVolume(ctx context.Context, volumeId string, capacity int64,
 // The CSI volume context contains the volume group but it's not passed to all
 // CSI operations. Instead, since the volumeId (lv name) is unique across
 // vgs, we can look it up from the lv.
+
+// prepareExistingVolume readies an existing logical volume for reuse.
+//
+// It clears an uncommitted wipe tag, and repairs a volume that exists in LVM
+// metadata but has no device node. It reports an error if the volume cannot be
+// returned to service, in which case the volume has been quarantined and must
+// not be recreated over.
+func (l *LVM) prepareExistingVolume(ctx context.Context, id *volumeId, lv *lvm.LogicalVolume) error {
+	ctx, span := l.tracer.Start(ctx, "volume.lvm.csi/prepareExistingVolume", trace.WithAttributes(
+		attribute.String("vol.group", id.VolumeGroup),
+		attribute.String("vol.name", id.LogicalVolume),
+	))
+	defer span.End()
+
+	log := log.FromContext(ctx).WithValues("vg", id.VolumeGroup, "lv", id.LogicalVolume)
+	recorder := events.FromContext(ctx)
+
+	// Reinstate a volume whose quarantine was started but never committed.
+	//
+	// Destruction is committed by the rename, so a tagged volume still
+	// under its original name was never taken out of service. It cannot be
+	// served while tagged, though: the tag is what the orphan scanner uses
+	// to skip it, and leaving it in place on a live volume would keep the
+	// volume permanently invisible to that safety check.
+	if IsQuarantined(*lv) {
+		log.V(1).Info("clearing uncommitted wipe tag from existing logical volume", "vg", id.VolumeGroup, "lv", id.LogicalVolume)
+		if err := l.ClearQuarantineTag(ctx, id.VolumeGroup, id.LogicalVolume); err != nil {
+			log.Error(err, "failed to clear uncommitted wipe tag")
+			span.SetStatus(codes.Error, "failed to clear uncommitted wipe tag")
+			span.RecordError(err)
+			return err
+		}
+		lv.Tags = ""
+	}
+
+	corrupted, err := l.lvm.IsLogicalVolumeCorrupted(ctx, id.VolumeGroup, id.LogicalVolume)
+	if err != nil {
+		log.Error(err, "failed to check if logical volume is corrupted")
+		span.SetStatus(codes.Error, "failed to check if logical volume is corrupted")
+		span.RecordError(err)
+		return fmt.Errorf("failed to check if logical volume is corrupted: %w", err)
+	}
+
+	if corrupted {
+		// A "corrupted" volume here is one that exists in LVM metadata but
+		// has no device node under /dev/<vg>/<lv>. That is rarely
+		// corruption: it is usually a deactivated volume, most often after
+		// a reboot where autoactivation did not run.
+		//
+		// The extents are intact and still hold the previous contents, so
+		// removing the volume would return populated extents to the volume
+		// group's free pool where the next volume created in the group
+		// could read them back. Activation is attempted first, both
+		// because it is almost always the correct repair and because it is
+		// the only way to reach the data in order to clear it.
+		fullName := fmt.Sprintf("%s/%s", id.VolumeGroup, id.LogicalVolume)
+		log.V(1).Info("logical volume has no device node, attempting to activate", "vg", id.VolumeGroup, "lv", id.LogicalVolume)
+
+		activateErr := l.lvm.UpdateLogicalVolume(ctx, lvm.UpdateLVOptions{
+			Name:     fullName,
+			Activate: lvm.Yes,
+		})
+		if activateErr == nil {
+			// Confirm the device node actually appeared. lvchange can
+			// report success while the node is still missing, and treating
+			// that as recovered would hand the caller a volume it cannot
+			// open.
+			corrupted, err = l.lvm.IsLogicalVolumeCorrupted(ctx, id.VolumeGroup, id.LogicalVolume)
+			if err != nil {
+				log.Error(err, "failed to re-check logical volume after activation")
+				span.RecordError(err)
+				return fmt.Errorf("failed to check if logical volume is corrupted: %w", err)
+			}
+		}
+
+		if corrupted {
+			// The volume cannot be brought online, so its extents cannot be
+			// cleared. Quarantine it and fail: the wipe reaper retries
+			// activation, and the volume is only removed once it has been
+			// zeroed. Recreating over these extents instead would expose
+			// the previous contents through the new volume.
+			if _, qErr := l.Quarantine(ctx, id.VolumeGroup, id.LogicalVolume); qErr != nil {
+				log.Error(qErr, "failed to quarantine unusable logical volume", "vg", id.VolumeGroup, "lv", id.LogicalVolume)
+				span.SetStatus(codes.Error, "failed to quarantine unusable logical volume")
+				span.RecordError(qErr)
+				recorder.Eventf(corev1.EventTypeWarning, failedToQuarantineLogicalVolume,
+					"Failed to quarantine unusable logical volume %s: %s", fullName, qErr.Error())
+				return fmt.Errorf("failed to quarantine unusable logical volume %s: %w", fullName, qErr)
+			}
+
+			// errors.Join drops a nil activateErr, which is the case
+			// where lvchange reported success but the device node is
+			// still missing.
+			err := fmt.Errorf("logical volume %s could not be activated and has been quarantined for sanitization: %w",
+				fullName, errors.Join(ErrVolumeUnusable, activateErr))
+			log.Error(err, "quarantined unusable logical volume", "vg", id.VolumeGroup, "lv", id.LogicalVolume)
+			span.SetStatus(codes.Error, "quarantined unusable logical volume")
+			span.RecordError(err)
+			recorder.Eventf(corev1.EventTypeWarning, quarantinedLogicalVolume,
+				"Logical volume %s could not be activated and has been quarantined for sanitization; "+
+					"it will not be reused until its contents have been cleared", fullName)
+			return err
+		}
+
+		log.V(1).Info("activated logical volume", "vg", id.VolumeGroup, "lv", id.LogicalVolume)
+		recorder.Eventf(corev1.EventTypeNormal, activatedLogicalVolume,
+			"Activated logical volume %s", fullName)
+	}
+
+	return nil
+}
+
 func (l *LVM) GetNodeDevicePath(volumeId string) (string, error) {
 	id, err := newIdFromString(volumeId)
 	if err != nil {

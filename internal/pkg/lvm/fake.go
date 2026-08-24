@@ -5,6 +5,7 @@ package lvm
 
 import (
 	"context"
+	"sort"
 	"strconv"
 	"strings"
 )
@@ -14,6 +15,10 @@ type Fake struct {
 	VGs map[string]VolumeGroup
 	LVs map[string]LogicalVolume
 	Err error
+
+	// Sanitized records the volumes passed to SanitizeLogicalVolume, in call
+	// order, as "vgName/lvName".
+	Sanitized []string
 }
 
 // Construct a new fakelvm2 client.
@@ -126,6 +131,88 @@ func (f *Fake) CreateLogicalVolume(ctx context.Context, opts CreateLVOptions) (i
 func (f *Fake) RemoveLogicalVolume(ctx context.Context, opts RemoveLVOptions) error {
 	delete(f.LVs, opts.Name)
 	return nil
+}
+
+// SanitizeLogicalVolume records the volume as sanitized.
+//
+// The record lets tests assert that extents were zeroed, and that it happened
+// before the volume was removed, which is the ordering the guarantee depends
+// on.
+func (f *Fake) SanitizeLogicalVolume(ctx context.Context, vgName string, lvName string) error {
+	if _, ok := f.LVs[lvName]; !ok {
+		return ErrNotFound
+	}
+	f.Sanitized = append(f.Sanitized, vgName+"/"+lvName)
+	return nil
+}
+
+// UpdateLogicalVolume applies tag changes to a LV.
+func (f *Fake) UpdateLogicalVolume(ctx context.Context, opts UpdateLVOptions) error {
+	key := fakeLVKey(opts.Name)
+	lv, ok := f.LVs[key]
+	if !ok {
+		return ErrNotFound
+	}
+
+	tags := splitTags(lv.Tags)
+	for _, del := range opts.DelTags {
+		delete(tags, del)
+	}
+	for _, add := range opts.AddTags {
+		tags[add] = struct{}{}
+	}
+
+	lv.Tags = joinTags(tags)
+	f.LVs[key] = lv
+	return nil
+}
+
+// RenameLogicalVolume renames a LV within its VG.
+func (f *Fake) RenameLogicalVolume(ctx context.Context, opts RenameLVOptions) error {
+	from, to := fakeLVKey(opts.From), fakeLVKey(opts.To)
+
+	lv, ok := f.LVs[from]
+	if !ok {
+		return ErrNotFound
+	}
+	if _, exists := f.LVs[to]; exists {
+		return ErrAlreadyExists
+	}
+
+	lv.Name = to
+	delete(f.LVs, from)
+	f.LVs[to] = lv
+	return nil
+}
+
+// fakeLVKey normalises a "vgName/lvName" reference to the bare LV name used to
+// key the fake's LV map.
+func fakeLVKey(name string) string {
+	if _, lvName, ok := strings.Cut(name, "/"); ok {
+		return lvName
+	}
+	return name
+}
+
+// splitTags parses the comma-separated tag list that LVM reports.
+func splitTags(tags string) map[string]struct{} {
+	set := make(map[string]struct{})
+	for _, tag := range strings.Split(tags, ",") {
+		if tag = strings.TrimSpace(tag); tag != "" {
+			set[tag] = struct{}{}
+		}
+	}
+	return set
+}
+
+// joinTags renders a tag set the way LVM reports it.
+func joinTags(tags map[string]struct{}) string {
+	out := make([]string, 0, len(tags))
+	for tag := range tags {
+		out = append(out, tag)
+	}
+	sort.Strings(out)
+	return strings.Join(out, ",")
 }
 
 // ListLogicalVolumes lists the specified LVs.
