@@ -5,6 +5,7 @@ package gc
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"local-csi-driver/internal/csi/core/lvm"
@@ -43,18 +44,21 @@ func (a *lvmVolumeManagerAdapter) DeleteVolume(ctx context.Context, volumeID str
 		return fmt.Errorf("failed to parse volume ID %s: %w", volumeID, err)
 	}
 
-	// Format volume ID for LVM operations (vg/lv format)
-	lvmVolumeID := fmt.Sprintf("%s/%s", vgName, lvName)
-
-	// Use the LVM manager to remove the logical volume directly
-	removeOpts := lvmMgr.RemoveLVOptions{Name: lvmVolumeID}
-
-	if err := a.lvmManager.RemoveLogicalVolume(ctx, removeOpts); err != nil {
-		// If the volume doesn't exist, consider it a success
-		if lvmMgr.IgnoreNotFound(err) == nil {
+	// Take the volume out of service rather than removing it.
+	//
+	// Garbage collection reclaims volumes whose data still belongs to a
+	// tenant, so its extents must be zeroed before they return to the volume
+	// group's free pool, exactly as on the CSI deletion path. Quarantine keeps
+	// them allocated until the wipe reaper has cleared them.
+	if _, err := a.lvmCore.Quarantine(ctx, vgName, lvName); err != nil {
+		// If the volume doesn't exist, consider it a success. A volume group
+		// that cannot currently be seen does not qualify: that is usually
+		// temporary, and treating it as proof of absence would let the caller
+		// drop its record of a volume that still exists on disk.
+		if lvmMgr.IgnoreNotFound(err) == nil && !errors.Is(err, lvmMgr.ErrVolumeGroupNotFound) {
 			return nil
 		}
-		return fmt.Errorf("failed to remove logical volume %s: %w", lvmVolumeID, err)
+		return fmt.Errorf("failed to quarantine logical volume %s/%s: %w", vgName, lvName, err)
 	}
 
 	return nil
