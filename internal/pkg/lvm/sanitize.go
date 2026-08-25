@@ -51,9 +51,11 @@ var errZeroOutUnsupported = errors.New("BLKZEROOUT not supported")
 // Zeroing is attempted with the BLKZEROOUT ioctl, which lets the device
 // satisfy the request with a write-zeroes command where it supports one. Where
 // the ioctl is unsupported the whole remaining range is written explicitly.
-// Discard is deliberately never used as a fallback: BLKDISCARD permits, but
-// does not require, a device to return zeroes for discarded blocks, so a
-// discard that reports success can leave the previous contents readable.
+// Discard is deliberately never used as a substitute for either: BLKDISCARD
+// permits, but does not require, a device to return zeroes for discarded
+// blocks, so a discard that reports success can leave the previous contents
+// readable. It is issued only afterwards, to release the blocks that zeroing
+// has just allocated.
 //
 // The volume's actual size is read from LVM rather than taken from the caller,
 // because LVM rounds allocations up to whole extents and the rounding
@@ -110,6 +112,59 @@ func (c *Client) SanitizeLogicalVolume(ctx context.Context, vgName, lvName strin
 	if err := f.Sync(); err != nil {
 		span.RecordError(err)
 		return fmt.Errorf("failed to flush %s: %w", path, err)
+	}
+
+	// Release the now-zeroed blocks back to the underlying storage.
+	//
+	// BLKZEROOUT is issued with BLKDEV_ZERO_NOUNMAP by the kernel, so it
+	// writes real zeroes rather than unmapping. On thin-provisioned or
+	// file-backed storage that materializes every block the volume ever
+	// covered, so a volume group that was cheap to hold becomes fully
+	// allocated purely as a side effect of deleting volumes from it.
+	//
+	// Discarding afterwards returns that space. It cannot weaken the
+	// guarantee: the zeroes have already been written and flushed, so the
+	// worst a discard can do is leave them in place. This is the reverse of
+	// discarding *instead* of zeroing, which would be unsafe, because discard
+	// permits but does not require a device to return zeroes for discarded
+	// blocks.
+	//
+	// Best effort: a device with no discard support is not a failure, the
+	// volume is already sanitized.
+	if err := discardDevice(ctx, f, size); err != nil {
+		span.AddEvent("failed to discard sanitized blocks", trace.WithAttributes(
+			attribute.String("error", err.Error()),
+		))
+	}
+
+	return nil
+}
+
+// discardDevice discards the first size bytes of f, releasing them on storage
+// that allocates on write.
+//
+// It is called only after the range has been zeroed and flushed, so it is
+// purely a space optimization and its failure is not an error.
+func discardDevice(ctx context.Context, f *os.File, size int64) error {
+	for offset := int64(0); offset < size; {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+
+		length := min(zeroChunkSize, size-offset)
+
+		rng := [2]uint64{uint64(offset), uint64(length)}
+		_, _, errno := unix.Syscall(
+			unix.SYS_IOCTL,
+			f.Fd(),
+			unix.BLKDISCARD,
+			uintptr(unsafe.Pointer(&rng[0])),
+		)
+		if errno != 0 {
+			return fmt.Errorf("BLKDISCARD at offset %d failed: %w", offset, errno)
+		}
+
+		offset += length
 	}
 
 	return nil

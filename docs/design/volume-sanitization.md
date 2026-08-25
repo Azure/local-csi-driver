@@ -179,6 +179,16 @@ The driver does **not** fall back to a plain discard. `BLKDISCARD` permits, but
 does not require, a device to return zeroes for discarded blocks, so a discard
 that appears to succeed can leave data readable.
 
+Discard is issued once the zeroes have been written and flushed, purely to
+release the blocks again. The kernel issues `BLKZEROOUT` with `NOUNMAP`, so it
+writes real zeroes rather than deallocating; on thin-provisioned or file-backed
+storage that materializes every block a volume ever covered, and a volume group
+that was cheap to hold would grow to its full size through nothing but normal
+create and delete activity. Discarding afterwards cannot weaken the guarantee,
+because the zeroes are already on the device, and the worst outcome is that the
+blocks stay allocated. It is best effort: a device without discard support is
+sanitized just the same.
+
 Sizing uses the volume's actual size as reported by `lvs`, not the capacity
 originally requested, because LVM rounds allocations up to whole extents and
 the remainder is part of what must be cleared.

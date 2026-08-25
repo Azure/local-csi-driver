@@ -9,6 +9,8 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 
 	"golang.org/x/sys/unix"
@@ -293,5 +295,98 @@ func TestSanitizePreventsDataRemanence(t *testing.T) {
 	}
 	if idx := firstNonZero(got); idx != -1 {
 		t.Fatalf("newly created volume is not zeroed at offset %d", idx)
+	}
+}
+
+// backingFileUsage returns the number of bytes actually allocated on disk for
+// the file backing a loop device, which is less than its apparent size while
+// the file is still sparse.
+func backingFileUsage(t *testing.T, loopDev string) int64 {
+	t.Helper()
+
+	link := fmt.Sprintf("/sys/block/%s/loop/backing_file", filepath.Base(loopDev))
+	raw, err := os.ReadFile(link) //nolint:gosec // Path is derived from a device name created by this test.
+	if err != nil {
+		t.Fatalf("failed to read %s: %v", link, err)
+	}
+	path := strings.TrimSpace(string(raw))
+
+	var st unix.Stat_t
+	if err := unix.Stat(path, &st); err != nil {
+		t.Fatalf("failed to stat backing file %s: %v", path, err)
+	}
+
+	// st_blocks counts 512-byte units regardless of the filesystem's block
+	// size.
+	return st.Blocks * 512
+}
+
+// TestSanitizeReleasesBackingStore verifies that sanitization does not leave a
+// thin-provisioned or file-backed volume group fully allocated.
+//
+// BLKZEROOUT writes real zeroes rather than unmapping, so zeroing a volume
+// materializes every block it covers. Without the discard that follows,
+// deleting volumes would permanently consume backing capacity for extents that
+// are no longer in use, and a volume group that was cheap to hold would grow to
+// its full size purely through normal create and delete activity.
+//
+// The assertion is deliberately about allocation, not about the contents: that
+// the range still reads back as zeroes is covered by the tests above.
+func TestSanitizeReleasesBackingStore(t *testing.T) {
+	if !isRoot() {
+		t.Skip("Skipping TestSanitizeReleasesBackingStore as it requires root permissions.")
+	}
+	if _, err := os.Stat("/sbin/lvm"); err != nil {
+		t.Skip("Skipping TestSanitizeReleasesBackingStore as /sbin/lvm is not available.")
+	}
+
+	c := lvm.NewClient(lvm.WithBlockDeviceUtilities(block.New()))
+	ctx := context.Background()
+
+	device, cleanupLoopDev, err := testUtils.CreateLoopDevWithSize(int64(GiB))
+	if err != nil {
+		t.Fatalf("failed to create loop device: %v", err)
+	}
+	t.Cleanup(cleanupLoopDev)
+
+	if err := c.CreatePhysicalVolume(ctx, lvm.CreatePVOptions{Name: device}); err != nil {
+		t.Fatalf("failed to create PV: %v", err)
+	}
+	t.Cleanup(func() { _ = c.RemovePhysicalVolume(ctx, lvm.RemovePVOptions{Name: device}) })
+
+	vgName := fmt.Sprintf("sanvg%d", mustRandomInt(100000))
+	if err := c.CreateVolumeGroup(ctx, lvm.CreateVGOptions{Name: vgName, PVNames: []string{device}}); err != nil {
+		t.Fatalf("failed to create VG: %v", err)
+	}
+	t.Cleanup(func() { _ = c.RemoveVolumeGroup(ctx, lvm.RemoveVGOptions{Name: vgName}) })
+
+	lvName := uniqueName("reclaim")
+	if _, err := c.CreateLogicalVolume(ctx, lvm.CreateLVOptions{
+		Name:   lvName,
+		VGName: vgName,
+		Size:   fmt.Sprintf("%dB", int64(lvSize)),
+	}); err != nil {
+		t.Fatalf("failed to create LV: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = c.RemoveLogicalVolume(ctx, lvm.RemoveLVOptions{Name: vgName + "/" + lvName})
+	})
+
+	before := backingFileUsage(t, device)
+
+	if err := c.SanitizeLogicalVolume(ctx, vgName, lvName); err != nil {
+		t.Fatalf("SanitizeLogicalVolume returned error: %v", err)
+	}
+
+	after := backingFileUsage(t, device)
+
+	// Allow for LVM metadata and filesystem overhead, which is orders of
+	// magnitude smaller than the volume. The failure this guards against is
+	// the whole volume being materialized, so half its size is a generous
+	// threshold that still cannot be reached by overhead alone.
+	threshold := before + int64(lvSize)/2
+	if after > threshold {
+		t.Errorf("backing file grew from %d to %d bytes after sanitizing a %d byte volume; "+
+			"expected the zeroed blocks to be released", before, after, int64(lvSize))
 	}
 }
