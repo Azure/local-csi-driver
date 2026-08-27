@@ -119,7 +119,7 @@ func (r *PVCleanupReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 			"Issued PV delete request because no hostname nodes are available")
 
 		// Requeue to handle finalizer removal after deletion timestamp is set
-		return ctrl.Result{RequeueAfter: time.Nanosecond}, nil
+		return ctrl.Result{RequeueAfter: time.Second}, nil
 	}
 
 	logger.V(2).Info("PV has deletion timestamp set, proceeding to remove finalizers", "pv", pv.Name)
