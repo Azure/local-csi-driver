@@ -5,6 +5,7 @@ package pvcleanup
 
 import (
 	"context"
+	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -118,7 +119,7 @@ func (r *PVCleanupReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 			"Issued PV delete request because no hostname nodes are available")
 
 		// Requeue to handle finalizer removal after deletion timestamp is set
-		return ctrl.Result{Requeue: true}, nil
+		return ctrl.Result{RequeueAfter: time.Nanosecond}, nil
 	}
 
 	logger.V(2).Info("PV has deletion timestamp set, proceeding to remove finalizers", "pv", pv.Name)
