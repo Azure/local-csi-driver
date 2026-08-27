@@ -36,9 +36,9 @@ require (
 	k8s.io/component-base v0.36.3
 	k8s.io/component-helpers v0.36.3
 	k8s.io/klog/v2 v2.140.0
-	k8s.io/kubernetes v1.36.3
-	k8s.io/mount-utils v0.36.4
-	k8s.io/utils v0.0.0-20260210185600-b8788abfbbc2
+	k8s.io/kubernetes v1.36.4
+	k8s.io/mount-utils v0.37.0
+	k8s.io/utils v0.0.0-20260626114624-be93311217bd
 	pault.ag/go/loopback v0.1.4
 	sigs.k8s.io/controller-runtime v0.24.1
 	sigs.k8s.io/yaml v1.6.0
