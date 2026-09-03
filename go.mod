@@ -3,12 +3,12 @@ module local-csi-driver
 go 1.26.0
 
 require (
-	github.com/container-storage-interface/spec v1.13.0
+	github.com/container-storage-interface/spec v1.12.0
 	github.com/dpeckett/args v0.3.0
 	github.com/go-logr/logr v1.4.4
 	github.com/google/uuid v1.6.0
 	github.com/kubernetes-csi/csi-lib-utils v0.24.0
-	github.com/kubernetes-csi/csi-test/v5 v5.6.0
+	github.com/kubernetes-csi/csi-test/v5 v5.5.0
 	github.com/onsi/ginkgo/v2 v2.32.1
 	github.com/onsi/gomega v1.42.1
 	github.com/open-policy-agent/cert-controller v0.16.0
@@ -185,22 +185,22 @@ require (
 
 // Override for kubernetes to find the staging repos.
 replace (
-	k8s.io/cloud-provider v0.0.0 => k8s.io/cloud-provider v0.36.2
-	k8s.io/cluster-bootstrap v0.0.0 => k8s.io/cluster-bootstrap v0.36.2
-	k8s.io/component-helpers v0.0.0 => k8s.io/component-helpers v0.36.2
-	k8s.io/cri-client v0.0.0 => k8s.io/cri-client v0.36.2
-	k8s.io/cri-streaming v0.0.0 => k8s.io/cri-streaming v0.36.2
-	k8s.io/csi-translation-lib v0.0.0 => k8s.io/csi-translation-lib v0.36.2
-	k8s.io/dynamic-resource-allocation v0.0.0 => k8s.io/dynamic-resource-allocation v0.36.2
-	k8s.io/endpointslice v0.0.0 => k8s.io/endpointslice v0.36.2
-	k8s.io/externaljwt v0.0.0 => k8s.io/externaljwt v0.36.2
-	k8s.io/kube-aggregator v0.0.0 => k8s.io/kube-aggregator v0.36.2
-	k8s.io/kube-controller-manager v0.0.0 => k8s.io/kube-controller-manager v0.36.2
-	k8s.io/kube-proxy v0.0.0 => k8s.io/kube-proxy v0.36.2
-	k8s.io/kube-scheduler v0.0.0 => k8s.io/kube-scheduler v0.36.2
-	k8s.io/kubectl v0.0.0 => k8s.io/kubectl v0.36.2
-	k8s.io/kubelet v0.0.0 => k8s.io/kubelet v0.36.2
-	k8s.io/mount-utils v0.0.0 => k8s.io/mount-utils v0.36.2
-	k8s.io/pod-security-admission v0.0.0 => k8s.io/pod-security-admission v0.36.2
-	k8s.io/sample-apiserver v0.0.0 => k8s.io/sample-apiserver v0.36.2
+	k8s.io/cloud-provider v0.0.0 => k8s.io/cloud-provider v0.36.4
+	k8s.io/cluster-bootstrap v0.0.0 => k8s.io/cluster-bootstrap v0.36.4
+	k8s.io/component-helpers v0.0.0 => k8s.io/component-helpers v0.36.4
+	k8s.io/cri-client v0.0.0 => k8s.io/cri-client v0.36.4
+	k8s.io/cri-streaming v0.0.0 => k8s.io/cri-streaming v0.36.4
+	k8s.io/csi-translation-lib v0.0.0 => k8s.io/csi-translation-lib v0.36.4
+	k8s.io/dynamic-resource-allocation v0.0.0 => k8s.io/dynamic-resource-allocation v0.36.4
+	k8s.io/endpointslice v0.0.0 => k8s.io/endpointslice v0.36.4
+	k8s.io/externaljwt v0.0.0 => k8s.io/externaljwt v0.36.4
+	k8s.io/kube-aggregator v0.0.0 => k8s.io/kube-aggregator v0.36.4
+	k8s.io/kube-controller-manager v0.0.0 => k8s.io/kube-controller-manager v0.36.4
+	k8s.io/kube-proxy v0.0.0 => k8s.io/kube-proxy v0.36.4
+	k8s.io/kube-scheduler v0.0.0 => k8s.io/kube-scheduler v0.36.4
+	k8s.io/kubectl v0.0.0 => k8s.io/kubectl v0.36.4
+	k8s.io/kubelet v0.0.0 => k8s.io/kubelet v0.36.4
+	k8s.io/mount-utils v0.0.0 => k8s.io/mount-utils v0.36.4
+	k8s.io/pod-security-admission v0.0.0 => k8s.io/pod-security-admission v0.36.4
+	k8s.io/sample-apiserver v0.0.0 => k8s.io/sample-apiserver v0.36.4
 )
