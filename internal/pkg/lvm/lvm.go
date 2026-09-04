@@ -50,6 +50,21 @@ var (
 	// ErrNotFound is returned when the lvm object is not found.
 	ErrNotFound = errors.New("not found")
 
+	// ErrVolumeGroupNotFound is returned when LVM cannot see the volume group
+	// an operation names.
+	//
+	// It wraps ErrNotFound, so callers that only care that an object is
+	// missing are unaffected. Callers that must not confuse the two can test
+	// for it specifically.
+	//
+	// A missing volume group is ambiguous in a way a missing logical volume is
+	// not: it commonly means the group is only temporarily invisible, for
+	// example before device scanning has completed after a reboot or while a
+	// device filter is hiding its physical volumes. Treating that as proof
+	// that a logical volume is gone would let a deletion report success while
+	// a populated volume survives on disk.
+	ErrVolumeGroupNotFound = fmt.Errorf("volume group %w", ErrNotFound)
+
 	// AlreadyExists is returned when the lvm object already exists.
 	ErrAlreadyExists = errors.New("already exists")
 
@@ -735,8 +750,10 @@ func (c *Client) UpdateLogicalVolume(ctx context.Context, opts UpdateLVOptions) 
 	cmdArgs = append(cmdArgs, "lvchange", "--yes")
 	cmdArgs = append(cmdArgs, marshaledOpts...)
 
-	_, err := c.run(ctx, cmdArgs...)
-	return err
+	if _, err := c.run(ctx, cmdArgs...); err != nil {
+		return getErrorType(err)
+	}
+	return nil
 }
 
 // Remove a logical volume.
@@ -833,7 +850,7 @@ func (c *Client) ReduceLogicalVolume(ctx context.Context, opts ReduceLVOptions) 
 
 // Rename a logical volume.
 func (c *Client) RenameLogicalVolume(ctx context.Context, opts RenameLVOptions) error {
-	ctx, span := c.tracer.Start(ctx, "lvm/ReduceLogicalVolume", trace.WithAttributes(
+	ctx, span := c.tracer.Start(ctx, "lvm/RenameLogicalVolume", trace.WithAttributes(
 		attribute.String("lv.src", opts.From),
 		attribute.String("lv.dst", opts.To),
 	))
@@ -844,8 +861,10 @@ func (c *Client) RenameLogicalVolume(ctx context.Context, opts RenameLVOptions) 
 	cmdArgs = append(cmdArgs, "lvrename", "--yes")
 	cmdArgs = append(cmdArgs, marshaledOpts...)
 
-	_, err := c.run(ctx, cmdArgs...)
-	return err
+	if _, err := c.run(ctx, cmdArgs...); err != nil {
+		return getErrorType(err)
+	}
+	return nil
 }
 
 func (c *Client) run(ctx context.Context, cmdArgs ...string) ([]byte, error) {
@@ -900,6 +919,20 @@ func (c *Client) runCmd(ctx context.Context, spanName, binary string, cmdArgs ..
 // Missing VG: Volume group 'NoVolumeGroup'  not found.
 func getErrorType(err error) error {
 	switch {
+	case containsIgnoreCase(err.Error(), "volume group") &&
+		!containsIgnoreCase(err.Error(), "logical volume") &&
+		(containsIgnoreCase(err.Error(), "not found") || containsIgnoreCase(err.Error(), "failed to find")):
+		// A message about a missing volume group, as distinct from one about a
+		// missing logical volume that merely names the group it was looked for
+		// in ("Failed to find logical volume 'lv' in volume group 'vg'"). The
+		// distinction matters because deletion treats a missing logical volume
+		// as proof the volume is gone, but must retry when a whole group is
+		// invisible.
+		//
+		// Checked before the generic not-found cases below. ErrVolumeGroupNotFound
+		// wraps ErrNotFound, so callers that do not need the distinction are
+		// unaffected.
+		return fmt.Errorf("%w: %s", ErrVolumeGroupNotFound, err.Error())
 	case containsIgnoreCase(err.Error(), "failed to find"),
 		containsIgnoreCase(err.Error(), "not found"):
 		return fmt.Errorf("%w: %s", ErrNotFound, err.Error())

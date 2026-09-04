@@ -283,3 +283,71 @@ func TestLVMOrphanScanner_Reconcile(t *testing.T) {
 		}
 	}
 }
+
+// TestLVMOrphanScanner_SkipsQuarantinedVolumes checks that the scanner leaves
+// volumes awaiting sanitization alone.
+//
+// A quarantined volume is renamed out of the volume ID namespace and its
+// PersistentVolume is gone by construction, so it matches the scanner's
+// definition of an orphan on every sweep. Without an explicit exclusion the
+// scanner would remove it, returning extents that still hold a tenant's data
+// to the volume group's free pool and defeating sanitization entirely.
+func TestLVMOrphanScanner_SkipsQuarantinedVolumes(t *testing.T) {
+	scheme := runtime.NewScheme()
+	_ = corev1.AddToScheme(scheme)
+
+	client := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithIndex(&corev1.PersistentVolume{}, CSIVolumeHandleIndex, func(obj client.Object) []string {
+			pv := obj.(*corev1.PersistentVolume)
+			if pv.Spec.CSI != nil && pv.Spec.CSI.Driver == lvm.DriverName {
+				return []string{pv.Spec.CSI.VolumeHandle}
+			}
+			return nil
+		}).
+		Build()
+
+	ctx := context.Background()
+
+	fakeLVM := lvmMgr.NewFake()
+	if err := fakeLVM.CreateVolumeGroup(ctx, lvmMgr.CreateVGOptions{Name: "containerstorage"}); err != nil {
+		t.Fatalf("Failed to create VG: %v", err)
+	}
+
+	testLVM := NewMockLVMVolumeManager()
+	testLVM.Fake = fakeLVM
+
+	const quarantinedName = "local-csi-wipe-11111111-2222-3333-4444-555555555555"
+	if _, err := testLVM.CreateLogicalVolume(ctx, lvmMgr.CreateLVOptions{
+		VGName: "containerstorage",
+		Name:   quarantinedName,
+		Size:   "1073741824B",
+	}); err != nil {
+		t.Fatalf("Failed to create LV: %v", err)
+	}
+	if err := fakeLVM.UpdateLogicalVolume(ctx, lvmMgr.UpdateLVOptions{
+		Name:    "containerstorage/" + quarantinedName,
+		AddTags: []string{lvm.WipePendingTag},
+	}); err != nil {
+		t.Fatalf("Failed to tag LV: %v", err)
+	}
+
+	scanner := &LVMOrphanScanner{
+		Client:                   client,
+		scheme:                   scheme,
+		recorder:                 kevents.NewFakeRecorder(10),
+		nodeID:                   "node1",
+		selectedNodeAnnotation:   "localdisk.csi.acstor.io/selected-node",
+		selectedInitialNodeParam: "localdisk.csi.acstor.io/selected-initial-node",
+		lvmManager:               testLVM,
+		reconcileInterval:        time.Minute,
+	}
+
+	if _, err := scanner.Reconcile(ctx, ctrl.Request{}); err != nil {
+		t.Fatalf("Reconcile() unexpected error: %v", err)
+	}
+
+	if len(testLVM.DeletedLVs) != 0 {
+		t.Errorf("Expected no volumes to be deleted, got %v", testLVM.DeletedLVs)
+	}
+}

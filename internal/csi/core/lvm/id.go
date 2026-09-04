@@ -52,6 +52,13 @@ func newIdFromString(id string) (*volumeId, error) {
 	if len(lv) == 0 {
 		return nil, fmt.Errorf("error parsing volume id: %q, logical volume name is empty", id)
 	}
+	// The quarantine namespace is reserved for volumes the driver has taken
+	// out of service. A volume handle is operator-supplied for a
+	// pre-provisioned PersistentVolume, and one naming itself into that
+	// namespace would be treated as awaiting destruction and zeroed.
+	if isQuarantineName(lv) {
+		return nil, fmt.Errorf("error parsing volume id: %q, logical volume name is reserved", id)
+	}
 	return &volumeId{
 		VolumeGroup:   vg,
 		LogicalVolume: lv,
