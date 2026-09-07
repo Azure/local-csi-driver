@@ -739,6 +739,7 @@ func TestEnsureVolume(t *testing.T) {
 						}
 						return nil
 					})
+				m.EXPECT().MakeVolumeGroupDeviceNodes(gomock.Any(), lvmMgr.MakeVGDeviceNodesOptions{Name: "vg"}).Return(nil)
 				m.EXPECT().IsLogicalVolumeCorrupted(gomock.Any(), "vg", "lv").Return(false, nil)
 				// The existing volume is returned as-is: no removal, and no
 				// recreation over its extents.
@@ -747,26 +748,24 @@ func TestEnsureVolume(t *testing.T) {
 		},
 		{
 			// Activation can report success while the device node is still
-			// missing. Treating that as recovered would hand the caller a
-			// volume it cannot open, so it is quarantined instead.
-			name:     "lv still without device node after activation is quarantined",
+			// missing. vgmknodes is used to force LVM to reconcile nodes
+			// before the re-check, but if the volume is still not there
+			// after that, the request fails without quarantining: this is
+			// the driver's own guess that the volume is unusable, not a user
+			// delete request, and the guess can be wrong. Destroying data on
+			// that guess would be worse than failing and letting the caller
+			// retry.
+			name:     "lv still without device node after activation fails without quarantining",
 			volumeId: "vg#lv",
 			request:  convert.MiBToBytes(1024),
 			expectLvm: func(m *lvmMgr.MockManager) {
 				m.EXPECT().GetLogicalVolume(gomock.Any(), "vg", "lv").Return(testLv1GiB, nil)
 				m.EXPECT().IsLogicalVolumeCorrupted(gomock.Any(), "vg", "lv").Return(true, nil)
 				m.EXPECT().UpdateLogicalVolume(gomock.Any(), gomock.Any()).Return(nil)
+				m.EXPECT().MakeVolumeGroupDeviceNodes(gomock.Any(), lvmMgr.MakeVGDeviceNodesOptions{Name: "vg"}).Return(nil)
 				m.EXPECT().IsLogicalVolumeCorrupted(gomock.Any(), "vg", "lv").Return(true, nil)
-				// Quarantine: tag then rename. No RemoveLogicalVolume.
-				m.EXPECT().
-					UpdateLogicalVolume(gomock.Any(), gomock.Any()).
-					DoAndReturn(func(_ context.Context, opts lvmMgr.UpdateLVOptions) error {
-						if len(opts.AddTags) != 1 || opts.AddTags[0] != lvm.WipePendingTag {
-							t.Errorf("added tags %v, want [%s]", opts.AddTags, lvm.WipePendingTag)
-						}
-						return nil
-					})
-				m.EXPECT().RenameLogicalVolume(gomock.Any(), gomock.Any()).Return(nil)
+				// No quarantine: no AddTags, no RenameLogicalVolume, no
+				// RemoveLogicalVolume. The volume is left exactly as it is.
 			},
 			expectedErr: lvm.ErrVolumeUnusable,
 		},
@@ -784,31 +783,18 @@ func TestEnsureVolume(t *testing.T) {
 		},
 		{
 			// Provisioning fails closed rather than recycling extents that
-			// could not be cleared.
-			name:     "lv that cannot be activated is quarantined",
+			// could not be cleared, but it does not quarantine on an
+			// activation failure either: that is still just the driver's
+			// inference, and the volume is left untouched for the caller to
+			// retry.
+			name:     "lv that cannot be activated fails without quarantining",
 			volumeId: "vg#lv",
 			request:  convert.MiBToBytes(1024),
 			expectLvm: func(m *lvmMgr.MockManager) {
 				m.EXPECT().GetLogicalVolume(gomock.Any(), "vg", "lv").Return(testLv1GiB, nil)
 				m.EXPECT().IsLogicalVolumeCorrupted(gomock.Any(), "vg", "lv").Return(true, nil)
-				// Activation fails.
-				m.EXPECT().UpdateLogicalVolume(gomock.Any(), gomock.Any()).Return(errTestInternal)
-				// Quarantine: tag then rename. No RemoveLogicalVolume.
-				m.EXPECT().UpdateLogicalVolume(gomock.Any(), gomock.Any()).Return(nil)
-				m.EXPECT().RenameLogicalVolume(gomock.Any(), gomock.Any()).Return(nil)
-			},
-			expectedErr: errTestInternal,
-		},
-		{
-			// If the volume cannot even be quarantined it is still not
-			// removed, and the caller is told provisioning failed.
-			name:     "lv that cannot be quarantined fails provisioning",
-			volumeId: "vg#lv",
-			request:  convert.MiBToBytes(1024),
-			expectLvm: func(m *lvmMgr.MockManager) {
-				m.EXPECT().GetLogicalVolume(gomock.Any(), "vg", "lv").Return(testLv1GiB, nil)
-				m.EXPECT().IsLogicalVolumeCorrupted(gomock.Any(), "vg", "lv").Return(true, nil)
-				m.EXPECT().UpdateLogicalVolume(gomock.Any(), gomock.Any()).Return(errTestInternal)
+				// Activation fails. No re-check, no vgmknodes, no
+				// quarantine: the volume is left exactly as it is.
 				m.EXPECT().UpdateLogicalVolume(gomock.Any(), gomock.Any()).Return(errTestInternal)
 			},
 			expectedErr: errTestInternal,

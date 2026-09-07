@@ -261,3 +261,8 @@ func (f *Fake) IsLogicalVolumeCorrupted(ctx context.Context, vgName string, lvNa
 func (f *Fake) RemoveStaleDeviceMapperNodes(ctx context.Context, vgName string) error {
 	return f.Err
 }
+
+// MakeVolumeGroupDeviceNodes is a no-op for the fake implementation.
+func (f *Fake) MakeVolumeGroupDeviceNodes(ctx context.Context, opts MakeVGDeviceNodesOptions) error {
+	return f.Err
+}
