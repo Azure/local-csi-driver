@@ -214,10 +214,31 @@ often after a reboot. The extents are intact and still hold the previous
 contents, so removing the volume returns populated extents to the free pool,
 making this a remanence vector with no deletion involved at all.
 
-The driver now attempts `lvchange --activate y`, re-checks that the device node
-actually appeared (`lvchange` can report success while it is still missing),
-and uses the volume normally if it did. Otherwise it quarantines the volume and
-fails the request. It never plain-removes.
+The driver attempts `lvchange --activate y`, then runs `vgmknodes` and
+re-checks that the device node actually appeared: `lvchange` can report
+success while the node is still missing, and `vgmknodes` closes that specific
+gap by synchronously reconciling device nodes against LVM metadata rather than
+racing whatever would otherwise create them.
+
+If the volume is still unusable after that, the request fails and the volume
+is left **untouched** rather than quarantined. Unlike a `DeleteVolume` call,
+"unusable" here is the driver's own inference, not a signal from the CO that
+the data should be destroyed, and that inference can be wrong (transient
+device timing, a slow node, and so on). Quarantining on a guess would risk
+destroying a volume nobody asked to delete, which is worse than failing a
+request the CO will retry on its own schedule. The volume is neither
+quarantined nor recreated: it is simply reported as unusable, repeatedly, until
+either it recovers or an operator intervenes.
+
+If a volume is confirmed to be genuinely and permanently unrecoverable, the
+existing remediation path handles it without any special-casing: deleting its
+PersistentVolume routes through the normal `DeleteVolume` path (see
+[Deletion paths that bypass DeleteVolume](#6-deletion-paths-that-bypass-deletevolume)
+below), which quarantines and wipes the volume regardless of its activation
+state, since `Quarantine` is a metadata-only operation. If the volume truly
+cannot be brought online even for wiping, it becomes a stuck quarantined
+volume like any other, covered by the same manual release procedure (see
+[Releasing a stuck volume](#releasing-a-stuck-volume)).
 
 This was checked against [PV Recovery](pv-recovery.md), which deliberately
 recreates volumes **empty** during `NodeStageVolume`. The two do not conflict:
@@ -235,7 +256,6 @@ Every path that removes a logical volume routes through quarantine:
 | --- | --- |
 | CSI delete | `internal/csi/core/lvm/controller.go` |
 | Orphan cleanup and PV failover GC | `internal/gc/volume_manager_adapter.go` |
-| Deactivated volume replacement | `internal/csi/core/lvm/lvm.go` |
 
 The orphan scanner must skip volumes that are committed to sanitization. They
 have no corresponding PV by construction, so without an explicit exclusion the

@@ -64,8 +64,7 @@ const (
 	provisionedLogicalVolumeSizeMismatch = "ProvisionedLogicalVolumeSizeMismatch"
 	provisionedEmptyVolume               = "ProvisionedEmptyVolume"
 	activatedLogicalVolume               = "ActivatedLogicalVolume"
-	quarantinedLogicalVolume             = "QuarantinedLogicalVolume"
-	failedToQuarantineLogicalVolume      = "FailedToQuarantineLogicalVolume"
+	logicalVolumeUnusable                = "LogicalVolumeUnusable"
 )
 
 // Volume context parameters.
@@ -583,18 +582,18 @@ func (l *LVM) EnsureVolume(ctx context.Context, volumeId string, capacity int64,
 	return allocatedSize, nil
 }
 
-// GetNodeDevicePath returns the device path for the given volume ID.
-//
-// The CSI volume context contains the volume group but it's not passed to all
-// CSI operations. Instead, since the volumeId (lv name) is unique across
-// vgs, we can look it up from the lv.
-
 // prepareExistingVolume readies an existing logical volume for reuse.
 //
 // It clears an uncommitted wipe tag, and repairs a volume that exists in LVM
 // metadata but has no device node. It reports an error if the volume cannot be
-// returned to service, in which case the volume has been quarantined and must
-// not be recreated over.
+// returned to service. That volume is left untouched, not quarantined: unlike
+// a CSI DeleteVolume request, "unusable" here is the driver's own inference,
+// and that inference can be wrong, for example due to reboot-timing races in
+// device node creation. Destroying data on a guess is worse than failing the
+// request and letting the caller retry; an operator who has independently
+// confirmed the volume is truly gone can still reclaim it by deleting the
+// PersistentVolume, which quarantines and wipes it through the normal
+// DeleteVolume path regardless of activation state.
 func (l *LVM) prepareExistingVolume(ctx context.Context, id *volumeId, lv *lvm.LogicalVolume) error {
 	ctx, span := l.tracer.Start(ctx, "volume.lvm.csi/prepareExistingVolume", trace.WithAttributes(
 		attribute.String("vol.group", id.VolumeGroup),
@@ -651,10 +650,22 @@ func (l *LVM) prepareExistingVolume(ctx context.Context, id *volumeId, lv *lvm.L
 			Activate: lvm.Yes,
 		})
 		if activateErr == nil {
-			// Confirm the device node actually appeared. lvchange can
-			// report success while the node is still missing, and treating
-			// that as recovered would hand the caller a volume it cannot
-			// open.
+			// lvchange can report success while the node is still missing.
+			// Force LVM to reconcile device nodes for this VG against its
+			// metadata before re-checking, rather than racing whatever
+			// mechanism would otherwise create it: vgmknodes is synchronous,
+			// so if activation truly succeeded this closes the gap instead
+			// of narrowing it.
+			if mkErr := l.lvm.MakeVolumeGroupDeviceNodes(ctx, lvm.MakeVGDeviceNodesOptions{
+				Name: id.VolumeGroup,
+			}); mkErr != nil {
+				log.Error(mkErr, "failed to reconcile device nodes after activation", "vg", id.VolumeGroup, "lv", id.LogicalVolume)
+				span.RecordError(mkErr)
+				// Fall through to the re-check below: it is the actual
+				// safety net, and a device that is genuinely still missing
+				// will be reported as such regardless of this error.
+			}
+
 			corrupted, err = l.lvm.IsLogicalVolumeCorrupted(ctx, id.VolumeGroup, id.LogicalVolume)
 			if err != nil {
 				log.Error(err, "failed to re-check logical volume after activation")
@@ -665,30 +676,29 @@ func (l *LVM) prepareExistingVolume(ctx context.Context, id *volumeId, lv *lvm.L
 
 		if corrupted {
 			// The volume cannot be brought online, so its extents cannot be
-			// cleared. Quarantine it and fail: the wipe reaper retries
-			// activation, and the volume is only removed once it has been
-			// zeroed. Recreating over these extents instead would expose
-			// the previous contents through the new volume.
-			if _, qErr := l.Quarantine(ctx, id.VolumeGroup, id.LogicalVolume); qErr != nil {
-				log.Error(qErr, "failed to quarantine unusable logical volume", "vg", id.VolumeGroup, "lv", id.LogicalVolume)
-				span.SetStatus(codes.Error, "failed to quarantine unusable logical volume")
-				span.RecordError(qErr)
-				recorder.Eventf(corev1.EventTypeWarning, failedToQuarantineLogicalVolume,
-					"Failed to quarantine unusable logical volume %s: %s", fullName, qErr.Error())
-				return fmt.Errorf("failed to quarantine unusable logical volume %s: %w", fullName, qErr)
-			}
-
-			// errors.Join drops a nil activateErr, which is the case
-			// where lvchange reported success but the device node is
-			// still missing.
-			err := fmt.Errorf("logical volume %s could not be activated and has been quarantined for sanitization: %w",
+			// cleared, but that does not mean they are gone: this is the
+			// driver's own inference, not a user request to delete, and it
+			// can be wrong (for example, a device that is merely slow to
+			// settle). Quarantining on that guess would destroy a volume the
+			// caller never asked to delete, so the request fails instead and
+			// the volume is left exactly as it is. The CSI caller retries
+			// this on its own schedule; if the volume is confirmed truly
+			// unrecoverable, an operator can reclaim it by deleting the
+			// PersistentVolume, which quarantines and wipes it through the
+			// normal DeleteVolume path regardless of activation state.
+			//
+			// errors.Join drops a nil activateErr, which is the case where
+			// lvchange reported success but the device node is still
+			// missing.
+			err := fmt.Errorf("logical volume %s could not be activated: %w",
 				fullName, errors.Join(ErrVolumeUnusable, activateErr))
-			log.Error(err, "quarantined unusable logical volume", "vg", id.VolumeGroup, "lv", id.LogicalVolume)
-			span.SetStatus(codes.Error, "quarantined unusable logical volume")
+			log.Error(err, "logical volume is unusable", "vg", id.VolumeGroup, "lv", id.LogicalVolume)
+			span.SetStatus(codes.Error, "logical volume is unusable")
 			span.RecordError(err)
-			recorder.Eventf(corev1.EventTypeWarning, quarantinedLogicalVolume,
-				"Logical volume %s could not be activated and has been quarantined for sanitization; "+
-					"it will not be reused until its contents have been cleared", fullName)
+			recorder.Eventf(corev1.EventTypeWarning, logicalVolumeUnusable,
+				"Logical volume %s could not be activated; the request will fail and be retried. "+
+					"Its contents have not been touched. If this volume is confirmed to be permanently "+
+					"unrecoverable, delete its PersistentVolume to reclaim the capacity", fullName)
 			return err
 		}
 
@@ -700,6 +710,11 @@ func (l *LVM) prepareExistingVolume(ctx context.Context, id *volumeId, lv *lvm.L
 	return nil
 }
 
+// GetNodeDevicePath returns the device path for the given volume ID.
+//
+// The CSI volume context contains the volume group but it's not passed to all
+// CSI operations. Instead, since the volumeId (lv name) is unique across
+// vgs, we can look it up from the lv.
 func (l *LVM) GetNodeDevicePath(volumeId string) (string, error) {
 	id, err := newIdFromString(volumeId)
 	if err != nil {

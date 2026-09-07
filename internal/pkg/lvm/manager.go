@@ -74,4 +74,8 @@ type Manager interface {
 	// It is a no-op when the volume group still exists in LVM metadata (the
 	// nodes are not stale) or when there is nothing to clean up.
 	RemoveStaleDeviceMapperNodes(ctx context.Context, vgName string) error
+	// MakeVolumeGroupDeviceNodes creates device files for active logical
+	// volumes in the volume group (vgmknodes). It is synchronous: once it
+	// returns, every active LV in the group has its device node.
+	MakeVolumeGroupDeviceNodes(ctx context.Context, opts MakeVGDeviceNodesOptions) error
 }

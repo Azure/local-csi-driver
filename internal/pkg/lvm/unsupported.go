@@ -118,3 +118,8 @@ func (l *Noop) IsLogicalVolumeCorrupted(ctx context.Context, vgName string, lvNa
 func (l *Noop) RemoveStaleDeviceMapperNodes(ctx context.Context, vgName string) error {
 	return ErrUnsupported
 }
+
+// MakeVolumeGroupDeviceNodes implements Manager.
+func (l *Noop) MakeVolumeGroupDeviceNodes(ctx context.Context, opts MakeVGDeviceNodesOptions) error {
+	return ErrUnsupported
+}
