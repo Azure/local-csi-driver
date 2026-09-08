@@ -44,6 +44,7 @@ repos:
     args:
     - --no-progress
     - --persona=auditor
+    - --fix
 - repo: https://github.com/tcort/markdown-link-check
   rev: 275c27c5035a5b4a656fe0e21a4c1403c118c767 # v3.15.0
   hooks:

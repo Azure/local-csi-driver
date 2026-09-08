@@ -78,7 +78,7 @@ jobs:
 
   build-docker:
     needs: build-vars
-    uses: ./.github/workflows/docker-build-template.yml
+    uses: $/.github/workflows/docker-build-template.yml
     permissions:
       contents: read
     with:
@@ -88,7 +88,7 @@ jobs:
 
   push-docker:
     needs: [build-vars, build-docker]
-    uses: ./.github/workflows/docker-push-template.yml
+    uses: $/.github/workflows/docker-push-template.yml
     permissions:
       contents: read # required by the reusable push workflow
       id-token: write # federated Azure login to push images to ACR
@@ -105,7 +105,7 @@ jobs:
 
   build-helm:
     needs: [build-vars]
-    uses: ./.github/workflows/helm-build-template.yml
+    uses: $/.github/workflows/helm-build-template.yml
     permissions:
       contents: read
     with:
@@ -117,7 +117,7 @@ jobs:
 
   push-helm:
     needs: [build-vars, build-helm]
-    uses: ./.github/workflows/helm-push-template.yml
+    uses: $/.github/workflows/helm-push-template.yml
     permissions:
       contents: read # required by the reusable push workflow
       id-token: write # federated Azure login to push the chart to ACR
