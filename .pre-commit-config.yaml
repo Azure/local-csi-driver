@@ -38,12 +38,13 @@ repos:
   hooks:
   - id: actionlint-docker
 - repo: https://github.com/zizmorcore/zizmor-pre-commit
-  rev: 451b56af716f9f0d0c2b816503a3fd0cf8b036fa # v1.29.0
+  rev: cef8b8350da46d8114c7e6b7272aebdccdf193ce # v1.30.0
   hooks:
   - id: zizmor
     args:
     - --no-progress
     - --persona=auditor
+    - --fix
 - repo: https://github.com/tcort/markdown-link-check
   rev: 275c27c5035a5b4a656fe0e21a4c1403c118c767 # v3.15.0
   hooks:

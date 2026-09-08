@@ -21,13 +21,13 @@ env:
 
 jobs:
   build-docker:
-    uses: ./.github/workflows/docker-build-template.yml
+    uses: $/.github/workflows/docker-build-template.yml
     with:
       # Default checkout (merge ref) is the safe default for pull_request.
       version: "v0.0.1-pr"
 
   build-helm:
-    uses: ./.github/workflows/helm-build-template.yml
+    uses: $/.github/workflows/helm-build-template.yml
     with:
       registry: "localcsidriver.azurecr.io"
       repo_base: "acstor"
