@@ -717,23 +717,57 @@ func TestEnsureVolume(t *testing.T) {
 			expectedErr: errTestInternal,
 		},
 		{
-			name:     "corrupted lv detected and removed successfully",
+			// A volume with no device node is almost always deactivated
+			// rather than damaged, so it is reactivated and reused. Removing
+			// and recreating it would both destroy a recoverable volume and
+			// return extents still holding its data to the free pool.
+			name:     "lv without device node is activated and reused",
 			volumeId: "vg#lv",
 			request:  convert.MiBToBytes(1024),
 			expectLvm: func(m *lvmMgr.MockManager) {
-				// First, GetLogicalVolume returns existing LV
 				m.EXPECT().GetLogicalVolume(gomock.Any(), "vg", "lv").Return(testLv1GiB, nil)
-				// IsLogicalVolumeCorrupted detects corruption
 				m.EXPECT().IsLogicalVolumeCorrupted(gomock.Any(), "vg", "lv").Return(true, nil)
-				// Remove the corrupted LV
-				m.EXPECT().RemoveLogicalVolume(gomock.Any(), lvmMgr.RemoveLVOptions{
-					Name: "vg/lv",
-				}).Return(nil)
-				// After removal, proceed with creating new volume
-				m.EXPECT().GetVolumeGroup(gomock.Any(), "vg").Return(testVg, nil)
-				m.EXPECT().CreateLogicalVolume(gomock.Any(), gomock.Any()).Return(convert.MiBToBytes(1024), nil)
+				// Activation brings the device node back.
+				m.EXPECT().
+					UpdateLogicalVolume(gomock.Any(), gomock.Any()).
+					DoAndReturn(func(_ context.Context, opts lvmMgr.UpdateLVOptions) error {
+						if opts.Name != "vg/lv" {
+							t.Errorf("activated %q, want %q", opts.Name, "vg/lv")
+						}
+						if opts.Activate == nil || !bool(*opts.Activate) {
+							t.Error("expected the volume to be activated")
+						}
+						return nil
+					})
+				m.EXPECT().MakeVolumeGroupDeviceNodes(gomock.Any(), lvmMgr.MakeVGDeviceNodesOptions{Name: "vg"}).Return(nil)
+				m.EXPECT().IsLogicalVolumeCorrupted(gomock.Any(), "vg", "lv").Return(false, nil)
+				// The existing volume is returned as-is: no removal, and no
+				// recreation over its extents.
 			},
 			expectedErr: nil,
+		},
+		{
+			// Activation can report success while the device node is still
+			// missing. vgmknodes is used to force LVM to reconcile nodes
+			// before the re-check, but if the volume is still not there
+			// after that, the request fails without quarantining: this is
+			// the driver's own guess that the volume is unusable, not a user
+			// delete request, and the guess can be wrong. Destroying data on
+			// that guess would be worse than failing and letting the caller
+			// retry.
+			name:     "lv still without device node after activation fails without quarantining",
+			volumeId: "vg#lv",
+			request:  convert.MiBToBytes(1024),
+			expectLvm: func(m *lvmMgr.MockManager) {
+				m.EXPECT().GetLogicalVolume(gomock.Any(), "vg", "lv").Return(testLv1GiB, nil)
+				m.EXPECT().IsLogicalVolumeCorrupted(gomock.Any(), "vg", "lv").Return(true, nil)
+				m.EXPECT().UpdateLogicalVolume(gomock.Any(), gomock.Any()).Return(nil)
+				m.EXPECT().MakeVolumeGroupDeviceNodes(gomock.Any(), lvmMgr.MakeVGDeviceNodesOptions{Name: "vg"}).Return(nil)
+				m.EXPECT().IsLogicalVolumeCorrupted(gomock.Any(), "vg", "lv").Return(true, nil)
+				// No quarantine: no AddTags, no RenameLogicalVolume, no
+				// RemoveLogicalVolume. The volume is left exactly as it is.
+			},
+			expectedErr: lvm.ErrVolumeUnusable,
 		},
 		{
 			name:     "corrupted lv detection fails",
@@ -748,18 +782,60 @@ func TestEnsureVolume(t *testing.T) {
 			expectedErr: errTestInternal,
 		},
 		{
-			name:     "corrupted lv removal fails",
+			// Provisioning fails closed rather than recycling extents that
+			// could not be cleared, but it does not quarantine on an
+			// activation failure either: that is still just the driver's
+			// inference, and the volume is left untouched for the caller to
+			// retry.
+			name:     "lv that cannot be activated fails without quarantining",
 			volumeId: "vg#lv",
 			request:  convert.MiBToBytes(1024),
 			expectLvm: func(m *lvmMgr.MockManager) {
-				// GetLogicalVolume returns existing LV
 				m.EXPECT().GetLogicalVolume(gomock.Any(), "vg", "lv").Return(testLv1GiB, nil)
-				// IsLogicalVolumeCorrupted detects corruption
 				m.EXPECT().IsLogicalVolumeCorrupted(gomock.Any(), "vg", "lv").Return(true, nil)
-				// Remove the corrupted LV fails
-				m.EXPECT().RemoveLogicalVolume(gomock.Any(), lvmMgr.RemoveLVOptions{
-					Name: "vg/lv",
-				}).Return(errTestInternal)
+				// Activation fails. No re-check, no vgmknodes, no
+				// quarantine: the volume is left exactly as it is.
+				m.EXPECT().UpdateLogicalVolume(gomock.Any(), gomock.Any()).Return(errTestInternal)
+			},
+			expectedErr: errTestInternal,
+		},
+		{
+			// A tagged volume still under its original name was never
+			// committed to destruction, so it belongs to the workload asking
+			// for it. The tag must be cleared before it is served, because the
+			// tag is what makes the orphan scanner skip it.
+			name:     "uncommitted quarantine tag is cleared and the volume is served",
+			volumeId: "vg#lv",
+			request:  convert.MiBToBytes(1024),
+			expectLvm: func(m *lvmMgr.MockManager) {
+				tagged := *testLv1GiB
+				tagged.Tags = lvm.WipePendingTag
+				m.EXPECT().GetLogicalVolume(gomock.Any(), "vg", "lv").Return(&tagged, nil)
+				m.EXPECT().
+					UpdateLogicalVolume(gomock.Any(), gomock.Any()).
+					DoAndReturn(func(_ context.Context, opts lvmMgr.UpdateLVOptions) error {
+						if len(opts.DelTags) != 1 || opts.DelTags[0] != lvm.WipePendingTag {
+							t.Errorf("removed tags %v, want [%s]", opts.DelTags, lvm.WipePendingTag)
+						}
+						return nil
+					})
+				m.EXPECT().IsLogicalVolumeCorrupted(gomock.Any(), "vg", "lv").Return(false, nil)
+				// No RenameLogicalVolume and no RemoveLogicalVolume: gomock
+				// fails the test if the volume is destroyed.
+			},
+			expectedErr: nil,
+		},
+		{
+			// If the tag cannot be cleared the volume is not served, rather
+			// than served while still marked for destruction.
+			name:     "uncommitted quarantine tag that cannot be cleared fails provisioning",
+			volumeId: "vg#lv",
+			request:  convert.MiBToBytes(1024),
+			expectLvm: func(m *lvmMgr.MockManager) {
+				tagged := *testLv1GiB
+				tagged.Tags = lvm.WipePendingTag
+				m.EXPECT().GetLogicalVolume(gomock.Any(), "vg", "lv").Return(&tagged, nil)
+				m.EXPECT().UpdateLogicalVolume(gomock.Any(), gomock.Any()).Return(errTestInternal)
 			},
 			expectedErr: errTestInternal,
 		},

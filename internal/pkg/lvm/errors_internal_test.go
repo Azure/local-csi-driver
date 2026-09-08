@@ -89,3 +89,63 @@ func TestStaleDeviceNodeDistinctFromAlreadyExists(t *testing.T) {
 		t.Fatal("wrapped error should match ErrStaleDeviceNode")
 	}
 }
+
+// TestVolumeGroupNotFoundClassification pins the distinction between a message
+// about a missing volume group and one about a missing logical volume that
+// merely names the group it was looked for in.
+//
+// Deletion depends on this. A missing logical volume is proof that the volume
+// is gone, so DeleteVolume reports success; an invisible volume group is
+// usually temporary, so deletion must retry rather than report success and let
+// the PersistentVolume be removed while a populated volume survives on disk.
+func TestVolumeGroupNotFoundClassification(t *testing.T) {
+	tests := []struct {
+		name         string
+		input        string
+		wantVGAbsent bool
+	}{
+		{
+			name:         "missing volume group",
+			input:        `Volume group "vg0" not found`,
+			wantVGAbsent: true,
+		},
+		{
+			name:         "missing volume group with cannot process",
+			input:        `Volume group "vg0" not found. Cannot process volume group vg0`,
+			wantVGAbsent: true,
+		},
+		{
+			// Names the group, but is about the logical volume.
+			name:         "missing logical volume names its volume group",
+			input:        `Failed to find logical volume 'lv0' in volume group 'vg0'`,
+			wantVGAbsent: false,
+		},
+		{
+			// lvrename's wording for a missing source volume.
+			name:         "missing rename source names its volume group",
+			input:        `Existing logical volume "lv0" not found in volume group "vg0".`,
+			wantVGAbsent: false,
+		},
+		{
+			name:         "missing logical volume by path",
+			input:        `Failed to find logical volume "vg0/lv0"`,
+			wantVGAbsent: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := getErrorType(fmt.Errorf("exit status 5: %s", tt.input))
+
+			// Every case is a missing object, so callers that only care about
+			// that must keep working regardless of the distinction.
+			if !errors.Is(err, ErrNotFound) {
+				t.Errorf("getErrorType(%q) is not ErrNotFound", tt.input)
+			}
+
+			if got := errors.Is(err, ErrVolumeGroupNotFound); got != tt.wantVGAbsent {
+				t.Errorf("getErrorType(%q) is ErrVolumeGroupNotFound = %v, want %v", tt.input, got, tt.wantVGAbsent)
+			}
+		})
+	}
+}

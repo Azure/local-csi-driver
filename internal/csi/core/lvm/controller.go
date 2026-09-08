@@ -7,7 +7,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"time"
 
 	"github.com/container-storage-interface/spec/lib/go/csi"
 	"go.opentelemetry.io/otel/attribute"
@@ -150,44 +149,42 @@ func (l *LVM) Delete(ctx context.Context, req *csi.DeleteVolumeRequest) error {
 		attribute.String("vol.name", id.LogicalVolume),
 	)
 
-	// Cleanup the volume on the node.
-	deleteOps := lvm.RemoveLVOptions{Name: volumeId}
-
-	ctx, cancel := context.WithTimeout(ctx, removeVolumeRetryTimeout)
-	defer cancel()
-
-	ticker := time.NewTicker(removeVolumeRetryPoll)
-	defer ticker.Stop()
-
-	var lastErr error
-	for {
-		select {
-		case <-ctx.Done():
-			err := errors.Join(lastErr, ctx.Err())
-			recorder.Eventf(corev1.EventTypeWarning, deletingLogicalVolumeFailed, "Failed to delete logical volume %s: %s", volumeId, err.Error())
-			span.SetStatus(codes.Error, "failed to delete logical volume")
-			span.RecordError(err)
-			return fmt.Errorf("failed to remove logical volume %s: %w", volumeId, err)
-		case <-ticker.C:
-			err := l.lvm.RemoveLogicalVolume(ctx, deleteOps)
-			if lvm.IgnoreNotFound(err) == nil {
-				span.AddEvent("deleted logical volume")
-				span.SetStatus(codes.Ok, "deleted logical volume")
-				return nil
-			}
-			if !errors.Is(err, lvm.ErrInUse) {
-				recorder.Eventf(corev1.EventTypeWarning, deletingLogicalVolumeFailed, "Failed to delete logical volume %s: %s", volumeId, err.Error())
-				span.AddEvent("failed to delete logical volume", trace.WithAttributes(
-					attribute.String("error", err.Error()),
-				))
-				return err
-			}
-			span.AddEvent("failed to delete logical volume, retrying", trace.WithAttributes(
-				attribute.String("error", err.Error()),
-			))
-			lastErr = err
+	// Take the volume out of service and hand it to the wipe reaper.
+	//
+	// The volume is not removed here. DeleteVolume is called by the
+	// csi-provisioner sidecar under a timeout measured in seconds, while
+	// zeroing a volume is measured in minutes, so the wipe cannot be done
+	// inline. Quarantine keeps the extents allocated, so LVM cannot hand them
+	// to another tenant before they have been cleared, and the reaper zeroes
+	// and removes the volume afterwards with no deadline.
+	//
+	// This is why there is no retry loop here: quarantine is a metadata
+	// operation, and a volume that is still momentarily in use no longer has
+	// to be waited for. The reaper opens the device exclusively when it comes
+	// to wipe it, so it defers to any remaining consumer by itself.
+	if _, err := l.Quarantine(ctx, id.VolumeGroup, id.LogicalVolume); err != nil {
+		// DeleteVolume must be idempotent, so a volume that is already gone is
+		// a success.
+		//
+		// A volume group that cannot be seen is not such a case. It is usually
+		// temporary, for example before device scanning has finished after a
+		// reboot, and reporting success would let the PersistentVolume be
+		// removed while a populated logical volume survives on disk with
+		// nothing left referencing it. Retrying is the safe answer.
+		if lvm.IgnoreNotFound(err) == nil && !errors.Is(err, lvm.ErrVolumeGroupNotFound) {
+			span.AddEvent("logical volume already removed")
+			span.SetStatus(codes.Ok, "logical volume already removed")
+			return nil
 		}
+		recorder.Eventf(corev1.EventTypeWarning, deletingLogicalVolumeFailed, "Failed to delete logical volume %s: %s", volumeId, err.Error())
+		span.SetStatus(codes.Error, "failed to quarantine logical volume")
+		span.RecordError(err)
+		return err
 	}
+
+	span.AddEvent("quarantined logical volume for wiping")
+	span.SetStatus(codes.Ok, "quarantined logical volume for wiping")
+	return nil
 }
 
 func (l *LVM) List(ctx context.Context, req *csi.ListVolumesRequest) (*csi.ListVolumesResponse, error) {

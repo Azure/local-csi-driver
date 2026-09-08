@@ -220,6 +220,20 @@ func (mr *MockManagerMockRecorder) ListVolumeGroups(ctx, opts any) *gomock.Call 
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListVolumeGroups", reflect.TypeOf((*MockManager)(nil).ListVolumeGroups), ctx, opts)
 }
 
+// MakeVolumeGroupDeviceNodes mocks base method.
+func (m *MockManager) MakeVolumeGroupDeviceNodes(ctx context.Context, opts MakeVGDeviceNodesOptions) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "MakeVolumeGroupDeviceNodes", ctx, opts)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// MakeVolumeGroupDeviceNodes indicates an expected call of MakeVolumeGroupDeviceNodes.
+func (mr *MockManagerMockRecorder) MakeVolumeGroupDeviceNodes(ctx, opts any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "MakeVolumeGroupDeviceNodes", reflect.TypeOf((*MockManager)(nil).MakeVolumeGroupDeviceNodes), ctx, opts)
+}
+
 // RemoveLogicalVolume mocks base method.
 func (m *MockManager) RemoveLogicalVolume(ctx context.Context, opts RemoveLVOptions) error {
 	m.ctrl.T.Helper()
@@ -274,4 +288,46 @@ func (m *MockManager) RemoveVolumeGroup(ctx context.Context, opts RemoveVGOption
 func (mr *MockManagerMockRecorder) RemoveVolumeGroup(ctx, opts any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "RemoveVolumeGroup", reflect.TypeOf((*MockManager)(nil).RemoveVolumeGroup), ctx, opts)
+}
+
+// RenameLogicalVolume mocks base method.
+func (m *MockManager) RenameLogicalVolume(ctx context.Context, opts RenameLVOptions) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "RenameLogicalVolume", ctx, opts)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// RenameLogicalVolume indicates an expected call of RenameLogicalVolume.
+func (mr *MockManagerMockRecorder) RenameLogicalVolume(ctx, opts any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "RenameLogicalVolume", reflect.TypeOf((*MockManager)(nil).RenameLogicalVolume), ctx, opts)
+}
+
+// SanitizeLogicalVolume mocks base method.
+func (m *MockManager) SanitizeLogicalVolume(ctx context.Context, vgName, lvName string) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "SanitizeLogicalVolume", ctx, vgName, lvName)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// SanitizeLogicalVolume indicates an expected call of SanitizeLogicalVolume.
+func (mr *MockManagerMockRecorder) SanitizeLogicalVolume(ctx, vgName, lvName any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "SanitizeLogicalVolume", reflect.TypeOf((*MockManager)(nil).SanitizeLogicalVolume), ctx, vgName, lvName)
+}
+
+// UpdateLogicalVolume mocks base method.
+func (m *MockManager) UpdateLogicalVolume(ctx context.Context, opts UpdateLVOptions) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "UpdateLogicalVolume", ctx, opts)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// UpdateLogicalVolume indicates an expected call of UpdateLogicalVolume.
+func (mr *MockManagerMockRecorder) UpdateLogicalVolume(ctx, opts any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "UpdateLogicalVolume", reflect.TypeOf((*MockManager)(nil).UpdateLogicalVolume), ctx, opts)
 }

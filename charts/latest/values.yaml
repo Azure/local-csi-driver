@@ -113,6 +113,23 @@ cleanup:
     # Interval for scanning and cleaning up orphaned LVM volumes
     interval: 5m
 
+  # Volume sanitization configuration.
+  #
+  # Deleted logical volumes are zeroed before their extents return to the
+  # volume group's free pool, so that a subsequent volume cannot read the
+  # previous tenant's data. This cannot be disabled: the party it protects is
+  # the next volume to be created, not the one being deleted.
+  #
+  # These settings pace the work; they do not control whether it happens.
+  volumeWipe:
+    # Backstop sweep interval. Deletions are signalled directly, so this only
+    # covers volumes inherited from a previous driver process.
+    interval: 60s
+    # Volumes sanitized concurrently per node. Zeroing is bound by device write
+    # bandwidth, so raising this increases interference with running workloads
+    # without increasing throughput.
+    concurrency: 1
+
   # PV cleanup controller configuration.
   # This controller watches for Released PersistentVolumes and removes finalizers
   # when nodes are unavailable, allowing PVs to be deleted.

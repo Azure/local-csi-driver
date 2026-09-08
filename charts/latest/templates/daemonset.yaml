@@ -92,6 +92,8 @@ spec:
         - --enable-lv-garbage-collection={{ .Values.cleanup.lvGarbageCollection.enabled }}
         - --enable-lvm-orphan-cleanup={{ .Values.cleanup.lvmOrphanCleanup.enabled }}
         - --lvm-orphan-cleanup-interval={{ .Values.cleanup.lvmOrphanCleanup.interval }}
+        - --volume-wipe-interval={{ .Values.cleanup.volumeWipe.interval }}
+        - --volume-wipe-concurrency={{ .Values.cleanup.volumeWipe.concurrency }}
         - --run-alongside-webhook={{ .Values.webhook.hyperconverged.enabled | default false }}
 
         - --disk-path-prefixes={{ join "," (.Values.diskSelection.addonPathPrefixes | default list) }}
