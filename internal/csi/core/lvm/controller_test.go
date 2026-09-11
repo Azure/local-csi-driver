@@ -11,6 +11,7 @@ import (
 
 	"github.com/container-storage-interface/spec/lib/go/csi"
 	"go.uber.org/mock/gomock"
+	corev1 "k8s.io/api/core/v1"
 
 	"local-csi-driver/internal/csi/core/lvm"
 	"local-csi-driver/internal/pkg/block"
@@ -58,7 +59,7 @@ func TestLVM_Create(t *testing.T) {
 				AccessibleTopology: []*csi.Topology{
 					{
 						Segments: map[string]string{
-							"topology.localdisk.csi.acstor.io/node": "nodename",
+							corev1.LabelHostname: "nodename",
 						},
 					},
 				},
@@ -94,7 +95,7 @@ func TestLVM_Create(t *testing.T) {
 				AccessibleTopology: []*csi.Topology{
 					{
 						Segments: map[string]string{
-							"topology.localdisk.csi.acstor.io/node": "nodename",
+							corev1.LabelHostname: "nodename",
 						},
 					},
 				},
@@ -127,7 +128,7 @@ func TestLVM_Create(t *testing.T) {
 				AccessibleTopology: []*csi.Topology{
 					{
 						Segments: map[string]string{
-							"topology.localdisk.csi.acstor.io/node": "nodename",
+							corev1.LabelHostname: "nodename",
 						},
 					},
 				},
@@ -160,7 +161,7 @@ func TestLVM_Create(t *testing.T) {
 				AccessibleTopology: []*csi.Topology{
 					{
 						Segments: map[string]string{
-							"topology.localdisk.csi.acstor.io/node": "nodename",
+							corev1.LabelHostname: "nodename",
 						},
 					},
 				},
@@ -194,7 +195,7 @@ func TestLVM_Create(t *testing.T) {
 				AccessibleTopology: []*csi.Topology{
 					{
 						Segments: map[string]string{
-							"topology.localdisk.csi.acstor.io/node": "nodename",
+							corev1.LabelHostname: "nodename",
 						},
 					},
 				},
@@ -247,7 +248,7 @@ func TestLVM_Create(t *testing.T) {
 				AccessibleTopology: []*csi.Topology{
 					{
 						Segments: map[string]string{
-							"topology.localdisk.csi.acstor.io/node": "nodename",
+							corev1.LabelHostname: "nodename",
 						},
 					},
 				},
@@ -282,7 +283,7 @@ func TestLVM_Create(t *testing.T) {
 				AccessibleTopology: []*csi.Topology{
 					{
 						Segments: map[string]string{
-							"topology.localdisk.csi.acstor.io/node": "nodename",
+							corev1.LabelHostname: "nodename",
 						},
 					},
 				},
@@ -318,7 +319,7 @@ func TestLVM_Create(t *testing.T) {
 				AccessibleTopology: []*csi.Topology{
 					{
 						Segments: map[string]string{
-							"topology.localdisk.csi.acstor.io/node": "nodename",
+							corev1.LabelHostname: "nodename",
 						},
 					},
 				},

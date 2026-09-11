@@ -628,7 +628,7 @@ func (ns *Server) NodeExpandVolume(ctx context.Context, req *csi.NodeExpandVolum
 
 // topologyKey returns the key for the topology map.
 func (ns *Server) topologyKey() string {
-	return fmt.Sprintf("topology.%s/node", ns.driver)
+	return lvm.TopologyKey
 }
 
 // topologyValue returns the value for the topology map.

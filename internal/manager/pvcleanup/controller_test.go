@@ -95,7 +95,7 @@ func TestExtractHostnamesFromPV(t *testing.T) {
 								{
 									MatchExpressions: []corev1.NodeSelectorRequirement{
 										{
-											Key:      "kubernetes.io/hostname",
+											Key:      "topology.kubernetes.io/zone",
 											Operator: corev1.NodeSelectorOpIn,
 											Values:   []string{"node-1"},
 										},
