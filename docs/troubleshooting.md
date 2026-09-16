@@ -20,7 +20,7 @@ This will create a support bundle in the `support-bundles` directory. You can
 specify a specific time range with:
 
 ```sh
-SUPPORT_BUNDLE_SINCE_TIME="2023-06-01T00:00:00Z" make get-support-bundle
+SUPPORT_BUNDLE_SINCE_TIME="<RFC3339-time>" make get-support-bundle
 ```
 
 ### Checking Logs
@@ -29,9 +29,13 @@ Logs are essential for troubleshooting. You can view logs for the
 local-csi-driver components using kubectl:
 
 ```sh
-# View logs
-kubectl logs -n kube-system daemonsets/csi-local-node --prefix --all-containers
+# Commands in this guide assume the default chart value name=csi-local.
+kubectl logs -n kube-system daemonset/csi-local-node \
+  --prefix --all-containers
 ```
+
+If `name` was customized in Helm values, first run
+`kubectl get daemonsets -n kube-system` and substitute the generated name.
 
 ### Checking Kubernetes Events
 
@@ -93,7 +97,8 @@ If your PVC is stuck in the "Pending" state:
 5. Check the driver logs for any errors:
 
    ```sh
-   kubectl logs -n kube-system  daemonsets/csi-local-node --prefix --all-containers
+   kubectl logs -n kube-system daemonset/csi-local-node \
+     --prefix --all-containers
    ```
 
 ### Volume Mount Failures
@@ -176,7 +181,8 @@ If the RAID init container fails to start or create the RAID array:
 3. View RAID array status:
 
    ```sh
-   kubectl exec -n kube-system <pod-name> -c driver -- mdadm --detail /dev/md0
+   kubectl exec -n kube-system <pod-name> -c driver -- \
+     nsenter --target 1 --mount --pid -- mdadm --detail /dev/md0
    ```
 
 ### Volume Group Name Mismatch
@@ -202,19 +208,26 @@ If volumes fail to provision when using RAID with a custom volume group:
 
 If the RAID array disappears after node reboot:
 
-1. Check if mdadm configuration is saved:
+1. Check the RAID init-container logs. The setup script attempts
+   `mdadm --assemble --scan` whenever the driver Pod starts:
 
    ```sh
-   kubectl exec -n kube-system <pod-name> -c driver -- cat /etc/mdadm/mdadm.conf
+   kubectl logs -n kube-system <pod-name> -c raid
    ```
 
-2. On the node, ensure mdadm is configured to auto-assemble arrays:
-   - Update initramfs to include RAID configuration
-   - Enable mdadm monitoring service if available
+2. Check whether the array exists and is assembled:
 
-3. Consider making the RAID configuration persistent across reboots by:
-   - Using a systemd service to assemble arrays on boot
-   - Configuring the node's init system appropriately
+   ```sh
+   kubectl exec -n kube-system <pod-name> -c driver -- cat /proc/mdstat
+   kubectl exec -n kube-system <pod-name> -c driver -- \
+     nsenter --target 1 --mount --pid -- mdadm --detail /dev/md0
+   ```
+
+3. On Ubuntu nodes, verify that the initial setup successfully ran
+   `update-initramfs -u`. On other operating systems, confirm that the node
+   image supports mdadm assembly during driver startup. Avoid manually
+   recreating the array because RAID 0 recreation with incorrect device order
+   destroys access to existing data.
 
 ### Performance Issues with RAID
 
@@ -223,7 +236,9 @@ If performance is not as expected:
 1. Verify RAID array is using all expected devices:
 
    ```sh
-   kubectl exec -n kube-system <pod-name> -c driver -- mdadm --detail /dev/md0 | grep "Number\\|Device"
+   kubectl exec -n kube-system <pod-name> -c driver -- \
+     nsenter --target 1 --mount --pid -- mdadm --detail /dev/md0 |
+     grep "Number\\|Device"
    ```
 
 2. Check RAID array status for degraded state:

@@ -1,176 +1,148 @@
-# local-csi-driver Webhooks Design Document
+# local-csi-driver Webhooks
 
-## Design
+The manager can host two admission webhooks:
 
-local-csi-driver defines two webhooks to enhance user experience and reduce
-potential user errors.
+- A validating webhook for PersistentVolumeClaim creation
+- A mutating webhook that adds storage-aware node affinity to Pods
 
-1. **Validation Webhook**: This webhook validates PersistentVolumeClaim (PVC)
-resources to ensure that only generic ephemeral storage is utilized, unless the
-user explicitly permits the creation of persistent volumes via the
-**"localdisk.csi.acstor.io/accept-ephemeral-storage"** annotation. This process
-ensures that users understand that the provisioned volumes will share the
-lifecycle of the node, and true persistence cannot be guaranteed.
+Both webhooks are enabled by default in the Helm chart. They are independent
+features, but the hyperconverged webhook is also coupled to the driver's PV
+recovery behavior.
 
-2. **Mutation Webhook**: Also known as the hyperconverged webhook, this feature
-modifies workload Pods to incorporate node affinity rules, ensuring that Pods
-are scheduled on the same node as the PersistentVolume (PV). The driver
-supports this behavior in two ways: through the webhook or by directly setting
-node affinity on the PV. However, since the node affinity of
-the PV is immutable, if the node is deleted, the PV resources become unusable
-and require manual cleanup. By managing node affinity through the webhook, we
-can avoid adding it directly to the PV and instead apply it to the workload.
-This method enables the workload to be rescheduled in the event of node
-deletion.
-While this may result in the loss of data within the PV, it ensures that
-the workload remains operational and can continue to write new data.
+## Manager lifecycle
 
-## Configuration
+The manager runs as a Deployment and uses controller-runtime leader election.
+When either webhook is enabled, the manager:
 
-Both of the webhooks are optional and can be enabled or disabled via the
-appropriate values for `.Values.webhook` in the Helm chart.
+1. Starts the certificate rotator.
+2. Creates or renews the serving certificate Secret.
+3. Updates the validating and mutating webhook configurations with the CA
+   bundle.
+4. Waits for certificate setup before registering handlers.
+5. Reports Ready only after the certificates and webhook server are ready.
 
-## Validation (EnforceEmphemeral) Webhook
+The default chart deploys two manager replicas. Leader election allows one
+manager to run the managed webhooks and controllers while another replica is
+available for failover.
 
-The validation webhook serves a critical role in ensuring that users fully
-understand the implications of utilizing local storage for their workloads. By
-default, this webhook restricts the creation of volumes to generic ephemeral
-storage. This means that any volumes provisioned by the driver will share the
-lifecycle of the pod, rendering them unable to outlive the node on which they
-reside.
+Both webhook configurations use `failurePolicy: Ignore`. If the webhook cannot
+be reached or returns a transport-level failure, the API server allows the
+request without validation or mutation. This favors cluster availability but
+means the storage safeguards are not guaranteed during a webhook outage.
 
-To provide flexibility, users can opt to create persistent volumes by including
-the annotation `localdisk.csi.acstor.io/accept-ephemeral-storage: "true"` in their
-PersistentVolumeClaims (PVCs). This annotation signifies that the user
-acknowledges the potential risks of data loss associated with local storage and
-accepts the consequences of its use.
+## Enforce-ephemeral validating webhook
 
-### Example
+The validating webhook handles PVC `CREATE` requests at `/validate-pvc`.
+
+A request is allowed when any of the following is true:
+
+- The PVC has
+  `localdisk.csi.acstor.io/accept-ephemeral-storage: "true"`.
+- The PVC has a Pod owner reference, as expected for a generic ephemeral
+  volume.
+- The PVC has no StorageClass.
+- The StorageClass does not exist.
+- The StorageClass uses another provisioner.
+
+A standard PVC using the local-csi-driver provisioner is denied when it does
+not have the acknowledgement annotation or a Pod owner.
+
+The annotation acknowledges that storage is local to a node and can be lost.
+It does not make the volume durable or replicated.
 
 ```yaml
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
-  name: my-pvc
+  name: local-data
   annotations:
-    localdisk.csi.acstor.io/accept-ephemeral-storage: "true" # Optional, allows creation of persistent volumes
+    localdisk.csi.acstor.io/accept-ephemeral-storage: "true"
 spec:
   accessModes:
     - ReadWriteOnce
+  storageClassName: local
   resources:
     requests:
       storage: 10Gi
-  storageClassName: local
 ```
 
-## Mutation (Hyperconverged) Webhook
+The handler records response and latency metrics and logs its admission
+decisions.
 
-Since the driver is designed to work with local storage, it is essential to
-ensure that workloads are scheduled on the same node as the
-PersistentVolumeClaim. Driver supports this behavior in two ways: by directly
-setting node affinity on the PersistentVolume (PV) or through the webhook.
+## Hyperconverged mutating webhook
 
-### PV Node Affinity
+The mutating webhook handles Pod `CREATE` requests at `/mutate-pod`. It finds
+PVC-backed volumes provisioned by local-csi-driver, resolves their PVs, and
+adds node affinity for the nodes recorded in PV metadata.
 
-Hyperconvergence of PVC and the workload can be achieved by setting node
-affinity on the PersistentVolume (PV) to a specific node. This ensures that the
-PV can only bind to one node where it is provisioned, and the workload Pods will
-be scheduled on the same node as the PV.
+When the webhook is disabled, the driver returns accessible topology from
+`CreateVolume` and Kubernetes stores immutable node affinity on the PV. When
+the webhook is enabled, the chart also starts the driver with
+`--run-alongside-webhook=true`. For PVC-backed volumes with provisioner
+metadata, the driver then:
 
-This approach is straightforward and works well for most use cases. However, it
-has a significant limitation: the node affinity of the PV is immutable. This
-means that if the node is deleted, the PV resources become unusable and to
-unblock the workloads, manual cleanup of PV resources is required. This is why
-the mutation webhook is provided as an alternative approach for use cases where
-cluster administrators want to avoid manual cleanup.
+- Omits accessible topology from the CSI response
+- Stores the creating node in
+  `localdisk.csi.acstor.io/selected-initial-node`
+- Updates `localdisk.csi.acstor.io/selected-node` when staging occurs on a
+  different node
 
-### Example of PV with Node Affinity
+The webhook uses this metadata to add Pod affinity instead of relying on
+immutable PV affinity.
 
-```yaml
-apiVersion: v1
-kind: PersistentVolume
-metadata:
-  finalizers:
-    - external-provisioner.volume.kubernetes.io/finalizer
-    - kubernetes.io/pv-protection
-  name: pvc-d6efb13d-707f-4876-8622-ea7bf2399c14
-  [...]
-spec:
-  accessModes:
-    - ReadWriteOnce
-  capacity:
-    storage: 10Gi
-  claimRef:
-    apiVersion: v1
-    kind: PersistentVolumeClaim
-    [...]
-  csi:
-    driver: localdisk.csi.acstor.io
-    volumeAttributes:
-      localdisk.csi.acstor.io/selected-initial-node: nvme-node-0
-    volumeHandle: containerstorage#pvc-d6efb13d-707f-4876-8622-ea7bf2399c14
-  nodeAffinity:
-    required:
-      nodeSelectorTerms:
-        - matchExpressions:
-            - key: topology.localdisk.csi.acstor.io/node
-              operator: In
-              values:
-                - nvme-node-0
-  persistentVolumeReclaimPolicy: Delete
-  storageClassName: local
-  volumeMode: Filesystem
- ```
+## Failover modes
 
-### Webhook Approach
+The StorageClass parameter
+`localdisk.csi.acstor.io/failover-mode` selects the affinity type.
 
-When the webhook is enabled, instead of setting node affinity on the
-PersistentVolume (PV), the driver adds a
-`localdisk.csi.acstor.io/selected-initial-node` parameter to the volume
-context of the PV. This parameter is later used by the mutation webhook to modify
-workload Pods to include preferred node affinity rules to the specified node
-ensuring that the workload and the PV are scheduled on the same node.
+| Mode | Pod affinity | Result when the current node is unavailable |
+| --- | --- | --- |
+| `availability` | Preferred | The Pod can move and receive a new empty LV |
+| `durability` | Required | The Pod remains Pending for the node with the existing LV |
 
-In the event of a node deletion, the workload Pods can be seamlessly rescheduled
-to a different node. During this process, the PersistentVolume (PV) will be
-reprovisioned on the new node as a blank volume, enabling the workload to
-continue functioning and writing new data. When such failovers occur, the PV
-resources will be annotated with `"localdisk.csi.acstor.io/selected-node"`
-information, which will later be used by the hyperconverged webhook to update
-the node affinity of the workload on future failovers.
+`availability` is used when the parameter is absent or invalid.
 
-### Example of PV with Webhook Node Affinity
+Availability mode improves workload recovery but does not replicate data.
+During `NodeStageVolume` on another node, the driver updates PV ownership and
+creates an empty LV using the recorded capacity.
+
+Durability mode restricts the Pod to the node recorded by the PV. It preserves
+access to the existing local data while that node remains recoverable, but the
+workload cannot run when the node is unavailable.
+
+For Pods that reference multiple local-csi-driver PVs, use the same failover
+mode for every PV. The current handler applies one affinity mode to the combined
+node list and uses the mode from the last processed PV. Mixed modes can
+therefore produce order-dependent behavior.
+
+## Existing Pod affinity
+
+The webhook preserves existing `spec.affinity` and appends its storage
+requirement:
+
+- Durability mode appends a required node selector term.
+- Availability mode appends a preferred term with weight 100.
+
+Applications should inspect the resulting Pod affinity when combining storage
+affinity with their own required node selectors. Independent requirements can
+make a Pod unschedulable.
+
+## Configuration
 
 ```yaml
-apiVersion: v1
-kind: PersistentVolume
-metadata:
-  annotations:
-    localdisk.csi.acstor.io/selected-node: nvme-node-1
-  finalizers:
-    - external-provisioner.volume.kubernetes.io/finalizer
-    - kubernetes.io/pv-protection
-  name: pvc-d6efb13d-707f-4876-8622-ea7bf2399c14
-  [...]
-spec:
-  accessModes:
-    - ReadWriteOnce
-  capacity:
-    storage: 10Gi
-  claimRef:
-    apiVersion: v1
-    kind: PersistentVolumeClaim
-    [...]
-  csi:
-    driver: localdisk.csi.acstor.io
-    volumeAttributes:
-      localdisk.csi.acstor.io/selected-initial-node: nvme-node-0
-      [...]
-    volumeHandle: containerstorage#pvc-d6efb13d-707f-4876-8622-ea7bf2399c14
-  persistentVolumeReclaimPolicy: Delete
-  storageClassName: local
-  volumeMode: Filesystem
+webhook:
+  enforceEphemeral:
+    enabled: true
+  hyperconverged:
+    enabled: true
 ```
 
-When mutating hyperconverged webhook is disabled, driver will manage
-hyperconvergence through the PersistentVolume (PV) node affinity.
+Disabling the hyperconverged webhook also causes the chart to set
+`--run-alongside-webhook=false`, restoring PV topology affinity and disabling
+automatic empty-volume recovery on another node.
+
+## Related documentation
+
+- [Architecture](../architecture.md) - manager and CSI request lifecycle
+- [User Guide](../user-guide.md) - configure PVCs and failover modes
+- [PV Recovery](pv-recovery.md) - ownership changes and empty-volume recovery

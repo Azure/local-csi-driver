@@ -46,7 +46,7 @@ specified style and quality checks.
 
 ### Prerequisites
 
-- [Go 1.24 or later](https://go.dev/dl/)
+- The [Go version declared in `go.mod`](../go.mod)
 - Docker
 - Make
 
@@ -60,32 +60,29 @@ To build the project, run:
 make build
 ```
 
-This will compile the project and place the binary in the `bin` directory.
+This builds both project binaries:
 
 ```sh
 ./bin/local-csi-driver --version
+./bin/local-csi-manager --version
 ```
 
-### Building and Pushing the docker image
+Use `make build-driver` or `make build-manager` to build only one binary.
 
-To build the Docker image, run:
+### Building and pushing the Docker image
+
+The Docker build uses Buildx with `OUTPUT_TYPE=type=registry` by default, so it
+builds and pushes both images in one target:
 
 ```sh
 REGISTRY=<your registry> make docker-build
 ```
 
-Substitute `<your registry>` with the desired Docker registry. This will build the
-Docker image and tag it with the specified registry.
+Substitute `<your registry>` with the desired Docker registry. To build images
+into the local Docker image store instead, override the output type:
 
 ```sh
-REGISTRY=<your registry> make docker-push
-```
-
-This will push the Docker image to the specified registry. You will often run
-these two commands together, so you can combine them into one command:
-
-```sh
-REGISTRY=<your registry> make docker-build docker-push
+OUTPUT_TYPE=type=docker REGISTRY=<your registry> make docker-build
 ```
 
 ## Building the Helm chart
@@ -133,30 +130,28 @@ For more details on the bicep template and available parameters, refer to the
 
 ### To Deploy
 
-Build and push the Docker image and Helm chart to your registry and Helm
-repository, respectively. You can do this with:
+Build and push the Docker images and Helm chart to your registry:
 
 ```sh
-REGISTRY=<registry> make docker-build helm-build docker-push helm-push
+REGISTRY=<registry> make docker-build helm-build helm-push
 ```
 
 To deploy the project to your Kubernetes cluster, you can call all the make targets
 in one command:
 
 ```sh
-REGISTRY=<registry> make docker-build helm-build docker-push helm-push helm-install
+REGISTRY=<registry> make docker-build helm-build helm-push helm-install
 ```
 
-This will build the Docker image, push it to the specified registry, build the
-Helm chart, push it to the specified Helm repository, and install the project to
-your Kubernetes cluster.
+This builds and pushes the Docker images, packages and pushes the Helm chart,
+and installs the project in your Kubernetes cluster.
 
 ### To Uninstall
 
 To uninstall the project from your Kubernetes cluster, run:
 
 ```sh
-make helm-uninstall
+make uninstall-helm
 ```
 
 This will remove the project from your cluster.
@@ -190,7 +185,7 @@ These tests are run in a Kubernetes cluster. To run the E2E tests, you need to
 set up a Kubernetes cluster and install the project in it. You can do this with:
 
 ```sh
-REGISTRY=<registry>.azurecr.io make docker-build helm-build docker-push helm-push test-e2e
+REGISTRY=<registry>.azurecr.io make docker-build helm-build helm-push test-e2e
 ```
 
 Those tests that are part of e2e suite are run in the cluster. The tests are
@@ -200,35 +195,34 @@ that we can run in a `kind` cluster. If you have a real AKS cluster, you can run
 the tests
 
 ```sh
-REGISTRY=<registry>.azurecr.io make docker-build helm-build docker-push helm-push test-e2e-aks
+REGISTRY=<registry>.azurecr.io make docker-build helm-build helm-push test-e2e-aks
 ```
 
 This will run the E2E tests in the AKS cluster. The tests are written in Go and
 are chosen with the "aks" and "e2e" label selectors.
 
 You can also run the E2E tests in a local Kubernetes cluster using [kind]. To do
-this, you need to install `kind` and create a local cluster. You can do this
-with:
+this, create a multi-node cluster with a loop-backed LVM volume group on each
+node:
 
 ```sh
-make single
+make kind-e2e-bootstrap
 ```
 
-Note: Most of the tests are skipped in this mode, as they require a real aks
-cluster to run.
+Tests labeled for AKS-specific behavior are skipped in this mode.
 
 ### External E2E Tests
 
-To run the [external E2E tests], you need to set up a Kubernetes cluster and
+To run the [external E2E tests], use a cluster with eligible local storage and
 install the project in it. You can do this with:
 
 ```sh
-REGISTRY=<registry>.azurecr.io make docker-build helm-build docker-push helm-push test-e2e-aks
+REGISTRY=<registry>.azurecr.io make docker-build helm-build helm-push test-external-e2e
 ```
 
-This will run the external E2E tests in the cluster using the AKS cluster. The
-tests are written in Go and use the Ginkgo testing framework. There are two
-kinds of tests, the `lvm` and `lvm-annotation` tests.
+This runs the non-disruptive external E2E suite against the current cluster.
+The tests are written in Go and use the Ginkgo testing framework. There are two
+test configurations, `lvm` and `lvm-annotation`.
 
 The `lvm` tests only run the generic ephemeral volume tests, which is the only
 kind of volume permitted by default by the driver. The `lvm-annotation` tests
@@ -238,23 +232,24 @@ It uses [`kyverno`][kyverno] to add the
 `localdisk.csi.acstor.io/accept-ephemeral-storage: "true"` annotation to the
 persistent volume claim. This allows the tests to test the
 "accept-ephemeral-storage" mode of the driver. The tests are located in the
-`test/e2e/external` directory.
+`test/external` directory.
 
 ### Sanity Tests
 
 To run the sanity tests, run:
 
 ```sh
-REGISTRY=<registry>.azurecr.io make docker-build helm-build docker-push helm-push test-sanity
+REGISTRY=<registry>.azurecr.io make docker-build helm-build helm-push test-sanity
 ```
 
-The sanity tests are conformance tests that checks if the driver adheres to the
-csi spec. The tests are written in Go and use the Ginkgo testing framework. The
-implementation can be found in the  [`kubernetes-csi/csi-test`][csi-test] repo.
+The sanity tests are conformance tests that check whether the driver adheres to
+the CSI specification. The tests are written in Go and use the Ginkgo testing
+framework. The implementation can be found in the
+[`kubernetes-csi/csi-test`][csi-test] repo.
 The tests are located in the `test/sanity` directory.
 
-The tests are run on an AKS cluster. If you find a change that you made that
-breaks the tests, please refer to the
+The tests run against the current Kubernetes cluster. If a change breaks the
+tests, refer to the
 [`container-storage-interface/spec`][csi-spec] repo to review the spec.
 
 [pre-commit]: https://pre-commit.com

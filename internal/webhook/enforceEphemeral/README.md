@@ -1,13 +1,13 @@
-# PVC Controller
+# Enforce-Ephemeral PVC Webhook
 
-The PVC controller enforces the use of
+The validating webhook enforces the use of
 [generic ephemeral volumes] for volumes on NVMe disks.
 Standard PVC create requests are denied unless the PVC includes the
 `localdisk.csi.acstor.io/accept-ephemeral-storage=true` annotation.
 
-## Controller Behaviour
+## Webhook behavior
 
-The PVC controller monitors PVC creation requests.
+The webhook handles PVC creation admission requests.
 
 A PVC is permitted if it meets any of these conditions:
 
@@ -18,11 +18,6 @@ A PVC is permitted if it meets any of these conditions:
     is removed.
 - It includes the annotation `localdisk.csi.acstor.io/accept-ephemeral-storage=true`.
   - Manually created PVCs must include this annotation to be accepted.
-
-## Events
-
-Kubernetes events are generated for each PVC creation request that is
-allowed, denied, or encounters an error.
 
 ## Metrics
 

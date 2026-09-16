@@ -63,7 +63,8 @@ daemonset:
 # EXPERIMENTAL: This feature is experimental and may change in future releases.
 # When raid.enabled is true, mdadm is used to create a RAID 0 array from unused
 # NVMe devices, with LVM layered on top. When raid.enabled is false, the driver
-# uses individual NVMe devices directly with LVM (no RAID striping across devices).
+# creates LVM RAID 0 logical volumes when the volume group has multiple physical
+# volumes.
 # Note: Migrating from mdadm-based RAID to non-RAID is not currently supported.
 raid:
   # Enables mdadm-based software RAID 0 on the nodes.
@@ -124,7 +125,8 @@ cleanup:
 webhook:
   enforceEphemeral:
     # Enables the enforce ephemeral PVC validation webhook, which enforces that PVCs are
-    # ephemeral, or that the `localdisk.csi.acstor.io/accept-ephemeral-storage` label is set to `true`.
+    # ephemeral, or that the `localdisk.csi.acstor.io/accept-ephemeral-storage`
+    # annotation is set to `true`.
     enabled: true
   hyperconverged:
     # Enables the hyperconverged pod mutation webhook. Required to allow pods to

@@ -4,13 +4,18 @@ This guide provides step-by-step instructions for setting up and using the
 local-csi-driver, including installing Helm, creating a StorageClass, and
 deploying a StatefulSet.
 
+For an explanation of the deployed components, CSI request flows, volume
+lifecycle, and recovery behavior, see
+[Architecture](architecture.md). The complete documentation index is available
+in [Documentation](README.md).
+
 ## Prerequisites
 
 Before proceeding, ensure you have the following installed:
 
-- Kubernetes cluster (v1.11.3+)
-- Kubectl (v1.11.3+)
-- Helm (v3.16.4+)
+- A Linux Kubernetes cluster with eligible local NVMe devices
+- A `kubectl` version compatible with the cluster
+- Helm 3
 
 ## Installing Helm
 
@@ -63,13 +68,13 @@ For more details on RAID configuration, see the [Helm chart README](../charts/la
 
 The driver discovers NVMe devices on each node and uses a filter to decide which
 of them are eligible for LVM physical volumes. The filter combines a built-in
-set of defaults with any addon values you provide via `diskSelection.` in the
+set of defaults with any addon values you provide via `diskSelection.*` in the
 Helm chart. Addon values are **appended** to the defaults.
 
 By default the extra lists are empty, so only the built-in defaults are used:
 
 - **Path prefix** - default: `/dev/nvme`
-- **Model** - defaults: `Microsoft NVMe Direct Disk`
+- **Model** - defaults: `Microsoft NVMe Direct Disk`,
   `Microsoft NVMe Direct Disk v2`, `Amazon EC2 NVMe Instance Storage`
 - **Type** - default: `disk`
 
@@ -157,14 +162,14 @@ When using hyperconverged storage (storage and compute on the same nodes),
 the `failover-mode` parameter controls how pods are scheduled:
 
 - **availability**: Uses preferred node affinity. Pods prefer to be scheduled
- on nodes with local storage but can be placed elsewhere if storage nodes are
- unavailable. This prioritizes pod availability over data persistence.
- New empty volume will be provisioned on the new failover node.
+  on nodes with the current local volume but can be placed elsewhere if that
+  node is unavailable. This prioritizes Pod availability over data retention.
+  The driver creates a new empty volume on the failover node.
 
 - **durability**: Uses required node affinity.
-Pods must be scheduled on nodes with local storage and will remain pending if
-storage nodes are unavailable. This ensures data persistence when possible but may
-affect pod availability.
+  Pods must be scheduled on the node with the current local volume and remain
+  Pending while that node is unavailable. This preserves access to the existing
+  local data at the cost of workload availability.
 
 Example StorageClass with failover mode:
 

@@ -1,10 +1,10 @@
 # ⚡local-csi-driver
 
-[Install](#install) • [Docs](./docs/user-guide.md) •
-[Troubleshooting](./docs/troubleshooting.md) • [Contribute](CONTRIBUTING.md)
+[Install](#install) | [Architecture](./docs/architecture.md) |
+[Docs](./docs/README.md) |
+[Troubleshooting](./docs/troubleshooting.md) | [Contribute](CONTRIBUTING.md)
 
 ![Made for Kubernetes](https://img.shields.io/github/tag/azure/local-csi-driver.svg?style=flat-square&label=release&color=purple)
-![Supports Kubernetes v1.11.3+](https://img.shields.io/badge/Supports-Kubernetes_v1.11.3+-326ce5.svg?style=flat-square&logo=Kubernetes&logoColor=white)
 ![Latest commit](https://img.shields.io/github/last-commit/azure/local-csi-driver?style=flat-square)
 ![License](https://img.shields.io/badge/License-MIT-blue.svg)
 
@@ -14,20 +14,29 @@ local-csi-driver provides access to local NVMe drives on Kubernetes clusters.
 
 Before proceeding, ensure you have the following installed:
 
-- Kubernetes cluster (v1.11.3+)
-- Kubectl (v1.11.3+)
-- [Helm (v3.16.4+)](https://helm.sh/docs/intro/install/)
+- A Linux Kubernetes cluster with eligible local NVMe devices
+- A `kubectl` version compatible with the cluster
+- [Helm 3](https://helm.sh/docs/intro/install/)
 
-To install the latest release:
+Find the current release on the
+[GitHub Releases page](https://github.com/Azure/local-csi-driver/releases/latest)
+and substitute its version without the `v` prefix:
 
 ```sh
-helm install local-csi-driver oci://localcsidriver.azurecr.io/acstor/charts/local-csi-driver --version 0.2.13 --namespace kube-system
+helm install local-csi-driver \
+  oci://localcsidriver.azurecr.io/acstor/charts/local-csi-driver \
+  --version <release> \
+  --namespace kube-system
 ```
 
 Only one instance of local-csi-driver can run per cluster.
 
 See the [User Guide](./docs/user-guide.md) for guidance on configuring a
 StorageClass and managing volumes.
+
+See [Architecture](./docs/architecture.md) for the deployment topology, CSI
+request flows, volume lifecycle, recovery model, security boundaries, and code
+ownership map.
 
 Helm chart values are documented in the [Helm chart README](./charts/latest/README.md).
 
