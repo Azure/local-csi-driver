@@ -109,9 +109,9 @@ When a PV without hostname topology receives a `DeleteVolume` request:
   (`external-provisioner.volume.kubernetes.io/finalizer`) when it receives a
   successful (non-error) response, ensuring only the owning node's deletion
   actually takes effect.
-- If the selected node no longer exists in the cluster, the instance returns
-  success without deleting, deferring cleanup to the PV cleanup controller in
-  the manager.
+- If the selected node no longer exists in the cluster, an instance returns
+  success without deleting local storage. This allows the external-provisioner
+  to complete PV deletion. Storage on the missing node cannot be reached.
 - Only the instance on the selected node performs the actual LVM deletion.
 
 > **Note:** In large clusters with many PVs, the Warning events from
@@ -130,18 +130,21 @@ LVM volumes on nodes that no longer own the PV:
 - When a PV's annotation is updated to a different node, the reconciler on the
   **old** node detects the mismatch.
 - It verifies the LVM logical volume exists locally, unmounts it, and deletes
-  it.
+  it. If unmounting fails, the error is logged and LV deletion continues.
 - Controlled by `--enable-lv-garbage-collection` (default: `true`).
 
 #### LVM Orphan Scanner (periodic)
 
-- Runs at a configurable interval (default: 30 minutes).
+- Runs at a configurable interval. The driver binary defaults to `30m`, while
+  the Helm chart currently deploys `5m`.
 - Scans all LVM logical volumes in managed volume groups.
-- Uses a field index on `spec.csi.volumeHandle` for O(1) PV lookups.
+- Uses a field index on `spec.csi.volumeHandle` to avoid cluster-wide
+  list-and-filter lookups.
 - Deletes volumes that either have no corresponding PV or have a node
-  annotation mismatch.
+  annotation mismatch. Failure to resolve or unmount a device path does not
+  block LV deletion.
 - Controlled by `--enable-lvm-orphan-cleanup` (default: `true`).
-- Interval configured by `--lvm-orphan-cleanup-interval` (default: `30m`).
+- Interval configured by `--lvm-orphan-cleanup-interval`.
 
 ### Node Annotations
 
@@ -194,7 +197,7 @@ The garbage collection controllers are enabled by default. To customize:
 # Disable periodic orphan scanner (not recommended)
 --enable-lvm-orphan-cleanup=false
 
-# Change scan interval (default 30m)
+# Change the binary scan interval.
 --lvm-orphan-cleanup-interval=15m
 ```
 
@@ -236,9 +239,12 @@ spec:
 - **Temporary dual storage consumption**: Between recovery (new volume created)
   and GC (old volume cleaned up), the logical volume exists on two nodes
   temporarily.
+- **Destructive orphan cleanup**: The GC controllers can continue with LV
+  deletion after an unmount failure.
 
 ## Related Documentation
 
+- [Architecture](../architecture.md) - end-to-end components and CSI lifecycle
 - [PV Cleanup Design](pv-cleanup.md) - Handling PV deletion when a node is lost
 - [Webhooks Design](webhooks.md) - Hyperconverged and validation webhooks
 - [GC Controllers README](../../internal/gc/README.md) - Detailed GC

@@ -1,56 +1,74 @@
 # local-csi-driver Disk Selection
 
-## Scenario Definition
+local-csi-driver discovers eligible local block devices and adds unformatted
+devices to an LVM volume group. Disk selection is configured for the driver
+process, not per StorageClass.
 
-In the local-csi-driver, we create an LVM volume group and LVM physical volumes
-for the NVMe devices on the node. From that created volume group, we dynamically
-provision LVM logical volumes.
+## Selection model
 
-Currently, disk selection is hard coded to look for disks that satisfy all the
-following criteria:
+A device must match all three selection categories:
 
-- **Path prefix** for the disk is `/dev/nvme`
-- **Model** is either `Microsoft NVMe Direct Disk` or
-  `Microsoft NVMe Direct Disk v2`
-- **Disk type** is `disk` (this can also be something like `loop` for loop devices)
+- Path prefix
+- Device model
+- Device type
 
-When a volume is provisioned, we ensure that all disks matching the filter are
-LVM physical volumes. We also ensure that the volume group is created with all
-of the physical volumes.
+Within each category, matching any configured value is sufficient.
 
-We would like to make this more flexible, allowing users to specify their own
-filters, so they can ensure that local-csi-driver picks up only the disks they
-want and excludes those they do not want.
+The built-in defaults are:
 
-## Design
+| Category | Values |
+| --- | --- |
+| Path prefix | `/dev/nvme` |
+| Model | `Microsoft NVMe Direct Disk`, `Microsoft NVMe Direct Disk v2`, `Amazon EC2 NVMe Instance Storage` |
+| Type | `disk` |
 
-We will add three new parameters to the storage class to allow users to
-customize the disk selection:
+Model and type comparisons are case-insensitive. Path matching uses a
+case-sensitive prefix comparison.
 
-- `localdisk.csi.acstor.io/disk-path-prefixes`: The prefix of the disk path. For
-  example, `/dev/nvme`.
-- `localdisk.csi.acstor.io/disk-models`: The model of the disk. For example,
-  `Microsoft NVMe Direct Disk`.
-- `localdisk.csi.acstor.io/disk-types`: The type of the disk. For example, `disk`.
+After a device matches the filter, the probe checks whether it is already
+formatted. Formatted devices are not returned as available devices. Failure to
+determine whether a matching device is formatted causes the scan to fail
+rather than treating the device as safe to use.
 
-These parameters will be used to filter the disks that are selected for
-provisioning. The driver will only select disks that match all of the
-specified parameters. If a parameter is not specified, the driver will use the
-default value. **The user is not required to specify any of the parameters.** Our
-defaults will work for NVMe disks found on Azure VMs.
+## Configuration
 
-Comma-separated values will be supported for the parameters. For example, if
-the user specifies `localdisk.csi.acstor.io/disk-path-prefixes: /dev/nvme,/dev/sda`,
-the driver will select disks that have either `/dev/nvme` or `/dev/sda` as the
-path prefix.
+The driver accepts additive command-line values:
 
-| Parameter                                    | Description                | Default Value                                              |
-|----------------------------------------------|----------------------------|------------------------------------------------------------|
-| `localdisk.csi.acstor.io/disk-path-prefixes` | Prefix of the disk path    | `/dev/nvme`                                                |
-| `localdisk.csi.acstor.io/disk-models`        | Model of the disk          | `Microsoft NVMe Direct Disk,Microsoft NVMe Direct Disk v2` |
-| `localdisk.csi.acstor.io/disk-types`         | Type of the disk           | `disk`                                                     |
+| Driver flag | Helm value |
+| --- | --- |
+| `--disk-path-prefixes` | `diskSelection.addonPathPrefixes` |
+| `--disk-models` | `diskSelection.addonModels` |
+| `--disk-types` | `diskSelection.addonTypes` |
 
-Example with all parameters:
+Addon values are appended to the built-in defaults. Empty values and exact
+duplicates are ignored. The built-in values cannot currently be removed or
+replaced.
+
+For example:
+
+```yaml
+diskSelection:
+  addonPathPrefixes:
+    - /dev/custom-nvme
+  addonModels:
+    - Contoso NVMe Disk
+  addonTypes:
+    - loop
+```
+
+This configuration expands each category independently. A selected device can,
+for example, use the addon path while matching a built-in model and type.
+
+The chart joins each list into a comma-separated driver argument. Changing the
+values updates the DaemonSet and causes the restarted driver Pods to use the new
+filter.
+
+## StorageClass relationship
+
+Disk-selection values are not StorageClass parameters. Every StorageClass
+handled by one driver instance uses the same process-wide filter.
+
+The StorageClass can select a volume group with the `volumeGroup` parameter:
 
 ```yaml
 apiVersion: storage.k8s.io/v1
@@ -59,40 +77,34 @@ metadata:
   name: local
 provisioner: localdisk.csi.acstor.io
 parameters:
-  localdisk.csi.acstor.io/disk-path-prefixes: /dev/nvme,/dev/sda
-  localdisk.csi.acstor.io/disk-models: Microsoft NVMe Direct Disk,Microsoft NVMe Direct Disk v2
-  localdisk.csi.acstor.io/disk-types: disk
+  volumeGroup: containerstorage
 reclaimPolicy: Delete
 volumeBindingMode: WaitForFirstConsumer
+allowVolumeExpansion: true
 ```
 
-## Pain Points
+The selected volume group must exist or be created from devices discovered by
+the driver. With mdadm RAID enabled, `raid.volumeGroup` and the StorageClass
+`volumeGroup` parameter must refer to the same group.
 
-- The user must ensure that the disks they want to use are not already in use.
-  This is a limitation of the current design and is not specific to this
-  change.
-- We do not support disks being added to the volume group after it is created.
-  This is a limitation of the current design and is not specific to this
-  change. We can add support for this in the future, but it is not a priority at
-  this time.
-- If there is a particular disk that the user does not want to use, but matches
-  the filter, they do not have a good way to exclude it in this model. We would
-  document that the user should format the disk that they want to use prior
+## Limitations and safety
 
-## Puzzles and Edge Cases
+- Filters are additive and cannot exclude one device that otherwise matches.
+- Disk selection is process-wide, so two StorageClasses cannot use different
+  device filters on the same driver Pod.
+- A path prefix can match more devices than intended. Review the complete
+  device inventory before adding broad prefixes such as `/dev/sd`.
+- The filter does not establish that data on a device is disposable. It only
+  checks the device attributes and whether the device appears formatted.
+- Existing volume groups can outlive a filter change. Removing an addon value
+  does not remove devices that were already initialized as LVM physical
+  volumes.
+- Built-in defaults are maintained in `internal/pkg/probe/filter.go`; chart
+  values intentionally contain only additions.
 
-- If a user creates two storage classes with the same VG name, but different
-  disk selection parameters, we would just use the VG that was created first.
-  We would document this behavior.
-- We would likely want to change the parameters, especially the default
-  `localdisk.csi.acstor.io/disk-models` parameter, to adjust it for new disk
-  types. This would be a bit strange because storageclasses are meant to be
-  immutable once created. This can present a puzzle if we pass along the default
-  values as values in `VolumeContext` and used those in the non-ephemeral,
-  annotated case. We would not be able to schedule to PV to the new node. We
-  would need to keep track of the default parameters in our code instead.
+## Related documentation
 
-## Related Documentation
-
-- [StorageClass API](https://kubernetes.io/docs/concepts/storage/storage-classes/)
-- [LVM Documentation](https://www.tldp.org/HOWTO/LVM-HOWTO/)
+- [Architecture](../architecture.md) - storage lifecycle and privilege model
+- [User Guide](../user-guide.md) - configure disk selection
+- [Helm chart reference](../../charts/latest/README.md) - current values and
+  defaults

@@ -32,26 +32,24 @@ Exposures) in go modules used by the local-csi-driver project.
     For example:
 
     ```bash
-    go mod graph | grep " github.com/docker/docker"
-    github.com/google/cadvisor@v0.52.1 github.com/docker/docker@v26.1.4+incompatible
+    go mod graph | grep " example.com/affected/module"
+    example.com/parent/module@v1.2.3 example.com/affected/module@v4.5.6
     ```
 
     ```bash
-    go mod graph | grep " github.com/google/cadvisor"
-
-    local-csi-driver github.com/google/cadvisor@v0.52.1
-    k8s.io/kubernetes@v1.33.1 github.com/google/cadvisor@v0.52.1
+    go mod graph | grep " example.com/parent/module"
+    local-csi-driver example.com/parent/module@v1.2.3
     ```
 
-    In this case, cadvisor is a dependency of the latest kubernetes module.
-    Furthermore, cadvisor has not fixed this issue in the latest version, so we
-    need to replace the modules in the `go.mod` file with a patch version that
-    contains the fix. This can be done by adding a `replace` directive in the
-    `go.mod` file:
+    If the parent dependency cannot yet select the fixed version, a temporary
+    `replace` directive may be necessary:
 
     ```go
-    replace github.com/docker/docker v26.1.4+incompatible => github.com/docker/docker v26.1.5+incompatible
+    replace example.com/affected/module v4.5.6 => example.com/affected/module v4.5.7
     ```
+
+    Document why the replacement is needed and remove it when the parent
+    dependency adopts the fixed version.
 
 4. **Run `go mod tidy`**: After updating the dependencies, run the following
    command to clean up the `go.mod` and `go.sum` files:

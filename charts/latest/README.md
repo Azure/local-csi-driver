@@ -1,134 +1,186 @@
 # local-csi-driver Helm Chart
 
-## Prerequisites
+This chart deploys:
 
-- [Install Helm](https://helm.sh/docs/intro/quickstart/#install-helm)
+- A node DaemonSet containing the driver and CSI sidecars
+- A manager Deployment for admission webhooks and Released-PV cleanup
+- CSI registration, RBAC, webhook, metrics, and certificate resources
+
+The checked-in [`values.yaml`](values.yaml) file is the authoritative reference
+for every value and default. To inspect the values for a published release,
+run:
+
+```sh
+helm show values \
+  oci://localcsidriver.azurecr.io/acstor/charts/local-csi-driver \
+  --version <release>
+```
 
 ## Install
 
-Find the latest release by navigating to
-<https://github.com/Azure/local-csi-driver/releases/latest>.
+Find the current version on the
+[GitHub Releases page](https://github.com/Azure/local-csi-driver/releases/latest)
+and substitute it without the `v` prefix:
 
-Substitute the release name (without the 'v' prefix) in the Helm install command
-below:
-
-```console
-helm install local-csi-driver oci://localcsidriver.azurecr.io/acstor/charts/local-csi-driver --version <release> --namespace kube-system
+```sh
+helm install local-csi-driver \
+  oci://localcsidriver.azurecr.io/acstor/charts/local-csi-driver \
+  --version <release> \
+  --namespace kube-system
 ```
+
+Only one local-csi-driver release can be installed in a cluster because the
+chart creates cluster-scoped CSI, webhook, and RBAC resources with fixed names.
 
 ## Uninstall
 
-```console
+Delete workloads and storage resources that use the driver before uninstalling
+the chart:
+
+```sh
 helm uninstall local-csi-driver --namespace kube-system
 ```
 
 ## Configuration
 
-This table list the configurable parameters of the latest Local CSI Driver chart
-and their default values.
+The table lists the configurable parameters in the current chart and their
+default values. The checked-in [`values.yaml`](values.yaml) remains the
+authoritative source.
 
 <!-- markdownlint-disable MD033 -->
-| Parameter                                     | Description                                                                                                                                                                 | Default                                                                                                                  |
-| --------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
-| `name`                                        | Name used for creating resource.                                                                                                                                            | `csi-local`                                                                                                              |
-| `image.baseRepo`                              | Base repository of container images.                                                                                                                                        | `mcr.microsoft.com`                                                                                                      |
-| `image.driver.repository`                     | local-csi-driver container image.                                                                                                                                           | `/acstor/local-csi-driver`                                                                                               |
-| `image.driver.tag`                            | local-csi-driver container image tag. Uses chart version when unset (recommended).                                                                                          |                                                                                                                          |
-| `image.driver.pullPolicy`                     | local-csi-driver image pull policy.                                                                                                                                         | `IfNotPresent`                                                                                                           |
-| `image.csiProvisioner.repository`             | csi-provisioner container image.                                                                                                                                            | `/oss/kubernetes-csi/csi-provisioner`                                                                                    |
-| `image.csiProvisioner.tag`                    | csi-provisioner container image tag.                                                                                                                                        | `v5.2.0`                                                                                                                 |
-| `image.csiProvisioner.pullPolicy`             | csi-provisioner image pull policy.                                                                                                                                          | `IfNotPresent`                                                                                                           |
-| `image.csiResizer.repository`                 | csi-resizer container image.                                                                                                                                                | `/oss/kubernetes-csi/csi-resizer`                                                                                        |
-| `image.csiResizer.tag`                        | csi-resizer container image tag.                                                                                                                                            | `v1.13.2`                                                                                                                |
-| `image.csiResizer.pullPolicy`                 | csi-resizer image pull policy.                                                                                                                                              | `IfNotPresent`                                                                                                           |
-| `image.nodeDriverRegistrar.repository`        | csi-node-driver-registrar container image.                                                                                                                                  | `/oss/kubernetes-csi/csi-node-driver-registrar`                                                                          |
-| `image.nodeDriverRegistrar.tag`               | csi-node-driver-registrar container image tag.                                                                                                                              | `v2.16.0`                                                                                                                |
-| `image.nodeDriverRegistrar.pullPolicy`        | csi-node-driver-registrar image pull policy.                                                                                                                                | `IfNotPresent`                                                                                                           |
-| `daemonset.podSelector`                       | Pod selector labels for the DaemonSet. These labels are immutable once created. If empty, uses default labels`.                                                             |                                                                                                                          |
-| `daemonset.updateStrategy`                    | Update strategy for the DaemonSet.                                                                                                                                          | <code>type: RollingUpdate<br>rollingUpdate:<br>&nbsp;&nbsp;maxUnavailable: 10%</code>                                    |
-| `daemonset.nodeSelector`                      | Node selector for the DaemonSet. If empty, all nodes are selected.                                                                                                          |                                                                                                                          |
-| `daemonset.tolerations`                       | Tolerations for the DaemonSet. If empty, no tolerations are applied.                                                                                                        | <code>- effect: NoSchedule<br>&nbsp;&nbsp;operator: Exists<br>- effect: NoExecute<br>&nbsp;&nbsp;operator: Exists</code> |
-| `daemonset.serviceAccount.annotations`        | Annotations for the service account. If empty, no annotations are applied.                                                                                                  |                                                                                                                          |
-| `raid.enabled`                                | **EXPERIMENTAL**: Enables mdadm RAID 0 setup. Combines unused NVMe devices into a RAID 0 array with LVM on top. When disabled, LVM raid is used. Migration not supported.   | `false`                                                                                                                  |
-| `raid.volumeGroup`                            | The volume group name to create on the RAID device. Must match the `volumeGroup` parameter in StorageClass if using a custom name.                                          | `containerstorage`                                                                                                       |
-| `diskSelection.addonPathPrefixes`             | Addon device path prefixes, given as comma separated strings by user, **appended** to the built-in defaults (`/dev/nvme`). Empty and duplicate entries are ignored.         | `[]`                                                                                                                     |
-| `diskSelection.addonModels`                   | Addon NVMe disk models, given as comma separated strings by user, **appended** to the built-in defaults. Matching is case-insensitive; empty/duplicate entries ignored.     | `[]`                                                                                                                     |
-| `diskSelection.addonTypes`                    | Addon device types to select, given as comma separated strings by user, **appended** to the built-in defaults (`disk`). Empty and duplicate entries are ignored.            | `[]`                                                                                                                     |
-| `cleanup.enabled`                             | Cleanup volume groups and physical volumes on pod termination if logical volumes are not in use.                                                                            | `true`                                                                                                                   |
-| `cleanup.lvGarbageCollection.enabled`         | Enable event-driven LV garbage collection for node annotation mismatches.                                                                                                   | `true`                                                                                                                   |
-| `cleanup.lvmOrphanCleanup.enabled`            | Enable periodic LVM orphan cleanup scanning.                                                                                                                                | `true`                                                                                                                   |
-| `cleanup.lvmOrphanCleanup.interval`           | Interval for scanning and cleaning up orphaned LVM volumes.                                                                                                                 | `5m`                                                                                                                     |
-| `cleanup.pvCleanup.enabled`                   | Enable the PV cleanup controller in the manager deployment. Watches for Released PVs and removes finalizers when nodes are unavailable.                                     | `true`                                                                                                                   |
-| `webhook.enforceEphemeral.enabled`            | Enables the enforce ephemeral PVC validation webhook.                                                                                                                       | `true`                                                                                                                   |
-| `webhook.hyperconverged.enabled`              | Enables the hyperconverged webhook.                                                                                                                                         | `true`                                                                                                                   |
-| `webhook.service.port`                        | The webhook service's port.                                                                                                                                                 | `443`                                                                                                                    |
-| `webhook.service.targetPort`                  | The target port for the webhook service.                                                                                                                                    | `9443`                                                                                                                   |
-| `webhook.service.type`                        | The type of the webhook service. Can be ClusterIP, NodePort, or LoadBalancer.                                                                                               | `ClusterIP`                                                                                                              |
-| `resources.driver`                            | local-csi-driver resource configuration.                                                                                                                                    | <code>limits:<br>&nbsp;&nbsp;memory: 600Mi<br>requests:<br>&nbsp;&nbsp;cpu: 10m<br>&nbsp;&nbsp;memory: 60Mi</code>       |
-| `resources.csiProvisioner`                    | csi-provisioner resource configuration.                                                                                                                                     | <code>limits:<br>&nbsp;&nbsp;memory: 500Mi<br>requests:<br>&nbsp;&nbsp;cpu: 10m<br>&nbsp;&nbsp;memory: 20Mi</code>       |
-| `resources.csiResizer`                        | csi-resizer resource configuration.                                                                                                                                         | <code>limits:<br>&nbsp;&nbsp;memory: 500Mi<br>requests:<br>&nbsp;&nbsp;cpu: 10m<br>&nbsp;&nbsp;memory: 20Mi</code>       |
-| `resources.nodeDriverRegistrar`               | csi-node-driver-registrar resource configuration.                                                                                                                           | <code>limits:<br>&nbsp;&nbsp;memory: 100Mi<br>requests:<br>&nbsp;&nbsp;cpu: 10m<br>&nbsp;&nbsp;memory: 20Mi</code>       |
-| `observability.metrics.enabled`               | Toggles metrics rbac rule creation. May be expanded in the future.                                                                                                          | `true`                                                                                                                   |
-| `observability.driver.log.level`              | local-csi-driver log level.                                                                                                                                                 | `2`                                                                                                                      |
-| `observability.driver.metrics.port`           | local-csi-driver metrics port.                                                                                                                                              | `8080`                                                                                                                   |
-| `observability.driver.health.port`            | local-csi-driver health port.                                                                                                                                               | `8081`                                                                                                                   |
-| `observability.driver.trace.endpoint`         | The address to send traces to. Disables tracing if not set.                                                                                                                 |                                                                                                                          |
-| `observability.driver.trace.sampleRate`       | Sample rate per million. 0 to disable tracing, 1000000 to trace everything.                                                                                                 | `1000000`                                                                                                                |
-| `observability.csiProvisioner.log.level`      | csi-provisioner log level.                                                                                                                                                  | `2`                                                                                                                      |
-| `observability.csiProvisioner.http.port`      | csi-provisioner health and metrics port.                                                                                                                                    | `8090`                                                                                                                   |
-| `observability.csiResizer.log.level`          | csi-resizer log level.                                                                                                                                                      | `2`                                                                                                                      |
-| `observability.csiResizer.http.port`          | csi-resizer health and metrics port.                                                                                                                                        | `8091`                                                                                                                   |
-| `observability.nodeDriverRegistrar.log.level` | csi-node-driver-registrar log level.                                                                                                                                        | `1`                                                                                                                      |
-| `observability.nodeDriverRegistrar.http.port` | csi-node-driver-registrar health and metrics port.                                                                                                                          | `8092`                                                                                                                   |
+| Parameter | Description | Default |
+| --- | --- | --- |
+| `name` | Base name used for generated Kubernetes resources. | `csi-local` |
+| `image.baseRepo` | Base repository prepended when an image repository begins with `/`. | `mcr.microsoft.com` |
+| `image.driver.repository` | local-csi-driver container image repository. | `localcsidriver.azurecr.io/acstor/local-csi-driver` |
+| `image.driver.tag` | local-csi-driver image tag. Uses the chart application version when unset. | Unset |
+| `image.driver.pullPolicy` | local-csi-driver image pull policy. | `IfNotPresent` |
+| `image.manager.repository` | local-csi-manager container image repository. | `localcsidriver.azurecr.io/acstor/local-csi-manager` |
+| `image.manager.tag` | local-csi-manager image tag. Uses the chart application version when unset. | Unset |
+| `image.manager.pullPolicy` | local-csi-manager image pull policy. | `IfNotPresent` |
+| `image.csiProvisioner.repository` | external-provisioner container image repository. | `/oss/v2/kubernetes-csi/csi-provisioner` |
+| `image.csiProvisioner.tag` | external-provisioner image tag. | `v5.2.0` |
+| `image.csiProvisioner.pullPolicy` | external-provisioner image pull policy. | `IfNotPresent` |
+| `image.csiResizer.repository` | external-resizer container image repository. | `/oss/v2/kubernetes-csi/csi-resizer` |
+| `image.csiResizer.tag` | external-resizer image tag. | `v1.13.2` |
+| `image.csiResizer.pullPolicy` | external-resizer image pull policy. | `IfNotPresent` |
+| `image.nodeDriverRegistrar.repository` | node-driver-registrar container image repository. | `/oss/v2/kubernetes-csi/csi-node-driver-registrar` |
+| `image.nodeDriverRegistrar.tag` | node-driver-registrar image tag. | `v2.16.0` |
+| `image.nodeDriverRegistrar.pullPolicy` | node-driver-registrar image pull policy. | `IfNotPresent` |
+| `daemonset.podSelector` | Pod selector labels for the DaemonSet. Uses chart defaults when empty. | `{}` |
+| `daemonset.updateStrategy` | DaemonSet update strategy. | <code>type: RollingUpdate<br>rollingUpdate:<br>&nbsp;&nbsp;maxUnavailable: 10%</code> |
+| `daemonset.nodeSelector` | Node selector used to limit the driver to eligible storage nodes. | `{}` |
+| `daemonset.nodeAffinity` | Additional node affinity combined with the chart's OS and architecture requirements. | `{}` |
+| `daemonset.tolerations` | Driver Pod tolerations. | <code>- effect: NoSchedule<br>&nbsp;&nbsp;operator: Exists<br>- effect: NoExecute<br>&nbsp;&nbsp;operator: Exists</code> |
+| `daemonset.serviceAccount.annotations` | Annotations added to the driver service account. | `{}` |
+| `raid.enabled` | **Experimental.** Create an mdadm RAID 0 device before configuring LVM. | `false` |
+| `raid.volumeGroup` | Volume group created or reused by the RAID setup. Must match the StorageClass `volumeGroup` parameter when customized. | `containerstorage` |
+| `diskSelection.addonPathPrefixes` | Device path prefixes appended to the built-in `/dev/nvme` prefix. | `[]` |
+| `diskSelection.addonModels` | Device models appended to the built-in supported models. | `[]` |
+| `diskSelection.addonTypes` | Device types appended to the built-in `disk` type. | `[]` |
+| `cleanup.enabled` | Clean unused managed volume groups and physical volumes during driver shutdown. | `true` |
+| `cleanup.lvGarbageCollection.enabled` | Enable event-driven LV cleanup after PV ownership moves to another node. | `true` |
+| `cleanup.lvmOrphanCleanup.enabled` | Enable periodic orphan LV scanning. | `true` |
+| `cleanup.lvmOrphanCleanup.interval` | Interval between periodic orphan scans. | `5m` |
+| `cleanup.pvCleanup.enabled` | Enable manager cleanup of Released PVs whose topology nodes are unavailable. | `true` |
+| `webhook.enforceEphemeral.enabled` | Enable validation of driver-backed PVC creation. | `true` |
+| `webhook.hyperconverged.enabled` | Enable Pod affinity mutation and empty-volume availability recovery. | `true` |
+| `webhook.service.port` | Webhook Service port. | `443` |
+| `webhook.service.targetPort` | Manager webhook listener port. | `9443` |
+| `webhook.service.type` | Kubernetes Service type for the webhook. | `ClusterIP` |
+| `manager.serviceAccount.annotations` | Annotations added to the manager service account. | `{}` |
+| `manager.deployment.replicas` | Number of manager replicas. | `2` |
+| `manager.deployment.podSecurityContext` | Additional manager Pod security context. | `{}` |
+| `manager.deployment.securityContext` | Additional manager container security context. | `{}` |
+| `manager.deployment.nodeSelector` | Node selector for manager Pods. | `{}` |
+| `manager.deployment.tolerations` | Manager Pod tolerations, including control-plane and `CriticalAddonsOnly` taints. | See `values.yaml` |
+| `manager.deployment.affinity` | Manager affinity. Requires Linux amd64 or arm64, prefers AKS system nodes, and prefers hostname spreading. | See `values.yaml` |
+| `manager.deployment.env` | Additional manager environment variables. | `[]` |
+| `manager.deployment.extraArgs` | Additional manager command-line arguments. | `[]` |
+| `manager.deployment.podLabels` | Additional manager Pod labels. | `{}` |
+| `manager.deployment.podAnnotations` | Additional manager Pod annotations. | `{}` |
+| `resources.driver` | Driver container resource requests and limits. | <code>limits:<br>&nbsp;&nbsp;memory: 600Mi<br>requests:<br>&nbsp;&nbsp;cpu: 10m<br>&nbsp;&nbsp;memory: 60Mi</code> |
+| `resources.csiProvisioner` | external-provisioner resource requests and limits. | <code>limits:<br>&nbsp;&nbsp;memory: 500Mi<br>requests:<br>&nbsp;&nbsp;cpu: 10m<br>&nbsp;&nbsp;memory: 20Mi</code> |
+| `resources.csiResizer` | external-resizer resource requests and limits. | <code>limits:<br>&nbsp;&nbsp;memory: 500Mi<br>requests:<br>&nbsp;&nbsp;cpu: 10m<br>&nbsp;&nbsp;memory: 20Mi</code> |
+| `resources.nodeDriverRegistrar` | node-driver-registrar resource requests and limits. | <code>limits:<br>&nbsp;&nbsp;memory: 100Mi<br>requests:<br>&nbsp;&nbsp;cpu: 10m<br>&nbsp;&nbsp;memory: 20Mi</code> |
+| `resources.manager` | Manager resource requests and limits. | <code>limits:<br>&nbsp;&nbsp;memory: 500Mi<br>requests:<br>&nbsp;&nbsp;cpu: 10m<br>&nbsp;&nbsp;memory: 64Mi</code> |
+| `observability.metrics.enabled` | Create metrics RBAC resources. Metrics listeners remain configured independently. | `true` |
+| `observability.manager.log.level` | Manager log verbosity. | `2` |
+| `observability.manager.metrics.port` | Manager secure metrics port. | `8080` |
+| `observability.manager.health.port` | Manager health and readiness port. | `8081` |
+| `observability.manager.pprof.enabled` | Enable the manager pprof endpoint. | `false` |
+| `observability.manager.pprof.port` | Manager pprof port. | `6060` |
+| `observability.driver.log.level` | Driver log verbosity. | `2` |
+| `observability.driver.metrics.port` | Driver metrics port. | `8080` |
+| `observability.driver.health.port` | Driver health and readiness port. | `8081` |
+| `observability.driver.pprof.enabled` | Enable the driver pprof endpoint. | `false` |
+| `observability.driver.pprof.port` | Driver pprof port. | `6060` |
+| `observability.driver.trace.endpoint` | OpenTelemetry collector address. An empty value disables tracing. | `""` |
+| `observability.driver.trace.sampleRate` | Trace sample rate per million. Zero disables tracing. | `"1000000"` |
+| `observability.csiProvisioner.log.level` | external-provisioner log verbosity. | `2` |
+| `observability.csiProvisioner.http.port` | external-provisioner health and metrics port. | `8090` |
+| `observability.csiResizer.log.level` | external-resizer log verbosity. | `2` |
+| `observability.csiResizer.http.port` | external-resizer health and metrics port. | `8091` |
+| `observability.nodeDriverRegistrar.log.level` | node-driver-registrar log verbosity. | `1` |
+| `observability.nodeDriverRegistrar.http.port` | node-driver-registrar health and metrics port. | `8092` |
+| `scalability.driver.workerThreads` | Driver CSI worker count. | `100` |
+| `scalability.driver.kubeApi.qps` | Driver Kubernetes API client QPS. | `100` |
+| `scalability.driver.kubeApi.burst` | Driver Kubernetes API client burst. | `200` |
+| `scalability.csiProvisioner.workerThreads` | external-provisioner worker count. | `100` |
+| `scalability.csiProvisioner.kubeApi.qps` | external-provisioner Kubernetes API client QPS. | `100` |
+| `scalability.csiProvisioner.kubeApi.burst` | external-provisioner Kubernetes API client burst. | `200` |
+| `scalability.manager.kubeApi.qps` | Manager Kubernetes API client QPS. | `100` |
+| `scalability.manager.kubeApi.burst` | Manager Kubernetes API client burst. | `200` |
 <!-- markdownlint-enable MD033 -->
 
-## RAID Configuration
+The driver binary has its own command-line defaults. Values supplied by the
+chart override those defaults. For example, the binary orphan scan interval is
+`30m`, while the chart deploys `5m`.
 
-The local-csi-driver supports automatic RAID 0 array creation via mdadm for
-improved performance when multiple NVMe devices are available on a node. This
-feature is controlled by the `raid.enabled` parameter.
+## RAID configuration
 
-### Enabling RAID
+By default, the driver adds eligible devices to an LVM volume group. When that
+volume group contains multiple physical volumes, each CSI volume is created as
+an LVM RAID0 LV with one stripe per physical volume.
 
-To enable RAID 0 setup, install the chart with:
+`raid.enabled=true` selects a different experimental layout. A privileged init
+container:
 
-```console
-helm install local-csi-driver oci://localcsidriver.azurecr.io/acstor/charts/local-csi-driver \
+1. Enters the host namespaces with `nsenter`.
+2. Installs mdadm when necessary.
+3. Attempts to assemble an existing array.
+4. Creates `/dev/md0` from two or more unused NVMe devices when no array
+   exists.
+5. Uses a single device directly when only one eligible device exists.
+6. Creates the configured LVM volume group on the resulting device.
+
+> [!WARNING]
+> RAID 0 has no redundancy. Failure of one member loses the array. Migrating
+> between mdadm and direct-LVM layouts is not supported and may require manual
+> data destruction and node repair.
+
+Enable mdadm RAID:
+
+```sh
+helm install local-csi-driver \
+  oci://localcsidriver.azurecr.io/acstor/charts/local-csi-driver \
   --version <release> \
   --namespace kube-system \
   --set raid.enabled=true
 ```
 
-### How RAID Works
+To use a custom volume group:
 
-When `raid.enabled=true`, an init container runs on each node before the CSI
-driver starts:
-
-1. **Device Discovery**: Scans for unused NVMe devices (devices not mounted, not
-   in use by LVM, and without existing RAID metadata)
-2. **Single Device**: If only one unused device is found, it creates an LVM
-   volume group directly on that device
-3. **Multiple Devices**: If two or more unused devices are found:
-   - Installs `mdadm` if not present (supports tdnf and apt-get)
-   - Creates a RAID 0 array at `/dev/md0` using all unused devices
-   - Saves the RAID configuration to `/etc/mdadm/mdadm.conf`
-   - Creates an LVM physical volume on the RAID device
-   - Creates an LVM volume group on the RAID device
-
-### Custom Volume Group Name
-
-By default, the volume group is named `containerstorage`. To use a custom name:
-
-```console
-helm install local-csi-driver oci://localcsidriver.azurecr.io/acstor/charts/local-csi-driver \
+```sh
+helm install local-csi-driver \
+  oci://localcsidriver.azurecr.io/acstor/charts/local-csi-driver \
   --version <release> \
   --namespace kube-system \
   --set raid.enabled=true \
   --set raid.volumeGroup=my-custom-vg
 ```
 
-**Important**: If you use a custom volume group name, you must also specify it
-in your StorageClass:
+The StorageClass must select the same group:
 
 ```yaml
 apiVersion: storage.k8s.io/v1
@@ -136,77 +188,47 @@ kind: StorageClass
 metadata:
   name: local-raid
 provisioner: localdisk.csi.acstor.io
+parameters:
+  volumeGroup: my-custom-vg
 reclaimPolicy: Delete
 volumeBindingMode: WaitForFirstConsumer
 allowVolumeExpansion: true
-parameters:
-  volumeGroup: "my-custom-vg"
 ```
 
-### RAID vs LVM Striping
+## Disk selection
 
-- **RAID disabled** (default): The CSI driver uses LVM's built-in RAID 0
-  striping across multiple devices
-- **RAID enabled**: Creates a mdadm RAID 0 array first, then LVM on top of it
+The driver uses built-in device filters:
 
-mdadm RAID 0 provides better performance in some scenarios and may be preferred
-for certain workloads.
+- Path prefix: `/dev/nvme`
+- Models: `Microsoft NVMe Direct Disk`,
+  `Microsoft NVMe Direct Disk v2`, and
+  `Amazon EC2 NVMe Instance Storage`
+- Type: `disk`
 
-### Requirements
+Addon values expand the built-in filters:
 
-- Two or more unused NVMe devices on the node (or one device for single-disk setup)
-- Node must support either `tdnf` or `apt-get` package manager for mdadm installation
-- Sufficient privileges for the init container (runs as root with privileged mode)
-
-## Disk Selection
-
-The driver discovers NVMe devices on each node and uses filter to decide which
-of them are eligible for LVM physical volumes. This filter is built from a set of
-values that ship with the driver (the defaults below), combined with any addon
-values you provide via `diskSelection.*`. addon values are **appended** to the
-defaults; they never replace them.
-
-A device is eligible when it matches **all** of the following categories, and
-within each category it matches if it satisfies **any** value (default or
-extra):
-
-- **Path prefix** - default: `/dev/nvme`
-- **Model** - defaults: `Microsoft NVMe Direct Disk`,
-  `Microsoft NVMe Direct Disk v2`, `Amazon EC2 NVMe Instance Storage`
-- **Type** - default: `disk`
-
-By default, `diskSelection.addonPathPrefixes`, `diskSelection.addonModels`, and
-`diskSelection.addonTypes` are all empty, so the driver uses only the built-in
-defaults. If your nodes expose NVMe disks with a model, path prefix, or type
-that is not covered by the defaults, add comma separated addon value(s) so
-they are included alongside the defaults. Empty and duplicate entries are
-ignored. Example:
-
-```console
-helm install local-csi-driver oci://localcsidriver.azurecr.io/acstor/charts/local-csi-driver \
-  --version <release> \
-  --namespace kube-system \
-  --set 'diskSelection.addonPathPrefixes={/dev/custom-nvme}' \
-  --set 'diskSelection.addonModels={Contoso NVMe Disk,Contoso NVMe Disk v2}' \
-  --set 'diskSelection.addonTypes={loop}'
+```yaml
+diskSelection:
+  addonPathPrefixes:
+    - /dev/custom-nvme
+  addonModels:
+    - Contoso NVMe Disk
+  addonTypes:
+    - loop
 ```
 
-If the driver is already installed, add-on values for models, types, or path
-prefixes can be applied to the existing release with a chart upgrade:
+A device must match a path prefix, model, and type. Within each category, it can
+match a built-in or addon value. Addons never replace or remove built-in
+defaults.
 
-```console
-helm upgrade local-csi-driver oci://localcsidriver.azurecr.io/acstor/charts/local-csi-driver \
-  --version <release> \
-  --namespace kube-system \
-  --reuse-values \
-  --set 'diskSelection.addonPathPrefixes={/dev/custom-nvme}' \
-  --set 'diskSelection.addonModels={Contoso NVMe Disk,Contoso NVMe Disk v2}' \
-  --set 'diskSelection.addonTypes={loop}'
-```
+Disk selection is process-wide and is not configured through StorageClass
+parameters. See [Disk Selection](../../docs/design/disk-selection.md) for the
+selection and safety model.
 
-The driver re-scans devices when its pods restart, so the DaemonSet rolls out
-the updated selection automatically.
+## Related documentation
 
-## Troubleshooting
-
-See [Troubleshooting](https://github.com/Azure/local-csi-driver/blob/main/docs/troubleshooting.md).
+- [User Guide](../../docs/user-guide.md) - install and use the driver
+- [Architecture](../../docs/architecture.md) - understand component and request
+  flows
+- [Troubleshooting](../../docs/troubleshooting.md) - diagnose deployment and
+  storage failures

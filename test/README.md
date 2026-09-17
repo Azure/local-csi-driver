@@ -22,13 +22,13 @@ extracted into functions that are covered by unit tests.
 We also have some unit tests that cover controller behavior and run against a
 fake k8s api server. They do not require compiling and deploying images into a
 real cluster, making them quick to run. All controller code paths should be
-testedhere.
+tested here.
 
 Within the code, look for `suite_test.go` as the starting points for
 integration tests and `*_test.go` files for the test cases for each controller.
 
 [Ginkgo][ginkgo] is used for the integration tests.
-See[controller-tests](https://book.kubebuilder.io/cronjob-tutorial/writing-tests)
+See [controller tests](https://book.kubebuilder.io/cronjob-tutorial/writing-tests)
 for a guide.
 
 ## E2E Tests
@@ -38,15 +38,18 @@ for a guide.
 These tests are designed to run on a running cluster, and they verify behavior
 triggering externally on that cluster (e.g. by creating PVCs).
 
-Currently a [Kind][kind] cluster is presumed. If there is not already a Kind
-cluster present (`make single` or `make multi` will create one), then a new
-cluster will be provisioned for the test.
+For local E2E development, create a three-node [Kind][kind] cluster with a
+loop-backed LVM volume group on each node:
+
+```sh
+make kind-e2e-bootstrap
+```
 
 `make clean` will remove the Kind cluster.
 
-If `CREATE_CLUSTER` is unset  or set to `false`, then the current cluster set in
-`kubectl` context will be used. This is useful for testing against remote
-clusters.
+If `CREATE_CLUSTER` is unset or set to `false`, the test suite uses the current
+`kubectl` context. Set `CREATE_CLUSTER=true` to let the test setup create and
+remove a Kind cluster.
 
 `SKIP_UNINSTALL` set to `true` will leave the cluster running for debugging or
 to speed up successive runs.
@@ -55,13 +58,7 @@ to speed up successive runs.
 [Prometheus][prometheus], which is installed by default so that metrics can be
 verified.
 
-`SKIP_METRICS` set to `true` will skip the metrics endpoint tests. These rarely
-change and add to test duration.
-
-Optionally, when [Jaeger][jaeger] is installed into an existing cluster using
-`make jaeger`, tracing will be enabled and accessible on
-[http://127.0.0.1:16686/](http://127.0.0.1:16686/). This can be incredibly
-helpful when debugging.
+`SKIP_METRICS` set to `true` skips the metrics endpoint tests.
 
 To further optimize dev cycles, only specific tests can be run by setting
 `FOCUS`. For example, `FOCUS="should delete pv" make e2e` will run only the PV
@@ -77,7 +74,7 @@ set up a Kubernetes cluster and install the project in it. You can do this the
 following command to do all of these steps in one go:
 
 ```sh
-REGISTRY=<registry>.azurecr.io make docker-build helm-build docker-push helm-push test-e2e
+REGISTRY=<registry>.azurecr.io make docker-build helm-build helm-push test-e2e
 ```
 
 Those tests that are part of the E2E suite are run in the cluster. The tests are
@@ -85,25 +82,21 @@ written in Go and use the Ginkgo testing framework. The tests are located in the
 `test/e2e` directory. By default, the `test-e2e` target will include tests that
 can run in a `kind` cluster.
 
-This will run the E2E tests in the AKS cluster. The tests are written in Go and
-are chosen with the "aks" and "e2e" label selectors.
-
 You can also run the E2E tests in a local Kubernetes cluster using
-[kind](https://kind.sigs.k8s.io/). To do this, you need to install `kind` and
-create a local cluster. You can do this with:
+[kind](https://kind.sigs.k8s.io/). Create the cluster and local volume groups
+with:
 
 ```sh
-make single
+make kind-e2e-bootstrap
 ```
 
-> **Note**: Most of the tests are skipped in this mode, as they require a real
-AKS cluster to run.
+Tests labeled for AKS-specific behavior are skipped in this mode.
 
 If you have a real AKS cluster, you can run the
 tests with:
 
 ```sh
-REGISTRY=<registry>.azurecr.io make docker-build helm-build docker-push helm-push test-e2e-aks
+REGISTRY=<registry>.azurecr.io make docker-build helm-build helm-push test-e2e-aks
 ```
 
 For more information on how to set up the AKS cluster, see the deployment
@@ -116,12 +109,12 @@ you need to set up a Kubernetes cluster and install the project in it. You can
 do this with:
 
 ```sh
-REGISTRY=<registry>.azurecr.io make docker-build helm-build docker-push helm-push test-e2e-aks
+REGISTRY=<registry>.azurecr.io make docker-build helm-build helm-push test-external-e2e
 ```
 
-This will run the external E2E tests in the cluster using the AKS cluster. The
-tests are written in Go and use the Ginkgo testing framework. There are two
-kinds of tests, the `lvm` and `lvm-annotation` tests.
+This runs the non-disruptive external E2E suite against the current cluster.
+The tests are written in Go and use the Ginkgo testing framework. There are two
+test configurations, `lvm` and `lvm-annotation`.
 
 The `lvm` tests only run the generic ephemeral volume tests, which is the only
 kind of volume permitted by default by the driver.
@@ -131,23 +124,22 @@ uses [`kyverno`](https://github.com/kyverno/kyverno) to add the
 `localdisk.csi.acstor.io/accept-ephemeral-storage: "true"` annotation to the
 persistent volume claim. This allows the tests to test the
 "accept-ephemeral-storage" mode of the driver. The tests are located in the
-`test/e2e/external` directory.
+`test/external` directory.
 
 ### Sanity Tests
 
 To run the sanity tests, run:
 
 ```sh
-REGISTRY=<registry>.azurecr.io make docker-build helm-build docker-push helm-push test-sanity
+REGISTRY=<registry>.azurecr.io make docker-build helm-build helm-push test-sanity
 ```
 
-The sanity tests are conformance tests that check if the driver adheres to the
-CSI spec. The tests are written in Go and use the Ginkgo testing framework. The
-implementation can be found in the
+The sanity tests are conformance tests that check whether the driver adheres to
+the CSI specification. The tests are written in Go and use the Ginkgo testing
+framework. The implementation can be found in the
 [`kubernetes-csi/csi-test`](https://github.com/kubernetes-csi/csi-test) repo.
-The tests are located in the `test/sanity` directory. The tests are run on an
-AKS cluster. If you find a change that you made that breaks the tests, please
-refer to the
+The tests are located in the `test/sanity` directory and run against the
+current Kubernetes cluster. If a change breaks the tests, refer to the
 [`container-storage-interface/spec`](https://github.com/container-storage-interface/spec)
 repo to review the spec to make any necessary changes to the driver.
 
@@ -223,4 +215,3 @@ extracted into functions that are covered by unit tests.
 [kind]: https://kind.sigs.k8s.io/
 [ginkgo]: https://onsi.github.io/ginkgo/
 [prometheus]: https://prometheus.io/
-[jaeger]: https://www.jaegertracing.io/

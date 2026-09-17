@@ -1,36 +1,78 @@
-# deploy
+# AKS Development Clusters
 
-## Cluster Creation
+The `deploy` directory contains Bicep templates and parameter files for creating
+AKS clusters used by local-csi-driver development and tests.
 
-This project deploys an aks cluster for ACStor testing.
+These templates create Azure resources and can incur cost. Use a dedicated
+development subscription and remove the resource group when it is no longer
+needed.
 
-### Parameters
+## Make variables
 
-| Parameter Name | Description                           | Default Value                                     |
-| -------------- | ------------------------------------- | ------------------------------------------------- |
-| LOCATION       | The location of the resources         | eastus                                            |
-| SUFFIX         | The suffix to append to the resources | `${USER}-${TEMPLATE}-$(shell date +%Y%m%d%H%M%S)` |
-| RESOURCE_GROUP | The name of the resource group        | `${SUFFIX}-rg`                                    |
-| CLUSTER_NAME   | The name of the AKS cluster           | `${SUFFIX}-aks`                                   |
-| TEMPLATE       | The template to use                   | azurelinux                                        |
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `AKS_TEMPLATE` | `nvme` | Parameter file name under `deploy/parameters` |
+| `AKS_LOCATION` | `uksouth` | Azure region for the resource group |
+| `AKS_RESOURCE_GROUP` | `${USER}-local-csi-driver-${AKS_TEMPLATE}` | Resource group name |
+| `AKS_IS_TEST` | `false` | Mark the deployment as a test environment |
 
-### Templates
+## Available parameter sets
 
-The following table lists all the templates and their descriptions:
+The value of `AKS_TEMPLATE` must match a JSON file in `deploy/parameters`
+without the `.json` suffix.
 
-| TEMPLATE values     | Description                                                                               |
-| ------------------- | ----------------------------------------------------------------------------------------- |
-| azurelinux          | Create AKS cluster with 3 Azure Linux VMs                                                 |
-| azurelinux-zonal    | Create AKS cluster with 3 Azure Linux VMs in 3 zones                                      |
-| azurelinux-userpool | Create AKS cluster with 3 Azure Linux VMs in systempool and 3 Azure Linux VMs in userpool |
-| ubuntu              | Create AKS cluster with 3 Ubuntu VMs                                                      |
-| ubuntu-fips         | Create AKS cluster with 3 Ubuntu VMs with FIPS enabled                                    |
-| nvme                | Create AKS cluster with 3 standard_l8s_v3 VMs with NVMe disk                              |
-| nvme-zonal          | Create AKS cluster with 3 standard_l8s_v3 VMs with NVMe disk in 3 zones                   |
-| nvme-autoscaler     | Create AKS cluster with 3 standard_l8s_v3 VMs with NVMe disk and cluster autoscaler       |
+Current parameter sets include:
 
-### Usage
+- `azurelinux`
+- `azurelinux-userpool`
+- `azurelinux-zonal`
+- `nvme`
+- `nvme-arm`
+- `nvme-autoscaler`
+- `nvme-four-disks`
+- `nvme-scale`
+- `nvme-single-node`
+- `nvme-two-disks`
+- `nvme-ubuntu`
+- `nvme-v4`
+- `nvme-v4-ubuntu`
+- `nvme-zonal`
+- `ubuntu`
+- `ubuntu-fips`
 
-```bash
-make aks TEMPLATE=azurelinux
+Inspect the selected JSON file before deployment for VM sizes, node counts,
+zones, Kubernetes settings, and other template-specific values.
+
+## Create a cluster
+
+```sh
+make aks AKS_TEMPLATE=nvme
 ```
+
+Override the region and resource group when necessary:
+
+```sh
+make aks \
+  AKS_TEMPLATE=nvme-arm \
+  AKS_LOCATION=eastus \
+  AKS_RESOURCE_GROUP=my-local-csi-test
+```
+
+The Makefile installs the pinned Bicep CLI when needed and calls
+`deploy/scripts/create.sh`.
+
+## Preview a deployment
+
+Run the Bicep what-if path before creating resources:
+
+```sh
+make aks-cluster-requirements AKS_TEMPLATE=nvme
+```
+
+## Delete a cluster
+
+```sh
+make aks-clean AKS_RESOURCE_GROUP=my-local-csi-test
+```
+
+This deletes the Azure resource group and all resources it contains.

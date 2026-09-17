@@ -1,79 +1,127 @@
-# local-csi-driver Persistent Volume (PV) Cleanup
+# local-csi-driver PersistentVolume Cleanup
 
-## Scenario Definition
+A local PersistentVolume can become stuck during deletion when the node that
+owned its storage is permanently unavailable. local-csi-driver has two
+different deletion paths depending on whether the PV contains immutable
+hostname topology.
 
-PVCs and PVs can get stuck, because they can't be deleted if the node they
-were provisioned on no longer exists. Pods referring to PVs will also be stuck
-since they can only start on the deleted node.
+This cleanup removes Kubernetes objects and local LVM storage when possible. It
+does not recover application data from a lost node.
 
-Normally, it requires manual intervention to remove the PVC and PVs. This is the
-guidance from [external-provisioner]:
+## Normal deletion
 
-> When an administrator is sure that the node is never going to come back, then
-> the local volumes can be removed manually:
->
-> <!-- markdownlint-disable MD033 -->
-> - force-delete objects: kubectl delete pv <pv> --wait=false --grace-period=0 --force
-> - remove all finalizers: kubectl patch pv <pv> -p '{"metadata":{"finalizers":null}}'
-> <!-- markdownlint-enable MD033 -->
->
-> It may also be necessary to scrub disks before reusing them because the CSI
-> driver had no chance to do that.
->
-> If there still was a PVC which was bound to that PV, it then will be moved to
-> phase "Lost". It has to be deleted and re-created if still needed because no
-> new volume will be created for it. Editing the PVC to revert it to phase
-> "Unbound" is not allowed by the Kubernetes API server.
+The external-provisioner runs in node-deployment mode. For a PV with hostname
+topology, it routes `DeleteVolume` to the driver instance on the owning node.
+That driver:
 
-## Goals
+1. Confirms that the request belongs to the node.
+2. Unmounts the retained staging path.
+3. Deletes the LVM logical volume.
+4. Returns success so the external-provisioner can complete PV deletion.
 
-- Allow Pods to recover on another node without manual intervention.
-- Garbage collect orphaned PVs.
+If the owning node is unavailable, no driver instance can complete this path
+and the PV can remain blocked by finalizers.
 
-## Non-goals
+## Cleanup with hostname topology
 
-- Persistence/recovery of data when a Pod starts on another node. The assumption
-  is that when the node and its data is lost, the application can re-hydrate any
-  required data.
+The manager's Released-PV cleanup controller handles the missing-node case for
+PVs that still contain hostname topology.
 
-## Design
+The controller only processes a PV when all of the following are true:
 
-### PV Cleanup
+- The CSI driver is `localdisk.csi.acstor.io`.
+- The PV phase is `Released`.
+- The reclaim policy is `Delete`.
+- The PV has `kubernetes.io/pv-protection` or
+  `external-provisioner.volume.kubernetes.io/finalizer`.
+- The PV contains
+  `topology.localdisk.csi.acstor.io/node` hostname constraints.
 
-In local-csi-driver, the CSI external-provisioner is deployed with the
-`--node-deployment` flag. This changes the default behaviour where a single
-driver instance in a Deployment processes all create/delete requests. Instead,
-with the `--node-deployment` flag, each instance in the DaemonSet sees the
-request and decides whether to process it.
+The controller checks every hostname in the PV topology. If any corresponding
+Node exists and is Ready, it leaves the finalizers in place so the node-local
+driver can perform normal storage deletion.
 
-When a PV Delete request is made, all nodes that match the volumes's generated
-volume affinity (including node topology) process the request.
+If no topology node is Ready, the controller:
 
-Normally, accessible topology is set on the volume that restricts access to only
-the node where the volume was provisioned. The scheduler uses this for Pod
-placement. In this case, only the node with the volume will process the Delete
-volume request. When this node no longer exists, the PV becomes stuck because no
-node responds to the request.
+1. Issues a delete request for the PV if it does not already have a deletion
+   timestamp.
+2. Reconciles the PV again after deletion begins.
+3. Removes the PV protection and external-provisioner finalizers.
 
-However, when the local-csi-driver's [Hyperconverged
-webhook][hyperconverged-webhook] is enabled, accessible topology isn't set, so
-all nodes process the request.
+This allows the Kubernetes object to disappear even though storage on a
+missing node cannot be reached or scrubbed.
 
-When each driver instance receives the request, normally it would ignore
-requests for volumes on other nodes. Instead, we check if the node is deleted
-first, and return that the CSI Delete operation was successful if it was.
+```mermaid
+flowchart TD
+    released["Released PV with Delete reclaim policy"]
+    driver{"Managed by local-csi-driver?"}
+    finalizer{"Relevant finalizer present?"}
+    topology{"Hostname topology present?"}
+    ready{"Any topology node Ready?"}
+    preserve["Keep finalizers for node-local deletion"]
+    request["Issue PV delete"]
+    remove["Remove blocking finalizers"]
+    skip["No manager cleanup"]
 
-When the [Hyperconverged webhook][hyperconverged-webhook] is not enabled, manual
-cleanup steps as described above must be used.
+    released --> driver
+    driver -- No --> skip
+    driver -- Yes --> finalizer
+    finalizer -- No --> skip
+    finalizer -- Yes --> topology
+    topology -- No --> skip
+    topology -- Yes --> ready
+    ready -- Yes --> preserve
+    ready -- No --> request
+    request --> remove
+```
 
-## Related Documentation
+## Cleanup without hostname topology
 
-- [external-provisioner: Deleting local volumes after a node failure or removal][external-provisioner-cleanup]
-- [local-static-provisioner: Local Volume Node Cleanup Controller][static-provisioner-cleanup]
+When the hyperconverged webhook is enabled, `CreateVolume` normally omits
+accessible topology and stores ownership in PV metadata instead. All
+node-deployed provisioners can then receive `DeleteVolume`.
 
-[external-provisioner]: https://github.com/kubernetes-csi/external-provisioner
-[external-provisioner-cleanup]:
-    https://github.com/kubernetes-csi/external-provisioner?tab=readme-ov-file#deleting-local-volumes-after-a-node-failure-or-removal
-[static-provisioner-cleanup]:
-    https://github.com/kubernetes-sigs/sig-storage-local-static-provisioner/blob/master/docs/node-cleanup-controller.md
-[hyperconverged-webhook]: webhooks.md
+Each driver compares its node ID with:
+
+1. `localdisk.csi.acstor.io/selected-node`
+2. `localdisk.csi.acstor.io/selected-initial-node` when the current selection
+   is absent
+
+The owning node deletes the LV. Other nodes return `FailedPrecondition` while
+the selected node still exists. If the selected node no longer exists, a
+driver returns success so the external-provisioner can finish deleting the PV.
+
+The manager cleanup controller intentionally skips PVs without hostname
+topology. In this mode, CSI deletion success and standard Kubernetes finalizer
+handling complete deletion. Any inaccessible storage on the deleted node
+cannot be cleaned by the cluster.
+
+## Relationship to LV garbage collection
+
+PV cleanup and LV garbage collection solve different problems:
+
+| Mechanism | Deletes Kubernetes PV | Deletes local LV |
+| --- | --- | --- |
+| `DeleteVolume` | No | Yes, on the owning node |
+| Manager Released-PV cleanup | Yes | No |
+| Event-driven failover cleanup | No | Yes, on the old node |
+| Periodic orphan cleanup | No | Yes, when an LV has no PV or wrong ownership |
+
+The manager must not claim that storage was scrubbed when it only removed the
+PV object and finalizers.
+
+## Failure behavior
+
+- Failure to delete or patch a PV is returned for reconciliation retry.
+- A PV that disappears while finalizers are being removed is treated as
+  successfully cleaned.
+- A Node that exists but is not Ready does not block manager cleanup.
+- Retain-policy PVs are never processed by the manager cleanup controller.
+- Normal `DeleteVolume` stops if staging-path cleanup fails.
+
+## Related documentation
+
+- [Architecture](../architecture.md) - deletion and cleanup ownership
+- [PV Recovery](pv-recovery.md) - moving ownership and cleaning old-node LVs
+- [Webhooks](webhooks.md) - topology behavior when hyperconverged mode is
+  enabled
