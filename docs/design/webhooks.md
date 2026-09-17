@@ -21,9 +21,10 @@ When either webhook is enabled, the manager:
 4. Waits for certificate setup before registering handlers.
 5. Reports Ready only after the certificates and webhook server are ready.
 
-The default chart deploys two manager replicas. Leader election allows one
-manager to run the managed webhooks and controllers while another replica is
-available for failover.
+The default chart deploys two manager replicas. Leader election limits
+leader-elected controller work to one replica. It does not gate the webhook
+server: all ready manager replicas register and serve admission handlers, and
+the webhook Service can route requests to any of them.
 
 Both webhook configurations use `failurePolicy: Ignore`. If the webhook cannot
 be reached or returns a transport-level failure, the API server allows the
@@ -98,7 +99,7 @@ The StorageClass parameter
 | Mode | Pod affinity | Result when the current node is unavailable |
 | --- | --- | --- |
 | `availability` | Preferred | The Pod can move and receive a new empty LV |
-| `durability` | Required | The Pod remains Pending for the node with the existing LV |
+| `durability` | Required | The Pod targets an owning node, subject to the limitations below |
 
 `availability` is used when the parameter is absent or invalid.
 
@@ -106,9 +107,27 @@ Availability mode improves workload recovery but does not replicate data.
 During `NodeStageVolume` on another node, the driver updates PV ownership and
 creates an empty LV using the recorded capacity.
 
-Durability mode restricts the Pod to the node recorded by the PV. It preserves
-access to the existing local data while that node remains recoverable, but the
-workload cannot run when the node is unavailable.
+For a Pod with no existing required node affinity whose durability-mode PVs
+all record the same owning node, durability mode restricts the Pod to that
+node. This preserves access to the existing local data while the node remains
+recoverable, but the workload cannot run when the node is unavailable.
+
+The current implementation does not guarantee that restriction in these
+cases:
+
+- The Pod already has required node affinity. The webhook appends a separate
+  `NodeSelectorTerm`, and Kubernetes ORs required terms. A node matching an
+  existing term can therefore remain eligible without matching the storage
+  term.
+- The Pod references durability-mode PVs owned by different nodes. The webhook
+  combines the owning nodes in one storage term, so any one of those nodes can
+  satisfy it even though no node contains every existing LV.
+
+If either case schedules the Pod away from an LV that contains existing data,
+`NodeStageVolume` can transfer PV ownership and create an empty LV on the
+selected node. Workloads that depend on durability mode must avoid existing
+required node affinity and ensure all referenced durability-mode PVs share the
+same owning node.
 
 For Pods that reference multiple local-csi-driver PVs, use the same failover
 mode for every PV. The current handler applies one affinity mode to the combined
@@ -120,12 +139,12 @@ therefore produce order-dependent behavior.
 The webhook preserves existing `spec.affinity` and appends its storage
 requirement:
 
-- Durability mode appends a required node selector term.
+- Durability mode appends a required node selector term. Required terms are
+  ORed, so this does not intersect the storage constraint with existing terms.
 - Availability mode appends a preferred term with weight 100.
 
 Applications should inspect the resulting Pod affinity when combining storage
-affinity with their own required node selectors. Independent requirements can
-make a Pod unschedulable.
+affinity with their own required node selectors.
 
 ## Configuration
 

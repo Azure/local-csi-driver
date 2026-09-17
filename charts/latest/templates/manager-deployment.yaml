@@ -33,7 +33,7 @@ spec:
       serviceAccountName: {{ .Values.name }}-manager
       containers:
       - name: manager
-        {{- if hasPrefix "/" .Values.image.driver.repository }}
+        {{- if hasPrefix "/" .Values.image.manager.repository }}
         image: "{{ .Values.image.baseRepo }}{{ .Values.image.manager.repository }}:{{ .Values.image.manager.tag | default .Chart.AppVersion }}"
         {{- else }}
         image: "{{ .Values.image.manager.repository }}:{{ .Values.image.manager.tag | default .Chart.AppVersion }}"
