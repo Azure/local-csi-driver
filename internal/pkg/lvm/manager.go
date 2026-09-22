@@ -47,6 +47,17 @@ type Manager interface {
 	CreateLogicalVolume(ctx context.Context, opts CreateLVOptions) (int64, error)
 	// RemoveLogicalVolume removes a LV from a VG
 	RemoveLogicalVolume(ctx context.Context, opts RemoveLVOptions) error
+	// UpdateLogicalVolume changes LV attributes, including tags.
+	UpdateLogicalVolume(ctx context.Context, opts UpdateLVOptions) error
+	// RenameLogicalVolume renames a LV within its VG.
+	RenameLogicalVolume(ctx context.Context, opts RenameLVOptions) error
+	// SanitizeLogicalVolume overwrites every byte of a LV with zeroes and
+	// flushes the device, so that its extents carry no residual data when they
+	// are returned to the volume group's free pool.
+	//
+	// It must be called before RemoveLogicalVolume. Once lvremove has run the
+	// extents may be reallocated at any time and can no longer be reached.
+	SanitizeLogicalVolume(ctx context.Context, vgName string, lvName string) error
 	// ListLogicalVolumes lists the specified LVs.
 	ListLogicalVolumes(ctx context.Context, opts *ListLVOptions) ([]LogicalVolume, error)
 	// GetLogicalVolumes returns named LV.
@@ -63,4 +74,8 @@ type Manager interface {
 	// It is a no-op when the volume group still exists in LVM metadata (the
 	// nodes are not stale) or when there is nothing to clean up.
 	RemoveStaleDeviceMapperNodes(ctx context.Context, vgName string) error
+	// MakeVolumeGroupDeviceNodes creates device files for active logical
+	// volumes in the volume group (vgmknodes). It is synchronous: once it
+	// returns, every active LV in the group has its device node.
+	MakeVolumeGroupDeviceNodes(ctx context.Context, opts MakeVGDeviceNodesOptions) error
 }
