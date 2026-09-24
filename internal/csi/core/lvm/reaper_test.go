@@ -136,36 +136,6 @@ func TestReaperWipesBeforeRemoving(t *testing.T) {
 	}
 }
 
-// TestReaperDrainsQuarantineWithoutSanitizingWhenDisabled ensures the
-// emergency opt-out also releases volumes inherited from an earlier process.
-func TestReaperDrainsQuarantineWithoutSanitizingWhenDisabled(t *testing.T) {
-	t.Parallel()
-
-	l := newQuarantineTestLVM(t, func(m *lvmMgr.MockManager) {
-		expectVolumeGroup(m)
-		expectQuarantined(m, quarantinedLV(testWipeName))
-
-		m.EXPECT().
-			RemoveLogicalVolume(gomock.Any(), lvmMgr.RemoveLVOptions{
-				Name: testVolumeGroup + "/" + testWipeName,
-			}).
-			Return(nil)
-
-		// No activation or sanitization may be attempted.
-	})
-
-	r, err := lvm.NewReaper(l, kevents.NewFakeRecorder(16), lvm.ReaperConfig{
-		SkipSanitize: true,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	if err := r.Reconcile(context.Background()); err != nil {
-		t.Fatalf("Reconcile() error = %v", err)
-	}
-}
-
 // TestReaperRetainsVolumeOnSanitizeFailure covers the fail-closed contract.
 //
 // A volume that could not be zeroed keeps its extents and its tag. Removing it
@@ -415,9 +385,6 @@ func TestReaperSweepsOnStartup(t *testing.T) {
 		expectVolumeGroup(m)
 		expectQuarantined(m, quarantinedLV(testWipeNameInherited))
 
-		m.EXPECT().
-			MakeVolumeGroupDeviceNodes(gomock.Any(), lvmMgr.MakeVGDeviceNodesOptions{Name: testVolumeGroup}).
-			Return(nil)
 		m.EXPECT().UpdateLogicalVolume(gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
 		m.EXPECT().SanitizeLogicalVolume(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
 		m.EXPECT().

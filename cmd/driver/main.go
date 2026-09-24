@@ -311,12 +311,10 @@ func main() {
 		logAndExit(err, "unable to add startup diagnostic to manager")
 	}
 
-	// Setup the wipe reaper. When the emergency disable switch is set, it
-	// drains volumes quarantined by an earlier process without sanitizing them.
+	// Setup the wipe reaper.
 	wipeReaper, err := lvm.NewReaper(volumeClient, recorder, lvm.ReaperConfig{
-		Interval:     volumeWipeInterval,
-		Concurrency:  volumeWipeConcurrency,
-		SkipSanitize: !volumeWipeEnabled,
+		Interval:    volumeWipeInterval,
+		Concurrency: volumeWipeConcurrency,
 	})
 	if err != nil {
 		logAndExit(err, "unable to create volume wipe reaper")

@@ -55,9 +55,8 @@ const (
 	reaperRecoveryTimeout = 30 * time.Second
 
 	// Event reasons for the wipe reaper.
-	wipedLogicalVolume              = "WipedLogicalVolume"
-	removedLogicalVolumeWithoutWipe = "RemovedLogicalVolumeWithoutWipe"
-	wipeLogicalVolumeFail           = "WipeLogicalVolumeFailed"
+	wipedLogicalVolume    = "WipedLogicalVolume"
+	wipeLogicalVolumeFail = "WipeLogicalVolumeFailed"
 )
 
 // ReaperConfig configures the wipe reaper.
@@ -66,9 +65,6 @@ type ReaperConfig struct {
 	Interval time.Duration
 	// Concurrency is the number of volumes wiped at once.
 	Concurrency int
-	// SkipSanitize removes quarantined volumes without zeroing them. This is
-	// only for the emergency volume-wipe disable switch.
-	SkipSanitize bool
 }
 
 // Reaper zeroes and removes quarantined logical volumes.
@@ -83,11 +79,10 @@ type ReaperConfig struct {
 // and never talks to the API server, so it must not take part in leader
 // election.
 type Reaper struct {
-	core         *LVM
-	recorder     kevents.EventRecorder
-	interval     time.Duration
-	concurrency  int
-	skipSanitize bool
+	core        *LVM
+	recorder    kevents.EventRecorder
+	interval    time.Duration
+	concurrency int
 
 	// mu guards backoff.
 	mu sync.Mutex
@@ -117,12 +112,11 @@ func NewReaper(core *LVM, recorder kevents.EventRecorder, config ReaperConfig) (
 		config.Concurrency = DefaultReaperConcurrency
 	}
 	return &Reaper{
-		core:         core,
-		recorder:     recorder,
-		interval:     config.Interval,
-		concurrency:  config.Concurrency,
-		skipSanitize: config.SkipSanitize,
-		backoff:      make(map[string]*backoffEntry),
+		core:        core,
+		recorder:    recorder,
+		interval:    config.Interval,
+		concurrency: config.Concurrency,
+		backoff:     make(map[string]*backoffEntry),
 	}, nil
 }
 
@@ -147,9 +141,6 @@ func (r *Reaper) Start(ctx context.Context) error {
 	// Sweep unconditionally at startup. This is what makes quarantine
 	// crash-safe: volumes tagged by a previous process, which will never be
 	// signalled, are picked up here.
-	if err := r.reconcileDeviceNodes(ctx); err != nil {
-		log.Error(err, "initial device-node reconciliation failed")
-	}
 	if err := r.Reconcile(ctx); err != nil {
 		log.Error(err, "initial wipe sweep failed")
 	}
@@ -242,8 +233,7 @@ func (r *Reaper) Reconcile(ctx context.Context) error {
 				return nil
 			}
 			r.recordSuccess(lv)
-			log.Info("processed quarantined volume", "vg", lv.VGName, "lv", lv.Name,
-				"sanitized", !r.skipSanitize)
+			log.Info("wiped and removed quarantined volume", "vg", lv.VGName, "lv", lv.Name)
 			return nil
 		})
 	}
@@ -269,29 +259,6 @@ func (r *Reaper) wipe(ctx context.Context, lv lvm.LogicalVolume) error {
 	defer span.End()
 
 	fullName := lv.VGName + "/" + lv.Name
-
-	if r.skipSanitize {
-		current, err := r.core.lvm.GetLogicalVolume(ctx, lv.VGName, lv.Name)
-		if err != nil {
-			if lvm.IgnoreNotFound(err) == nil {
-				return nil
-			}
-			span.RecordError(err)
-			return fmt.Errorf("failed to re-read logical volume %s before removal: %w", fullName, err)
-		}
-		if current == nil || !IsQuarantineCommitted(*current) {
-			return nil
-		}
-
-		if err := r.removeLogicalVolume(ctx, lv); err != nil {
-			span.RecordError(err)
-			return err
-		}
-		r.event(corev1.EventTypeWarning, removedLogicalVolumeWithoutWipe,
-			"Removed logical volume %s without sanitizing it on node %s because volume wiping is disabled",
-			fullName, r.core.nodeName)
-		return nil
-	}
 
 	if err := r.core.lvm.UpdateLogicalVolume(ctx, lvm.UpdateLVOptions{
 		Name:     fullName,
@@ -419,66 +386,6 @@ func (r *Reaper) reconcileAmbiguousRemove(ctx context.Context, lv lvm.LogicalVol
 		return removeStaleLogicalVolumeDeviceNodes("/dev", lv.VGName, lv.Name)
 	}
 	return fmt.Errorf("logical volume %s/%s still exists after lvremove failed", lv.VGName, lv.Name)
-}
-
-// reconcileDeviceNodes repairs nodes left by an interrupted LVM command before
-// the startup sweep. It is best-effort; the normal activation and removal
-// paths repeat the relevant checks for each quarantined volume.
-func (r *Reaper) reconcileDeviceNodes(ctx context.Context) error {
-	vgNames, err := r.volumeGroups(ctx)
-	if err != nil {
-		return err
-	}
-
-	var errs []error
-	for _, vgName := range vgNames {
-		if err := r.core.lvm.MakeVolumeGroupDeviceNodes(ctx, lvm.MakeVGDeviceNodesOptions{
-			Name: vgName,
-		}); err != nil {
-			errs = append(errs, fmt.Errorf("failed to reconcile device nodes for volume group %s: %w", vgName, err))
-			continue
-		}
-		if err := r.removeStaleQuarantineDeviceNodes(ctx, vgName); err != nil {
-			errs = append(errs, err)
-		}
-	}
-	return errors.Join(errs...)
-}
-
-func (r *Reaper) removeStaleQuarantineDeviceNodes(ctx context.Context, vgName string) error {
-	devDir := filepath.Join("/dev", vgName)
-	if filepath.Dir(devDir) != "/dev" {
-		return fmt.Errorf("invalid volume group name %q", vgName)
-	}
-
-	entries, err := os.ReadDir(devDir)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil
-		}
-		return fmt.Errorf("failed to list device nodes for volume group %s: %w", vgName, err)
-	}
-
-	var errs []error
-	for _, entry := range entries {
-		lvName := entry.Name()
-		if !isQuarantineName(lvName) {
-			continue
-		}
-
-		current, err := r.core.lvm.GetLogicalVolume(ctx, vgName, lvName)
-		if err == nil && current != nil {
-			continue
-		}
-		if lvm.IgnoreNotFound(err) != nil {
-			errs = append(errs, fmt.Errorf("failed to verify stale device node %s/%s: %w", vgName, lvName, err))
-			continue
-		}
-		if err := removeStaleLogicalVolumeDeviceNodes("/dev", vgName, lvName); err != nil {
-			errs = append(errs, err)
-		}
-	}
-	return errors.Join(errs...)
 }
 
 func removeStaleLogicalVolumeDeviceNodes(devRoot, vgName, lvName string) error {

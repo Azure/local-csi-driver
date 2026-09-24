@@ -304,9 +304,11 @@ genuinely occupy the volume group.
 
 Sanitization is enabled by default. The node-global emergency switch below
 restores the pre-sanitization deletion behavior if the wipe path causes an
-operational incident. Disabling it removes new and already-quarantined volumes
-without zeroing their extents, so a later volume on the node may read previous
-tenant data. It must not be used as a performance tuning control.
+operational incident. Disabling it removes newly deleted volumes without
+zeroing their extents, so a later volume on the node may read previous tenant
+data. Volumes that were already quarantined continue through the normal
+sanitization reaper. The switch must not be used as a performance tuning
+control.
 
 ### Driver flags
 
