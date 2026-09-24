@@ -5,7 +5,10 @@ package lvm
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -45,6 +48,11 @@ const (
 	// not spin.
 	reaperBackoffBase = 30 * time.Second
 	reaperBackoffMax  = 30 * time.Minute
+
+	// reaperRecoveryTimeout bounds device-node reconciliation after an LVM
+	// command returns ambiguously. Recovery uses a context detached from the
+	// request cancellation because the original context may already be done.
+	reaperRecoveryTimeout = 30 * time.Second
 
 	// Event reasons for the wipe reaper.
 	wipedLogicalVolume    = "WipedLogicalVolume"
@@ -265,6 +273,31 @@ func (r *Reaper) wipe(ctx context.Context, lv lvm.LogicalVolume) error {
 		return fmt.Errorf("failed to activate logical volume %s for wiping: %w", fullName, err)
 	}
 
+	missing, err := r.core.lvm.IsLogicalVolumeCorrupted(ctx, lv.VGName, lv.Name)
+	if err != nil {
+		span.RecordError(err)
+		return fmt.Errorf("failed to check device node for logical volume %s: %w", fullName, err)
+	}
+	if missing {
+		if err := r.core.lvm.MakeVolumeGroupDeviceNodes(ctx, lvm.MakeVGDeviceNodesOptions{
+			Name: lv.VGName,
+		}); err != nil {
+			span.RecordError(err)
+			return fmt.Errorf("failed to reconcile device nodes for logical volume %s: %w", fullName, err)
+		}
+
+		missing, err = r.core.lvm.IsLogicalVolumeCorrupted(ctx, lv.VGName, lv.Name)
+		if err != nil {
+			span.RecordError(err)
+			return fmt.Errorf("failed to re-check device node for logical volume %s: %w", fullName, err)
+		}
+		if missing {
+			err := fmt.Errorf("device node for logical volume %s is still missing after reconciliation", fullName)
+			span.RecordError(err)
+			return err
+		}
+	}
+
 	// Refuse to write to a volume anything still has open.
 	//
 	// The exclusive open in SanitizeLogicalVolume is not sufficient on its
@@ -304,19 +337,74 @@ func (r *Reaper) wipe(ctx context.Context, lv lvm.LogicalVolume) error {
 		return fmt.Errorf("failed to sanitize logical volume %s: %w", fullName, err)
 	}
 
-	if err := r.core.lvm.RemoveLogicalVolume(ctx, lvm.RemoveLVOptions{Name: fullName}); err != nil {
-		if lvm.IgnoreNotFound(err) == nil {
-			// Already gone, and it was sanitized before it went.
-			return nil
-		}
+	if err := r.removeLogicalVolume(ctx, lv); err != nil {
 		span.RecordError(err)
-		return fmt.Errorf("failed to remove sanitized logical volume %s: %w", fullName, err)
+		return err
 	}
 
 	r.event(corev1.EventTypeNormal, wipedLogicalVolume,
 		"Sanitized and removed logical volume %s on node %s", fullName, r.core.nodeName)
 
 	return nil
+}
+
+func (r *Reaper) removeLogicalVolume(ctx context.Context, lv lvm.LogicalVolume) error {
+	fullName := lv.VGName + "/" + lv.Name
+	if err := r.core.lvm.RemoveLogicalVolume(ctx, lvm.RemoveLVOptions{Name: fullName}); err != nil {
+		if recoveryErr := r.reconcileAmbiguousRemove(ctx, lv); recoveryErr == nil {
+			return nil
+		} else {
+			return errors.Join(
+				fmt.Errorf("failed to remove logical volume %s: %w", fullName, err),
+				recoveryErr,
+			)
+		}
+	}
+	return nil
+}
+
+// reconcileAmbiguousRemove determines whether lvremove committed before
+// returning an error and repairs any stale device nodes it left behind.
+func (r *Reaper) reconcileAmbiguousRemove(ctx context.Context, lv lvm.LogicalVolume) error {
+	recoveryCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), reaperRecoveryTimeout)
+	defer cancel()
+
+	if err := r.core.lvm.MakeVolumeGroupDeviceNodes(recoveryCtx, lvm.MakeVGDeviceNodesOptions{
+		Name: lv.VGName,
+	}); err != nil {
+		return fmt.Errorf("failed to reconcile device nodes after removing %s/%s: %w", lv.VGName, lv.Name, err)
+	}
+
+	current, err := r.core.lvm.GetLogicalVolume(recoveryCtx, lv.VGName, lv.Name)
+	if lvm.IgnoreNotFound(err) == nil {
+		return removeStaleLogicalVolumeDeviceNodes("/dev", lv.VGName, lv.Name)
+	}
+	if err != nil {
+		return fmt.Errorf("failed to verify removal of logical volume %s/%s: %w", lv.VGName, lv.Name, err)
+	}
+	if current == nil {
+		return removeStaleLogicalVolumeDeviceNodes("/dev", lv.VGName, lv.Name)
+	}
+	return fmt.Errorf("logical volume %s/%s still exists after lvremove failed", lv.VGName, lv.Name)
+}
+
+func removeStaleLogicalVolumeDeviceNodes(devRoot, vgName, lvName string) error {
+	vgDir := filepath.Join(devRoot, vgName)
+	lvPath := filepath.Join(vgDir, lvName)
+	if filepath.Dir(vgDir) != filepath.Clean(devRoot) || filepath.Dir(lvPath) != vgDir {
+		return fmt.Errorf("invalid logical volume name %q/%q", vgName, lvName)
+	}
+
+	mapperName := strings.ReplaceAll(vgName, "-", "--") + "-" + strings.ReplaceAll(lvName, "-", "--")
+	mapperPath := filepath.Join(devRoot, "mapper", mapperName)
+
+	var errs []error
+	for _, path := range []string{lvPath, mapperPath} {
+		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+			errs = append(errs, fmt.Errorf("failed to remove stale device node %s: %w", path, err))
+		}
+	}
+	return errors.Join(errs...)
 }
 
 // volumeGroups returns the volume groups to sweep.

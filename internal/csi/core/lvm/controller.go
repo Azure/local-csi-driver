@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/container-storage-interface/spec/lib/go/csi"
 	"go.opentelemetry.io/otel/attribute"
@@ -148,6 +149,47 @@ func (l *LVM) Delete(ctx context.Context, req *csi.DeleteVolumeRequest) error {
 		attribute.String("vol.group", id.VolumeGroup),
 		attribute.String("vol.name", id.LogicalVolume),
 	)
+
+	if !l.volumeWipeEnabled {
+		// Cleanup the volume on the node.
+		deleteOps := lvm.RemoveLVOptions{Name: volumeId}
+
+		ctx, cancel := context.WithTimeout(ctx, removeVolumeRetryTimeout)
+		defer cancel()
+
+		ticker := time.NewTicker(removeVolumeRetryPoll)
+		defer ticker.Stop()
+
+		var lastErr error
+		for {
+			select {
+			case <-ctx.Done():
+				err := errors.Join(lastErr, ctx.Err())
+				recorder.Eventf(corev1.EventTypeWarning, deletingLogicalVolumeFailed, "Failed to delete logical volume %s: %s", volumeId, err.Error())
+				span.SetStatus(codes.Error, "failed to delete logical volume")
+				span.RecordError(err)
+				return fmt.Errorf("failed to remove logical volume %s: %w", volumeId, err)
+			case <-ticker.C:
+				err := l.lvm.RemoveLogicalVolume(ctx, deleteOps)
+				if lvm.IgnoreNotFound(err) == nil {
+					span.AddEvent("deleted logical volume")
+					span.SetStatus(codes.Ok, "deleted logical volume")
+					return nil
+				}
+				if !errors.Is(err, lvm.ErrInUse) {
+					recorder.Eventf(corev1.EventTypeWarning, deletingLogicalVolumeFailed, "Failed to delete logical volume %s: %s", volumeId, err.Error())
+					span.AddEvent("failed to delete logical volume", trace.WithAttributes(
+						attribute.String("error", err.Error()),
+					))
+					return err
+				}
+				span.AddEvent("failed to delete logical volume, retrying", trace.WithAttributes(
+					attribute.String("error", err.Error()),
+				))
+				lastErr = err
+			}
+		}
+	}
 
 	// Take the volume out of service and hand it to the wipe reaper.
 	//

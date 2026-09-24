@@ -300,23 +300,23 @@ genuinely occupy the volume group.
 | Per-volume encryption (dm-crypt) | Stronger, and covers pre-existing free space, but needs a key management design and costs CPU on every I/O. A possible future direction, not a substitute. |
 | Disable raw block volumes | Narrows the most direct exposure without addressing the underlying remanence, and removes a supported feature. |
 
-## How to Enable
+## Configuration
 
-Sanitization is always on; there is no flag to disable it.
-
-An opt-out cannot be scoped safely, because the beneficiary is the **next**
-tenant to receive the extents, not the one whose volume is being deleted. A
-per-volume or StorageClass opt-out would let one workload weaken a control
-protecting a different one, leaving a node-global switch as the only coherent
-scope -- exactly the kind of setting that gets turned off for a benchmark and
-never restored. The performance argument is weak in any case: capacity is not
-reclaimed until the wipe completes either way.
+Sanitization is enabled by default. The node-global emergency switch below
+restores the pre-sanitization deletion behavior if the wipe path causes an
+operational incident. Disabling it removes newly deleted volumes without
+zeroing their extents, so a later volume on the node may read previous tenant
+data. Volumes that were already quarantined continue through the normal
+sanitization reaper. The switch must not be used as a performance tuning
+control.
 
 ### Driver flags
 
-These pace the work; they do not control whether it happens.
-
 ```bash
+# Emergency opt-out (default true). Setting this to false forfeits the data
+# remanence guarantee for every deletion on the node.
+--volume-wipe-enabled=true
+
 # Backstop sweep interval (default 60s). Deletions are signalled directly, so
 # this only covers volumes inherited from a previous process.
 --volume-wipe-interval=60s
