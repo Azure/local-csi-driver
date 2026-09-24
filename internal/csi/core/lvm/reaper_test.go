@@ -76,6 +76,10 @@ func expectQuarantined(m *lvmMgr.MockManager, lvs ...lvmMgr.LogicalVolume) {
 			GetLogicalVolume(gomock.Any(), lv.VGName, lv.Name).
 			Return(&lv, nil).
 			AnyTimes()
+		m.EXPECT().
+			IsLogicalVolumeCorrupted(gomock.Any(), lv.VGName, lv.Name).
+			Return(false, nil).
+			AnyTimes()
 	}
 }
 
@@ -132,6 +136,36 @@ func TestReaperWipesBeforeRemoving(t *testing.T) {
 	}
 }
 
+// TestReaperDrainsQuarantineWithoutSanitizingWhenDisabled ensures the
+// emergency opt-out also releases volumes inherited from an earlier process.
+func TestReaperDrainsQuarantineWithoutSanitizingWhenDisabled(t *testing.T) {
+	t.Parallel()
+
+	l := newQuarantineTestLVM(t, func(m *lvmMgr.MockManager) {
+		expectVolumeGroup(m)
+		expectQuarantined(m, quarantinedLV(testWipeName))
+
+		m.EXPECT().
+			RemoveLogicalVolume(gomock.Any(), lvmMgr.RemoveLVOptions{
+				Name: testVolumeGroup + "/" + testWipeName,
+			}).
+			Return(nil)
+
+		// No activation or sanitization may be attempted.
+	})
+
+	r, err := lvm.NewReaper(l, kevents.NewFakeRecorder(16), lvm.ReaperConfig{
+		SkipSanitize: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := r.Reconcile(context.Background()); err != nil {
+		t.Fatalf("Reconcile() error = %v", err)
+	}
+}
+
 // TestReaperRetainsVolumeOnSanitizeFailure covers the fail-closed contract.
 //
 // A volume that could not be zeroed keeps its extents and its tag. Removing it
@@ -181,6 +215,45 @@ func TestReaperDoesNotSanitizeUnactivatedVolume(t *testing.T) {
 			Return(errors.New("volume group not found"))
 
 		// Neither sanitize nor remove may be called.
+	})
+
+	if err := r.Reconcile(context.Background()); err != nil {
+		t.Fatalf("Reconcile() error = %v", err)
+	}
+}
+
+// TestReaperRepairsMissingDeviceNodeAfterActivation covers the case where
+// lvchange succeeds for an already-active volume but its device node is still
+// missing. The reaper must force LVM to reconcile device nodes and verify the
+// path again before attempting to sanitize it.
+func TestReaperRepairsMissingDeviceNodeAfterActivation(t *testing.T) {
+	t.Parallel()
+
+	r := newTestReaper(t, func(m *lvmMgr.MockManager) {
+		expectVolumeGroup(m)
+		lv := quarantinedLV(testWipeName)
+		m.EXPECT().
+			ListLogicalVolumes(gomock.Any(), gomock.Any()).
+			Return([]lvmMgr.LogicalVolume{lv}, nil).
+			AnyTimes()
+		m.EXPECT().
+			GetLogicalVolume(gomock.Any(), lv.VGName, lv.Name).
+			Return(&lv, nil).
+			AnyTimes()
+
+		m.EXPECT().UpdateLogicalVolume(gomock.Any(), gomock.Any()).Return(nil)
+		m.EXPECT().
+			IsLogicalVolumeCorrupted(gomock.Any(), testVolumeGroup, testWipeName).
+			Return(true, nil)
+		m.EXPECT().
+			MakeVolumeGroupDeviceNodes(gomock.Any(), lvmMgr.MakeVGDeviceNodesOptions{Name: testVolumeGroup}).
+			Return(nil)
+		m.EXPECT().
+			IsLogicalVolumeCorrupted(gomock.Any(), testVolumeGroup, testWipeName).
+			Return(true, nil)
+
+		// The device node is still missing after reconciliation, so the volume
+		// must not be sanitized or removed.
 	})
 
 	if err := r.Reconcile(context.Background()); err != nil {
@@ -250,16 +323,79 @@ func TestReaperTreatsMissingVolumeAsRemoved(t *testing.T) {
 
 	r := newTestReaper(t, func(m *lvmMgr.MockManager) {
 		expectVolumeGroup(m)
-		expectQuarantined(m, quarantinedLV(testWipeName))
+		lv := quarantinedLV(testWipeName)
+		m.EXPECT().
+			ListLogicalVolumes(gomock.Any(), gomock.Any()).
+			Return([]lvmMgr.LogicalVolume{lv}, nil).
+			AnyTimes()
+		m.EXPECT().
+			GetLogicalVolume(gomock.Any(), lv.VGName, lv.Name).
+			Return(&lv, nil)
+		m.EXPECT().
+			IsLogicalVolumeCorrupted(gomock.Any(), lv.VGName, lv.Name).
+			Return(false, nil)
 
 		m.EXPECT().UpdateLogicalVolume(gomock.Any(), gomock.Any()).Return(nil)
 		m.EXPECT().SanitizeLogicalVolume(gomock.Any(), testVolumeGroup, testWipeName).Return(nil)
 		m.EXPECT().
 			RemoveLogicalVolume(gomock.Any(), gomock.Any()).
 			Return(lvmMgr.ErrNotFound)
+		m.EXPECT().
+			MakeVolumeGroupDeviceNodes(gomock.Any(), lvmMgr.MakeVGDeviceNodesOptions{Name: testVolumeGroup}).
+			Return(nil)
+		m.EXPECT().
+			GetLogicalVolume(gomock.Any(), testVolumeGroup, testWipeName).
+			Return(nil, lvmMgr.ErrNotFound)
 	})
 
 	if err := r.Reconcile(context.Background()); err != nil {
+		t.Fatalf("Reconcile() error = %v", err)
+	}
+}
+
+// TestReaperReconcilesNodesAfterAmbiguousRemove covers lvremove committing its
+// metadata update before the request context is cancelled. Recovery must use a
+// fresh bounded context because the original context is already cancelled.
+func TestReaperReconcilesNodesAfterAmbiguousRemove(t *testing.T) {
+	t.Parallel()
+
+	lv := quarantinedLV(testWipeName)
+	ctx, cancel := context.WithCancel(context.Background())
+
+	r := newTestReaper(t, func(m *lvmMgr.MockManager) {
+		expectVolumeGroup(m)
+		m.EXPECT().
+			ListLogicalVolumes(gomock.Any(), gomock.Any()).
+			Return([]lvmMgr.LogicalVolume{lv}, nil).
+			AnyTimes()
+		m.EXPECT().
+			GetLogicalVolume(gomock.Any(), lv.VGName, lv.Name).
+			Return(&lv, nil)
+		m.EXPECT().UpdateLogicalVolume(gomock.Any(), gomock.Any()).Return(nil)
+		m.EXPECT().
+			IsLogicalVolumeCorrupted(gomock.Any(), testVolumeGroup, testWipeName).
+			Return(false, nil)
+		m.EXPECT().SanitizeLogicalVolume(gomock.Any(), testVolumeGroup, testWipeName).Return(nil)
+		m.EXPECT().
+			RemoveLogicalVolume(gomock.Any(), lvmMgr.RemoveLVOptions{Name: testVolumeGroup + "/" + testWipeName}).
+			DoAndReturn(func(context.Context, lvmMgr.RemoveLVOptions) error {
+				cancel()
+				return context.Canceled
+			})
+		m.EXPECT().
+			MakeVolumeGroupDeviceNodes(gomock.Any(), lvmMgr.MakeVGDeviceNodesOptions{Name: testVolumeGroup}).
+			DoAndReturn(func(recoveryCtx context.Context, _ lvmMgr.MakeVGDeviceNodesOptions) error {
+				if err := recoveryCtx.Err(); err != nil {
+					t.Errorf("recovery context is already cancelled: %v", err)
+				}
+				return nil
+			})
+		m.EXPECT().
+			GetLogicalVolume(gomock.Any(), lv.VGName, lv.Name).
+			Return(nil, lvmMgr.ErrNotFound)
+	})
+
+	if err := r.Reconcile(ctx); err != nil {
 		t.Fatalf("Reconcile() error = %v", err)
 	}
 }
@@ -279,6 +415,9 @@ func TestReaperSweepsOnStartup(t *testing.T) {
 		expectVolumeGroup(m)
 		expectQuarantined(m, quarantinedLV(testWipeNameInherited))
 
+		m.EXPECT().
+			MakeVolumeGroupDeviceNodes(gomock.Any(), lvmMgr.MakeVGDeviceNodesOptions{Name: testVolumeGroup}).
+			Return(nil)
 		m.EXPECT().UpdateLogicalVolume(gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
 		m.EXPECT().SanitizeLogicalVolume(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
 		m.EXPECT().

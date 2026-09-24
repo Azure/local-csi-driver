@@ -44,6 +44,20 @@ func (a *lvmVolumeManagerAdapter) DeleteVolume(ctx context.Context, volumeID str
 		return fmt.Errorf("failed to parse volume ID %s: %w", volumeID, err)
 	}
 
+	if !a.lvmCore.IsVolumeWipeEnabled() {
+		err := a.lvmManager.RemoveLogicalVolume(ctx, lvmMgr.RemoveLVOptions{
+			Name: vgName + "/" + lvName,
+		})
+		if lvmMgr.IgnoreNotFound(err) == nil && !errors.Is(err, lvmMgr.ErrVolumeGroupNotFound) {
+			return nil
+		}
+		if err != nil {
+			return fmt.Errorf("failed to remove logical volume %s/%s with volume wiping disabled: %w",
+				vgName, lvName, err)
+		}
+		return nil
+	}
+
 	// Take the volume out of service rather than removing it.
 	//
 	// Garbage collection reclaims volumes whose data still belongs to a

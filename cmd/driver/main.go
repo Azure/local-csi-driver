@@ -88,6 +88,7 @@ func main() {
 	var enableLVGarbageCollection bool
 	var enableLVMOrphanCleanup bool
 	var lvmOrphanCleanupInterval time.Duration
+	var volumeWipeEnabled bool
 	var volumeWipeInterval time.Duration
 	var volumeWipeConcurrency int
 	var runAlongsideWebhook bool
@@ -133,6 +134,8 @@ func main() {
 		"If enabled, the LVM orphan cleanup controller will periodically scan and clean up orphaned LVM volumes on the node.")
 	flag.DurationVar(&lvmOrphanCleanupInterval, "lvm-orphan-cleanup-interval", 30*time.Minute,
 		"Interval for the LVM orphan cleanup controller to scan and clean up orphaned volumes.")
+	flag.BoolVar(&volumeWipeEnabled, "volume-wipe-enabled", true,
+		"Sanitize deleted logical volumes before their extents are reused. Disable only as an emergency mitigation; deleted volume data may be exposed to later volumes.")
 	flag.DurationVar(&volumeWipeInterval, "volume-wipe-interval", lvm.DefaultReaperInterval,
 		"Backstop interval for the volume wipe reaper to sweep for volumes awaiting sanitization. Deletions are signalled directly, so this only covers volumes inherited from a previous process.")
 	flag.IntVar(&volumeWipeConcurrency, "volume-wipe-concurrency", lvm.DefaultReaperConcurrency,
@@ -284,6 +287,7 @@ func main() {
 	if err != nil {
 		logAndExit(err, "unable to create lvm volume client")
 	}
+	volumeClient.SetVolumeWipeEnabled(volumeWipeEnabled)
 
 	// setup the volume client with the manager for running volume client
 	// cleanup tasks when the manager is stopped.
@@ -307,17 +311,12 @@ func main() {
 		logAndExit(err, "unable to add startup diagnostic to manager")
 	}
 
-	// Setup the wipe reaper to zero and remove volumes that have been
-	// quarantined by deletion or garbage collection.
-	//
-	// This is deliberately not behind a feature flag. It is a security
-	// control, and the party it protects is the next tenant to be given the
-	// extents, not the one whose volume was deleted, so there is no scope at
-	// which an opt-out would be coherent. Without it, quarantined volumes are
-	// never removed and the node leaks capacity.
+	// Setup the wipe reaper. When the emergency disable switch is set, it
+	// drains volumes quarantined by an earlier process without sanitizing them.
 	wipeReaper, err := lvm.NewReaper(volumeClient, recorder, lvm.ReaperConfig{
-		Interval:    volumeWipeInterval,
-		Concurrency: volumeWipeConcurrency,
+		Interval:     volumeWipeInterval,
+		Concurrency:  volumeWipeConcurrency,
+		SkipSanitize: !volumeWipeEnabled,
 	})
 	if err != nil {
 		logAndExit(err, "unable to create volume wipe reaper")
@@ -325,7 +324,8 @@ func main() {
 	if err := wipeReaper.SetupWithManager(mgr); err != nil {
 		logAndExit(err, "unable to setup volume wipe reaper with manager")
 	}
-	log.Info("volume wipe reaper configured", "interval", volumeWipeInterval, "concurrency", volumeWipeConcurrency)
+	log.Info("volume wipe reaper configured", "enabled", volumeWipeEnabled,
+		"interval", volumeWipeInterval, "concurrency", volumeWipeConcurrency)
 
 	// Setup PV garbage collection controller to clean up orphaned LVM volumes
 	// when PV node annotations don't match the current node
