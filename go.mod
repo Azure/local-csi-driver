@@ -9,8 +9,8 @@ require (
 	github.com/google/uuid v1.6.0
 	github.com/kubernetes-csi/csi-lib-utils v0.24.0
 	github.com/kubernetes-csi/csi-test/v5 v5.5.0
-	github.com/onsi/ginkgo/v2 v2.32.2
-	github.com/onsi/gomega v1.43.0
+	github.com/onsi/ginkgo/v2 v2.33.0
+	github.com/onsi/gomega v1.43.1
 	github.com/open-policy-agent/cert-controller v0.16.0
 	github.com/prometheus/client_golang v1.24.1
 	go.opentelemetry.io/contrib/bridges/prometheus v0.71.0
@@ -28,7 +28,7 @@ require (
 	golang.org/x/mod v0.41.0
 	golang.org/x/sync v0.23.0
 	golang.org/x/sys v0.48.0
-	google.golang.org/grpc v1.83.2
+	google.golang.org/grpc v1.84.0
 	google.golang.org/protobuf v1.36.12
 	k8s.io/api v0.36.4
 	k8s.io/apiextensions-apiserver v0.36.4
