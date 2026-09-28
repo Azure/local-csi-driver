@@ -185,8 +185,19 @@ type LVM struct {
 	wipeSignal chan struct{}
 }
 
+// Option configures an LVM volume manager.
+type Option func(*LVM)
+
+// WithVolumeWipeEnabled controls whether deleted volumes are quarantined and
+// sanitized before removal.
+func WithVolumeWipeEnabled(enabled bool) Option {
+	return func(l *LVM) {
+		l.volumeWipeEnabled = enabled
+	}
+}
+
 // New creates a new LVM volume manager.
-func New(podName, nodeName, releaseNamespace string, enableCleanup bool, probe probe.Interface, lvmMgr lvm.Manager, tp trace.TracerProvider) (*LVM, error) {
+func New(podName, nodeName, releaseNamespace string, enableCleanup bool, probe probe.Interface, lvmMgr lvm.Manager, tp trace.TracerProvider, opts ...Option) (*LVM, error) {
 	if podName == "" {
 		return nil, fmt.Errorf("podName must not be empty")
 	}
@@ -196,7 +207,7 @@ func New(podName, nodeName, releaseNamespace string, enableCleanup bool, probe p
 	if releaseNamespace == "" {
 		return nil, fmt.Errorf("releaseNamespace must not be empty")
 	}
-	return &LVM{
+	volumeManager := &LVM{
 		podName:           podName,
 		nodeName:          nodeName,
 		releaseNamespace:  releaseNamespace,
@@ -209,14 +220,11 @@ func New(podName, nodeName, releaseNamespace string, enableCleanup bool, probe p
 		// number of subsequent quarantines, because each sweep processes
 		// everything it finds.
 		wipeSignal: make(chan struct{}, 1),
-	}, nil
-}
-
-// SetVolumeWipeEnabled controls whether deleted volumes are quarantined and
-// sanitized before removal. It must be called during startup, before the CSI
-// server begins serving requests.
-func (l *LVM) SetVolumeWipeEnabled(enabled bool) {
-	l.volumeWipeEnabled = enabled
+	}
+	for _, opt := range opts {
+		opt(volumeManager)
+	}
+	return volumeManager, nil
 }
 
 // IsVolumeWipeEnabled reports whether deletions must be quarantined for

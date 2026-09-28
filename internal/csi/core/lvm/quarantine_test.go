@@ -22,7 +22,7 @@ import (
 const testLogicalVolume = "test-lv"
 
 // newQuarantineTestLVM builds an LVM core backed by a mock manager.
-func newQuarantineTestLVM(t *testing.T, expect func(*lvmMgr.MockManager)) *lvm.LVM {
+func newQuarantineTestLVM(t *testing.T, expect func(*lvmMgr.MockManager), opts ...lvm.Option) *lvm.LVM {
 	t.Helper()
 
 	ctrl := gomock.NewController(t)
@@ -37,6 +37,7 @@ func newQuarantineTestLVM(t *testing.T, expect func(*lvmMgr.MockManager)) *lvm.L
 		"test-pod", "test-node", "test-namespace", false,
 		probe.NewFake([]string{"device1"}, nil), mockLVM,
 		telemetry.NewNoopTracerProvider(),
+		opts...,
 	)
 	if err != nil {
 		t.Fatal(err)

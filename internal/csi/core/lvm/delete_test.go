@@ -61,8 +61,7 @@ func TestDeleteUsesLegacyRemovalWhenWipeDisabled(t *testing.T) {
 				Name: testVolumeGroup + "/" + testLogicalVolume,
 			}).
 			Return(nil)
-	})
-	l.SetVolumeWipeEnabled(false)
+	}, lvm.WithVolumeWipeEnabled(false))
 
 	err := l.Delete(context.Background(), &csi.DeleteVolumeRequest{
 		VolumeId: testVolumeGroup + "#" + testLogicalVolume,
@@ -79,8 +78,7 @@ func TestDeleteWithWipeDisabledIsIdempotent(t *testing.T) {
 		m.EXPECT().
 			RemoveLogicalVolume(gomock.Any(), gomock.Any()).
 			Return(lvmMgr.ErrNotFound)
-	})
-	l.SetVolumeWipeEnabled(false)
+	}, lvm.WithVolumeWipeEnabled(false))
 
 	err := l.Delete(context.Background(), &csi.DeleteVolumeRequest{
 		VolumeId: testVolumeGroup + "#" + testLogicalVolume,
@@ -90,21 +88,20 @@ func TestDeleteWithWipeDisabledIsIdempotent(t *testing.T) {
 	}
 }
 
-func TestDeleteWithWipeDisabledUsesLegacyNotFoundHandling(t *testing.T) {
+func TestDeleteWithWipeDisabledRejectsMissingVolumeGroup(t *testing.T) {
 	t.Parallel()
 
 	l := newQuarantineTestLVM(t, func(m *lvmMgr.MockManager) {
 		m.EXPECT().
 			RemoveLogicalVolume(gomock.Any(), gomock.Any()).
 			Return(fmt.Errorf("%w: Volume group %q not found", lvmMgr.ErrVolumeGroupNotFound, testVolumeGroup))
-	})
-	l.SetVolumeWipeEnabled(false)
+	}, lvm.WithVolumeWipeEnabled(false))
 
 	err := l.Delete(context.Background(), &csi.DeleteVolumeRequest{
 		VolumeId: testVolumeGroup + "#" + testLogicalVolume,
 	})
-	if err != nil {
-		t.Fatalf("Delete() error = %v, want nil from the legacy not-found handling", err)
+	if !errors.Is(err, lvmMgr.ErrVolumeGroupNotFound) {
+		t.Fatalf("Delete() error = %v, want ErrVolumeGroupNotFound", err)
 	}
 }
 
@@ -120,8 +117,7 @@ func TestDeleteWithWipeDisabledRetriesWhenVolumeIsInUse(t *testing.T) {
 				RemoveLogicalVolume(gomock.Any(), gomock.Any()).
 				Return(nil),
 		)
-	})
-	l.SetVolumeWipeEnabled(false)
+	}, lvm.WithVolumeWipeEnabled(false))
 
 	err := l.Delete(context.Background(), &csi.DeleteVolumeRequest{
 		VolumeId: testVolumeGroup + "#" + testLogicalVolume,

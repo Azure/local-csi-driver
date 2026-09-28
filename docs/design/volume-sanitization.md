@@ -306,9 +306,10 @@ Sanitization is enabled by default. The node-global emergency switch below
 restores the pre-sanitization deletion behavior if the wipe path causes an
 operational incident. Disabling it removes newly deleted volumes without
 zeroing their extents, so a later volume on the node may read previous tenant
-data. Volumes that were already quarantined continue through the normal
-sanitization reaper. The switch must not be used as a performance tuning
-control.
+data. This switch does not stop the reaper: volumes that were already
+quarantined are still zeroed before removal. Zeroing uses local disk bandwidth
+and may affect application I/O. The switch must not be used as a performance
+tuning control.
 
 ### Driver flags
 

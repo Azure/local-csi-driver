@@ -52,7 +52,7 @@ const (
 	// reaperRecoveryTimeout bounds device-node reconciliation after an LVM
 	// command returns ambiguously. Recovery uses a context detached from the
 	// request cancellation because the original context may already be done.
-	reaperRecoveryTimeout = 30 * time.Second
+	reaperRecoveryTimeout = 10 * time.Second
 
 	// Event reasons for the wipe reaper.
 	wipedLogicalVolume    = "WipedLogicalVolume"
@@ -65,6 +65,12 @@ type ReaperConfig struct {
 	Interval time.Duration
 	// Concurrency is the number of volumes wiped at once.
 	Concurrency int
+	// DeviceRoot is the root directory containing logical volume device nodes.
+	// It defaults to /dev.
+	DeviceRoot string
+	// SysBlockRoot is the sysfs directory containing block devices.
+	// It defaults to /sys/block.
+	SysBlockRoot string
 }
 
 // Reaper zeroes and removes quarantined logical volumes.
@@ -79,10 +85,12 @@ type ReaperConfig struct {
 // and never talks to the API server, so it must not take part in leader
 // election.
 type Reaper struct {
-	core        *LVM
-	recorder    kevents.EventRecorder
-	interval    time.Duration
-	concurrency int
+	core         *LVM
+	recorder     kevents.EventRecorder
+	interval     time.Duration
+	concurrency  int
+	deviceRoot   string
+	sysBlockRoot string
 
 	// mu guards backoff.
 	mu sync.Mutex
@@ -111,12 +119,20 @@ func NewReaper(core *LVM, recorder kevents.EventRecorder, config ReaperConfig) (
 	if config.Concurrency <= 0 {
 		config.Concurrency = DefaultReaperConcurrency
 	}
+	if config.DeviceRoot == "" {
+		config.DeviceRoot = "/dev"
+	}
+	if config.SysBlockRoot == "" {
+		config.SysBlockRoot = "/sys/block"
+	}
 	return &Reaper{
-		core:        core,
-		recorder:    recorder,
-		interval:    config.Interval,
-		concurrency: config.Concurrency,
-		backoff:     make(map[string]*backoffEntry),
+		core:         core,
+		recorder:     recorder,
+		interval:     config.Interval,
+		concurrency:  config.Concurrency,
+		deviceRoot:   config.DeviceRoot,
+		sysBlockRoot: config.SysBlockRoot,
+		backoff:      make(map[string]*backoffEntry),
 	}, nil
 }
 
@@ -273,6 +289,8 @@ func (r *Reaper) wipe(ctx context.Context, lv lvm.LogicalVolume) error {
 		return fmt.Errorf("failed to activate logical volume %s for wiping: %w", fullName, err)
 	}
 
+	// The LVM manager reports an LV as corrupted when its metadata exists but
+	// its device node is missing.
 	missing, err := r.core.lvm.IsLogicalVolumeCorrupted(ctx, lv.VGName, lv.Name)
 	if err != nil {
 		span.RecordError(err)
@@ -350,17 +368,30 @@ func (r *Reaper) wipe(ctx context.Context, lv lvm.LogicalVolume) error {
 
 func (r *Reaper) removeLogicalVolume(ctx context.Context, lv lvm.LogicalVolume) error {
 	fullName := lv.VGName + "/" + lv.Name
-	if err := r.core.lvm.RemoveLogicalVolume(ctx, lvm.RemoveLVOptions{Name: fullName}); err != nil {
-		if recoveryErr := r.reconcileAmbiguousRemove(ctx, lv); recoveryErr == nil {
-			return nil
-		} else {
-			return errors.Join(
-				fmt.Errorf("failed to remove logical volume %s: %w", fullName, err),
-				recoveryErr,
-			)
-		}
+	err := r.core.lvm.RemoveLogicalVolume(ctx, lvm.RemoveLVOptions{Name: fullName})
+	if err == nil {
+		return nil
+	}
+	if !shouldReconcileAmbiguousRemove(ctx, err) {
+		return fmt.Errorf("failed to remove logical volume %s: %w", fullName, err)
+	}
+	if recoveryErr := r.reconcileAmbiguousRemove(ctx, lv); recoveryErr != nil {
+		return errors.Join(
+			fmt.Errorf("failed to remove logical volume %s: %w", fullName, err),
+			recoveryErr,
+		)
 	}
 	return nil
+}
+
+func shouldReconcileAmbiguousRemove(ctx context.Context, err error) bool {
+	if errors.Is(err, lvm.ErrVolumeGroupNotFound) {
+		return false
+	}
+	return errors.Is(err, lvm.ErrNotFound) ||
+		errors.Is(err, context.Canceled) ||
+		errors.Is(err, context.DeadlineExceeded) ||
+		ctx.Err() != nil
 }
 
 // reconcileAmbiguousRemove determines whether lvremove committed before
@@ -377,18 +408,18 @@ func (r *Reaper) reconcileAmbiguousRemove(ctx context.Context, lv lvm.LogicalVol
 
 	current, err := r.core.lvm.GetLogicalVolume(recoveryCtx, lv.VGName, lv.Name)
 	if lvm.IgnoreNotFound(err) == nil {
-		return removeStaleLogicalVolumeDeviceNodes("/dev", lv.VGName, lv.Name)
+		return removeStaleLogicalVolumeDeviceNodes(r.deviceRoot, r.sysBlockRoot, lv.VGName, lv.Name)
 	}
 	if err != nil {
 		return fmt.Errorf("failed to verify removal of logical volume %s/%s: %w", lv.VGName, lv.Name, err)
 	}
 	if current == nil {
-		return removeStaleLogicalVolumeDeviceNodes("/dev", lv.VGName, lv.Name)
+		return removeStaleLogicalVolumeDeviceNodes(r.deviceRoot, r.sysBlockRoot, lv.VGName, lv.Name)
 	}
 	return fmt.Errorf("logical volume %s/%s still exists after lvremove failed", lv.VGName, lv.Name)
 }
 
-func removeStaleLogicalVolumeDeviceNodes(devRoot, vgName, lvName string) error {
+func removeStaleLogicalVolumeDeviceNodes(devRoot, sysBlockRoot, vgName, lvName string) error {
 	vgDir := filepath.Join(devRoot, vgName)
 	lvPath := filepath.Join(vgDir, lvName)
 	if filepath.Dir(vgDir) != filepath.Clean(devRoot) || filepath.Dir(lvPath) != vgDir {
@@ -398,6 +429,14 @@ func removeStaleLogicalVolumeDeviceNodes(devRoot, vgName, lvName string) error {
 	mapperName := strings.ReplaceAll(vgName, "-", "--") + "-" + strings.ReplaceAll(lvName, "-", "--")
 	mapperPath := filepath.Join(devRoot, "mapper", mapperName)
 
+	active, err := deviceMapperActive(sysBlockRoot, mapperName)
+	if err != nil {
+		return fmt.Errorf("failed to check device-mapper mapping %s: %w", mapperName, err)
+	}
+	if active {
+		return fmt.Errorf("refusing to remove device nodes for %s/%s: device-mapper mapping is still active", vgName, lvName)
+	}
+
 	var errs []error
 	for _, path := range []string{lvPath, mapperPath} {
 		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
@@ -405,6 +444,32 @@ func removeStaleLogicalVolumeDeviceNodes(devRoot, vgName, lvName string) error {
 		}
 	}
 	return errors.Join(errs...)
+}
+
+func deviceMapperActive(sysBlockRoot, mapperName string) (bool, error) {
+	entries, err := os.ReadDir(sysBlockRoot)
+	if err != nil {
+		return false, fmt.Errorf("failed to read sysfs block directory %s: %w", sysBlockRoot, err)
+	}
+
+	for _, entry := range entries {
+		if !strings.HasPrefix(entry.Name(), "dm-") {
+			continue
+		}
+
+		namePath := filepath.Join(sysBlockRoot, entry.Name(), "dm", "name")
+		name, err := os.ReadFile(namePath)
+		if err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
+			return false, fmt.Errorf("failed to read device-mapper name %s: %w", namePath, err)
+		}
+		if strings.TrimSpace(string(name)) == mapperName {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 // volumeGroups returns the volume groups to sweep.

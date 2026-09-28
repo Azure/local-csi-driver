@@ -6,6 +6,7 @@ package lvm_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -22,14 +23,41 @@ import (
 func newTestReaper(t *testing.T, expect func(*lvmMgr.MockManager)) *lvm.Reaper {
 	t.Helper()
 
-	l := newQuarantineTestLVM(t, expect)
+	r, _ := newTestReaperWithRecorder(t, expect)
+	return r
+}
 
-	r, err := lvm.NewReaper(l, kevents.NewFakeRecorder(16), lvm.ReaperConfig{})
+func newTestReaperWithRecorder(
+	t *testing.T,
+	expect func(*lvmMgr.MockManager),
+) (*lvm.Reaper, *kevents.FakeRecorder) {
+	t.Helper()
+
+	l := newQuarantineTestLVM(t, expect)
+	recorder := kevents.NewFakeRecorder(16)
+
+	r, err := lvm.NewReaper(l, recorder, lvm.ReaperConfig{
+		DeviceRoot:   t.TempDir(),
+		SysBlockRoot: t.TempDir(),
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	return r
+	return r, recorder
+}
+
+func expectEventReason(t *testing.T, recorder *kevents.FakeRecorder, reason string) {
+	t.Helper()
+
+	select {
+	case event := <-recorder.Events:
+		if !strings.Contains(event, reason) {
+			t.Fatalf("event = %q, want reason %q", event, reason)
+		}
+	default:
+		t.Fatalf("expected event with reason %q", reason)
+	}
 }
 
 // expectVolumeGroup makes the mock report a single tagged volume group.
@@ -199,7 +227,7 @@ func TestReaperDoesNotSanitizeUnactivatedVolume(t *testing.T) {
 func TestReaperRepairsMissingDeviceNodeAfterActivation(t *testing.T) {
 	t.Parallel()
 
-	r := newTestReaper(t, func(m *lvmMgr.MockManager) {
+	r, recorder := newTestReaperWithRecorder(t, func(m *lvmMgr.MockManager) {
 		expectVolumeGroup(m)
 		lv := quarantinedLV(testWipeName)
 		m.EXPECT().
@@ -229,6 +257,7 @@ func TestReaperRepairsMissingDeviceNodeAfterActivation(t *testing.T) {
 	if err := r.Reconcile(context.Background()); err != nil {
 		t.Fatalf("Reconcile() error = %v", err)
 	}
+	expectEventReason(t, recorder, "WipeLogicalVolumeFailed")
 }
 
 // TestReaperSkipsUnquarantinedVolumes checks that the reaper only ever acts on
@@ -323,6 +352,44 @@ func TestReaperTreatsMissingVolumeAsRemoved(t *testing.T) {
 	}
 }
 
+func TestReaperSkipsRecoveryForDeterministicRemoveErrors(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name      string
+		removeErr error
+	}{
+		{
+			name:      "volume in use",
+			removeErr: lvmMgr.ErrInUse,
+		},
+		{
+			name:      "volume group unavailable",
+			removeErr: fmt.Errorf("%w: volume group %q not found", lvmMgr.ErrVolumeGroupNotFound, testVolumeGroup),
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			lv := quarantinedLV(testWipeName)
+			r, recorder := newTestReaperWithRecorder(t, func(m *lvmMgr.MockManager) {
+				expectVolumeGroup(m)
+				expectQuarantined(m, lv)
+				m.EXPECT().UpdateLogicalVolume(gomock.Any(), gomock.Any()).Return(nil)
+				m.EXPECT().SanitizeLogicalVolume(gomock.Any(), lv.VGName, lv.Name).Return(nil)
+				m.EXPECT().
+					RemoveLogicalVolume(gomock.Any(), lvmMgr.RemoveLVOptions{Name: lv.VGName + "/" + lv.Name}).
+					Return(tt.removeErr)
+			})
+
+			if err := r.Reconcile(context.Background()); err != nil {
+				t.Fatalf("Reconcile() error = %v", err)
+			}
+			expectEventReason(t, recorder, "WipeLogicalVolumeFailed")
+		})
+	}
+}
+
 // TestReaperReconcilesNodesAfterAmbiguousRemove covers lvremove committing its
 // metadata update before the request context is cancelled. Recovery must use a
 // fresh bounded context because the original context is already cancelled.
@@ -332,7 +399,7 @@ func TestReaperReconcilesNodesAfterAmbiguousRemove(t *testing.T) {
 	lv := quarantinedLV(testWipeName)
 	ctx, cancel := context.WithCancel(context.Background())
 
-	r := newTestReaper(t, func(m *lvmMgr.MockManager) {
+	r, recorder := newTestReaperWithRecorder(t, func(m *lvmMgr.MockManager) {
 		expectVolumeGroup(m)
 		m.EXPECT().
 			ListLogicalVolumes(gomock.Any(), gomock.Any()).
@@ -368,6 +435,7 @@ func TestReaperReconcilesNodesAfterAmbiguousRemove(t *testing.T) {
 	if err := r.Reconcile(ctx); err != nil {
 		t.Fatalf("Reconcile() error = %v", err)
 	}
+	expectEventReason(t, recorder, "WipedLogicalVolume")
 }
 
 // TestReaperSweepsOnStartup checks that the reaper wipes volumes it was never

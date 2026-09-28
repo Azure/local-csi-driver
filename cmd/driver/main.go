@@ -283,11 +283,19 @@ func main() {
 	//
 	// Volume client is an abstraction that understands csi requests and
 	// responses and how to implement them for a storage type.
-	volumeClient, err := lvm.New(podName, nodeName, namespace, enableCleanup, deviceProbe, lvmMgr, tp)
+	volumeClient, err := lvm.New(
+		podName,
+		nodeName,
+		namespace,
+		enableCleanup,
+		deviceProbe,
+		lvmMgr,
+		tp,
+		lvm.WithVolumeWipeEnabled(volumeWipeEnabled),
+	)
 	if err != nil {
 		logAndExit(err, "unable to create lvm volume client")
 	}
-	volumeClient.SetVolumeWipeEnabled(volumeWipeEnabled)
 
 	// setup the volume client with the manager for running volume client
 	// cleanup tasks when the manager is stopped.
