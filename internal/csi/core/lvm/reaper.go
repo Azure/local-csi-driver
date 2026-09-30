@@ -407,16 +407,23 @@ func (r *Reaper) reconcileAmbiguousRemove(ctx context.Context, lv lvm.LogicalVol
 	}
 
 	current, err := r.core.lvm.GetLogicalVolume(recoveryCtx, lv.VGName, lv.Name)
-	if lvm.IgnoreNotFound(err) == nil {
+	if errors.Is(err, lvm.ErrVolumeGroupNotFound) {
+		return fmt.Errorf("failed to verify removal of logical volume %s/%s: %w", lv.VGName, lv.Name, err)
+	}
+	if errors.Is(err, lvm.ErrNotFound) {
 		return removeStaleLogicalVolumeDeviceNodes(r.deviceRoot, r.sysBlockRoot, lv.VGName, lv.Name)
 	}
 	if err != nil {
 		return fmt.Errorf("failed to verify removal of logical volume %s/%s: %w", lv.VGName, lv.Name, err)
 	}
-	if current == nil {
-		return removeStaleLogicalVolumeDeviceNodes(r.deviceRoot, r.sysBlockRoot, lv.VGName, lv.Name)
+	if current != nil {
+		return fmt.Errorf("logical volume %s/%s still exists after lvremove failed", lv.VGName, lv.Name)
 	}
-	return fmt.Errorf("logical volume %s/%s still exists after lvremove failed", lv.VGName, lv.Name)
+	return fmt.Errorf(
+		"failed to verify removal of logical volume %s/%s: lookup returned no volume and no error",
+		lv.VGName,
+		lv.Name,
+	)
 }
 
 func removeStaleLogicalVolumeDeviceNodes(devRoot, sysBlockRoot, vgName, lvName string) error {

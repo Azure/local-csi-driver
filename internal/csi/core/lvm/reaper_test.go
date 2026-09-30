@@ -438,6 +438,46 @@ func TestReaperReconcilesNodesAfterAmbiguousRemove(t *testing.T) {
 	expectEventReason(t, recorder, "WipedLogicalVolume")
 }
 
+func TestReaperFailsClosedWhenAmbiguousRemoveStillHasMetadata(t *testing.T) {
+	t.Parallel()
+
+	lv := quarantinedLV(testWipeName)
+	ctx, cancel := context.WithCancel(context.Background())
+
+	r, recorder := newTestReaperWithRecorder(t, func(m *lvmMgr.MockManager) {
+		expectVolumeGroup(m)
+		m.EXPECT().
+			ListLogicalVolumes(gomock.Any(), gomock.Any()).
+			Return([]lvmMgr.LogicalVolume{lv}, nil).
+			AnyTimes()
+		m.EXPECT().
+			GetLogicalVolume(gomock.Any(), lv.VGName, lv.Name).
+			Return(&lv, nil)
+		m.EXPECT().
+			IsLogicalVolumeCorrupted(gomock.Any(), lv.VGName, lv.Name).
+			Return(false, nil)
+		m.EXPECT().UpdateLogicalVolume(gomock.Any(), gomock.Any()).Return(nil)
+		m.EXPECT().SanitizeLogicalVolume(gomock.Any(), lv.VGName, lv.Name).Return(nil)
+		m.EXPECT().
+			RemoveLogicalVolume(gomock.Any(), lvmMgr.RemoveLVOptions{Name: lv.VGName + "/" + lv.Name}).
+			DoAndReturn(func(context.Context, lvmMgr.RemoveLVOptions) error {
+				cancel()
+				return context.Canceled
+			})
+		m.EXPECT().
+			MakeVolumeGroupDeviceNodes(gomock.Any(), lvmMgr.MakeVGDeviceNodesOptions{Name: lv.VGName}).
+			Return(nil)
+		m.EXPECT().
+			GetLogicalVolume(gomock.Any(), lv.VGName, lv.Name).
+			Return(&lv, nil)
+	})
+
+	if err := r.Reconcile(ctx); err != nil {
+		t.Fatalf("Reconcile() error = %v", err)
+	}
+	expectEventReason(t, recorder, "WipeLogicalVolumeFailed")
+}
+
 // TestReaperSweepsOnStartup checks that the reaper wipes volumes it was never
 // signalled about.
 //
