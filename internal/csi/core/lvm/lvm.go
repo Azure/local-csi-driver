@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/container-storage-interface/spec/lib/go/csi"
 	"go.opentelemetry.io/otel/attribute"
@@ -88,6 +89,14 @@ var (
 	// provisioning.
 	ErrNoDisksFound = fmt.Errorf("no disks found")
 
+	// removeVolumeRetryPoll is the time to wait between retries when removing
+	// a logical volume that is still in use.
+	removeVolumeRetryPoll = 500 * time.Millisecond
+
+	// removeVolumeRetryTimeout is the time to wait before giving up on
+	// removing a logical volume that remains in use.
+	removeVolumeRetryTimeout = 10 * time.Second
+
 	// ErrVolumeUnusable is returned when a logical volume exists but cannot be
 	// brought online, so it can neither be served to the caller nor have its
 	// extents cleared for reuse.
@@ -154,13 +163,14 @@ var (
 )
 
 type LVM struct {
-	releaseNamespace string
-	podName          string
-	nodeName         string
-	enableCleanup    bool
-	probe            probe.Interface
-	lvm              lvm.Manager
-	tracer           trace.Tracer
+	releaseNamespace  string
+	podName           string
+	nodeName          string
+	enableCleanup     bool
+	volumeWipeEnabled bool
+	probe             probe.Interface
+	lvm               lvm.Manager
+	tracer            trace.Tracer
 
 	// vgGroup deduplicates concurrent EnsureVolumeGroup calls for the same
 	// volume group so that only one goroutine provisions it at a time.
@@ -175,8 +185,19 @@ type LVM struct {
 	wipeSignal chan struct{}
 }
 
+// Option configures an LVM volume manager.
+type Option func(*LVM)
+
+// WithVolumeWipeEnabled controls whether deleted volumes are quarantined and
+// sanitized before removal.
+func WithVolumeWipeEnabled(enabled bool) Option {
+	return func(l *LVM) {
+		l.volumeWipeEnabled = enabled
+	}
+}
+
 // New creates a new LVM volume manager.
-func New(podName, nodeName, releaseNamespace string, enableCleanup bool, probe probe.Interface, lvmMgr lvm.Manager, tp trace.TracerProvider) (*LVM, error) {
+func New(podName, nodeName, releaseNamespace string, enableCleanup bool, probe probe.Interface, lvmMgr lvm.Manager, tp trace.TracerProvider, opts ...Option) (*LVM, error) {
 	if podName == "" {
 		return nil, fmt.Errorf("podName must not be empty")
 	}
@@ -186,19 +207,30 @@ func New(podName, nodeName, releaseNamespace string, enableCleanup bool, probe p
 	if releaseNamespace == "" {
 		return nil, fmt.Errorf("releaseNamespace must not be empty")
 	}
-	return &LVM{
-		podName:          podName,
-		nodeName:         nodeName,
-		releaseNamespace: releaseNamespace,
-		enableCleanup:    enableCleanup,
-		probe:            probe,
-		lvm:              lvmMgr,
-		tracer:           tp.Tracer("localdisk.csi.acstor.io/internal/csi/api/volume/lvm"),
+	volumeManager := &LVM{
+		podName:           podName,
+		nodeName:          nodeName,
+		releaseNamespace:  releaseNamespace,
+		enableCleanup:     enableCleanup,
+		volumeWipeEnabled: true,
+		probe:             probe,
+		lvm:               lvmMgr,
+		tracer:            tp.Tracer("localdisk.csi.acstor.io/internal/csi/api/volume/lvm"),
 		// Buffered with a single slot. A pending wakeup already covers any
 		// number of subsequent quarantines, because each sweep processes
 		// everything it finds.
 		wipeSignal: make(chan struct{}, 1),
-	}, nil
+	}
+	for _, opt := range opts {
+		opt(volumeManager)
+	}
+	return volumeManager, nil
+}
+
+// IsVolumeWipeEnabled reports whether deletions must be quarantined for
+// sanitization.
+func (l *LVM) IsVolumeWipeEnabled() bool {
+	return l.volumeWipeEnabled
 }
 
 // Start starts the LVM volume manager.
