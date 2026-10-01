@@ -24,7 +24,7 @@ repos:
   hooks:
   - id: markdownlint-fix-docker
 - repo: https://github.com/pycqa/flake8
-  rev: 31405090a83cade9350502e481dcd1f032cb50b9 # 7.4.0
+  rev: 7eccf20b526fe4f2230bf9afeeef2fc9f97faf8d # 7.4.1
   hooks:
   - id: flake8
 - repo: https://github.com/codespell-project/codespell
