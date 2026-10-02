@@ -12,7 +12,7 @@ repos:
   - id: check-xml
   - id: check-json
 - repo: https://github.com/golangci/golangci-lint
-  rev: 27774aaf853a4fd21f1dd5e69439459dc1b26e68 # v2.13.2
+  rev: 114493f9b3e7257d29e4130f2b4a4aadefbb6845 # v2.14.0
   hooks:
   - id: golangci-lint-full
 - repo: https://github.com/hadolint/hadolint
