@@ -61,12 +61,8 @@ func NewHandler(namespace string, client client.Client, scheme *runtime.Scheme) 
 // Handler updates pods with node affinity to available diskpool if pod has hyperconverged volumes.
 func (h *handler) Handle(ctx context.Context, req admission.Request) admission.Response {
 	var (
-		pod              = &corev1.Pod{}
-		pvc              = &corev1.PersistentVolumeClaim{}
-		pvcName          string
-		storageClassName *string
-		storageClass     = &storagev1.StorageClass{}
-		pvNames          = make([]string, 0)
+		pod     = &corev1.Pod{}
+		pvNames = make([]string, 0)
 	)
 	log.V(1).Info("pod handling request", "kind", req.Kind.Kind, "request", req.Name, "operation", req.Operation)
 
@@ -91,41 +87,53 @@ func (h *handler) Handle(ctx context.Context, req admission.Request) admission.R
 	// Get the storage classes for the volumes attached to the pod.
 	for _, volume := range pod.Spec.Volumes {
 		log.V(4).Info("getting pv for volume", "volume", volume.Name)
-		pvName := ""
+		var (
+			pvcName          string
+			storageClassName *string
+		)
+		isEphemeral := volume.Ephemeral != nil
 		if volume.PersistentVolumeClaim != nil {
-			// Get the pvc
 			pvcName = volume.PersistentVolumeClaim.ClaimName
-
-		} else if volume.Ephemeral != nil {
-			pvcName = pod.Name + "-" + volume.Ephemeral.VolumeClaimTemplate.Spec.VolumeName
+		} else if isEphemeral {
+			// Kubernetes names generated ephemeral claims <pod-name>-<volume-name>.
+			pvcName = pod.Name + "-" + volume.Name
 			storageClassName = volume.Ephemeral.VolumeClaimTemplate.Spec.StorageClassName
 		} else {
 			continue
 		}
 
+		pvc := &corev1.PersistentVolumeClaim{}
 		getPVC := func() error {
 			return h.client.Get(ctx, client.ObjectKey{Name: pvcName, Namespace: req.Namespace}, pvc)
 		}
 
 		if err := retry.OnError(retry.DefaultRetry, isRetriableError, getPVC); err != nil {
 			if apierrors.IsNotFound(err) {
-				log.Info("allowed pod with pvc not found", "pvc", pvcName, "pod", pod.Name, "namespace", pod.Namespace)
-				return admission.Allowed("pvc not found")
+				if !isEphemeral {
+					// A new Pod admission is required after an ordinary claim exists.
+					log.Info("denied pod with pvc not found", "pvc", pvcName, "pod", pod.Name, "namespace", pod.Namespace)
+					return admission.Denied(fmt.Sprintf(
+						"PVC %s/%s does not exist; create it before retrying Pod creation",
+						req.Namespace,
+						pvcName,
+					))
+				}
+				if response := h.validateEphemeralTemplatePolicy(ctx, storageClassName, pvcName, pod); response != nil {
+					return *response
+				}
+				// Kubernetes creates the generic-ephemeral claim after Pod admission.
+				continue
 			}
 			return admission.Errored(http.StatusBadRequest, err)
 		}
 
-		if volume.PersistentVolumeClaim != nil {
-			// Get the storage class name from the pvc
-			storageClassName = pvc.Spec.StorageClassName
-		}
-
-		pvName = pvc.Spec.VolumeName
+		storageClassName = pvc.Spec.StorageClassName
 
 		if storageClassName == nil {
 			continue
 		}
 
+		storageClass := &storagev1.StorageClass{}
 		getStorageClass := func() error {
 			return h.client.Get(ctx, client.ObjectKey{Name: *storageClassName}, storageClass)
 		}
@@ -142,7 +150,12 @@ func (h *handler) Handle(ctx context.Context, req admission.Request) admission.R
 			continue
 		}
 
-		pvNames = append(pvNames, pvName)
+		if pvc.Spec.VolumeName == "" {
+			// WFFC claims are resolved later by Kubernetes and must not block other claims.
+			log.Info("local pvc is not bound yet", "pvc", pvcName, "pod", pod.Name, "namespace", pod.Namespace)
+			continue
+		}
+		pvNames = append(pvNames, pvc.Spec.VolumeName)
 	}
 
 	if len(pvNames) != 0 {
@@ -151,6 +164,47 @@ func (h *handler) Handle(ctx context.Context, req admission.Request) admission.R
 
 	log.Info("allowed pod with no hyperconverged volumes", "pod", pod.Name, "namespace", pod.Namespace)
 	return admission.Allowed("pod has no hyperconverged volumes")
+}
+
+func (h *handler) validateEphemeralTemplatePolicy(
+	ctx context.Context,
+	storageClassName *string,
+	pvcName string,
+	pod *corev1.Pod,
+) *admission.Response {
+	// Use the template StorageClass because the generated PVC does not exist yet.
+	if storageClassName == nil || *storageClassName == "" {
+		return nil
+	}
+
+	storageClass := &storagev1.StorageClass{}
+	getStorageClass := func() error {
+		return h.client.Get(ctx, client.ObjectKey{Name: *storageClassName}, storageClass)
+	}
+	if err := retry.OnError(retry.DefaultRetry, isRetriableError, getStorageClass); err != nil {
+		if apierrors.IsNotFound(err) {
+			return nil
+		}
+		log.Error(err, "failed to get storage class", "storageClassName", *storageClassName)
+		response := admission.Errored(http.StatusBadRequest, err)
+		return &response
+	}
+	if storageClass.Provisioner != lvm.DriverName {
+		return nil
+	}
+
+	mode := storageClass.Parameters[FailoverModeParam]
+	if mode != FailoverModeDurability {
+		mode = FailoverModeAvailability
+	}
+	log.Info(
+		"generic ephemeral pvc is not created yet",
+		"pvc", pvcName,
+		"pod", pod.Name,
+		"namespace", pod.Namespace,
+		"failoverMode", mode,
+	)
+	return nil
 }
 
 func (h *handler) injectNodeAffinity(ctx context.Context, pvNames []string, pod *corev1.Pod) admission.Response {
