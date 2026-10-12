@@ -78,10 +78,10 @@ adds node affinity for the nodes recorded in PV metadata.
 When the webhook is disabled, the driver returns accessible topology from
 `CreateVolume` and Kubernetes stores immutable node affinity on the PV. When
 the webhook is enabled, the chart also starts the driver with
-`--run-alongside-webhook=true`. For PVC-backed volumes with provisioner
-metadata, the driver then:
+`--run-alongside-webhook=true`. For PVC-backed availability volumes with
+provisioner metadata, the driver then:
 
-- Omits accessible topology from the CSI response
+- Omits accessible topology from the CSI response for availability mode
 - Stores the creating node in
   `localdisk.csi.acstor.io/selected-initial-node`
 - Updates `localdisk.csi.acstor.io/selected-node` when staging occurs on a
@@ -89,6 +89,15 @@ metadata, the driver then:
 
 The webhook uses this metadata to add Pod affinity instead of relying on
 immutable PV affinity.
+
+Durability volumes retain accessible topology in the CSI response. Kubernetes
+therefore records hard PV node affinity as a binding and scheduling backstop,
+including when a claim is not bound when the Pod is admitted.
+
+Missing ordinary PVCs cause Pod admission to be denied so a later Pod `CREATE`
+can resolve all placement constraints. Missing generated generic-ephemeral
+claims are evaluated from their volume claim template and do not discard
+constraints from other resolved claims.
 
 ## Failover modes
 
@@ -108,19 +117,22 @@ creates an empty LV using the recorded capacity.
 
 Durability mode restricts the Pod to the node recorded by the PV. It preserves
 access to the existing local data while that node remains recoverable, but the
-workload cannot run when the node is unavailable.
+workload cannot run when the node is unavailable. Staging also verifies the
+recorded owner node and requires the existing LV; it does not change ownership
+or create an empty durability replacement.
 
-For Pods that reference multiple local-csi-driver PVs, use the same failover
-mode for every PV. The current handler applies one affinity mode to the combined
-node list and uses the mode from the last processed PV. Mixed modes can
-therefore produce order-dependent behavior.
+For Pods that reference multiple local-csi-driver PVs, durability constraints
+take precedence over availability preferences. Multiple durability volumes
+must have a common storage node.
 
 ## Existing Pod affinity
 
-The webhook preserves existing `spec.affinity` and appends its storage
+The webhook preserves existing `spec.affinity` and composes its storage
 requirement:
 
-- Durability mode appends a required node selector term.
+- Durability mode adds the storage requirement to every existing non-empty
+  required node selector term, preserving Kubernetes AND semantics. Empty
+  selectors and empty terms remain unsatisfiable.
 - Availability mode appends a preferred term with weight 100.
 
 Applications should inspect the resulting Pod affinity when combining storage
