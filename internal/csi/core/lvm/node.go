@@ -134,3 +134,9 @@ func (l *LVM) NodeEnsureVolume(ctx context.Context, volumeId string, capacity in
 	_, err := l.EnsureVolume(ctx, volumeId, capacity, limit, true)
 	return err
 }
+
+// NodeEnsureExistingVolume prepares an existing volume without creating a replacement.
+func (l *LVM) NodeEnsureExistingVolume(ctx context.Context, volumeId string, capacity int64, limit int64) error {
+	_, err := l.ensureVolume(ctx, volumeId, capacity, limit, true, false)
+	return err
+}
