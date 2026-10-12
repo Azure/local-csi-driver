@@ -24,6 +24,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
 
 	"local-csi-driver/internal/csi"
+	"local-csi-driver/internal/csi/core"
 	"local-csi-driver/internal/csi/core/lvm"
 )
 
@@ -41,9 +42,9 @@ const (
 	KubernetesNodeHostNameLabel = "kubernetes.io/hostname"
 
 	// Failover mode parameter values.
-	FailoverModeAvailability = "availability"
-	FailoverModeDurability   = "durability"
-	FailoverModeParam        = "localdisk.csi.acstor.io/failover-mode"
+	FailoverModeAvailability = core.FailoverModeAvailability
+	FailoverModeDurability   = core.FailoverModeDurability
+	FailoverModeParam        = core.FailoverModeParam
 )
 
 // handler implements admission.Handler.
@@ -400,4 +401,22 @@ func (h *handler) getPvNodesAndFailoverMode(ctx context.Context, pvName string) 
 	}
 
 	return nodeNamesList, failoverMode, false, nil
+}
+
+func pvHostnameTopologyNodes(pv *corev1.PersistentVolume) []string {
+	// Extract the hostname values created from CSI AccessibleTopology.
+	if pv.Spec.NodeAffinity == nil || pv.Spec.NodeAffinity.Required == nil {
+		return nil
+	}
+	var nodes []string
+	for _, term := range pv.Spec.NodeAffinity.Required.NodeSelectorTerms {
+		for _, requirement := range term.MatchExpressions {
+			if requirement.Key == KubernetesNodeHostNameLabel &&
+				requirement.Operator == corev1.NodeSelectorOpIn {
+				nodes = append(nodes, requirement.Values...)
+			}
+		}
+	}
+	slices.Sort(nodes)
+	return slices.Compact(nodes)
 }
