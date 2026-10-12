@@ -215,11 +215,16 @@ func (h *handler) patchPodWithNodeAffinity(pod *corev1.Pod, nodeNames []string, 
 				NodeSelectorTerms: []corev1.NodeSelectorTerm{requiredTerm},
 			}
 		} else {
-			// Add to existing required terms
-			newPod.Spec.Affinity.NodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution.NodeSelectorTerms = append(
-				newPod.Spec.Affinity.NodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution.NodeSelectorTerms,
-				requiredTerm,
-			)
+			required := newPod.Spec.Affinity.NodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution
+			for i := range required.NodeSelectorTerms {
+				term := &required.NodeSelectorTerms[i]
+				// Empty terms are intentionally unsatisfiable and must stay empty.
+				if len(term.MatchExpressions) == 0 && len(term.MatchFields) == 0 {
+					continue
+				}
+				// Expressions inside one term are ANDed by the scheduler.
+				term.MatchExpressions = append(term.MatchExpressions, nodeSelectorRequirement)
+			}
 		}
 	case FailoverModeAvailability:
 		fallthrough
