@@ -492,6 +492,52 @@ func TestRequiredAffinityComposition(t *testing.T) {
 	})
 }
 
+func TestGetPvNodesAndFailoverMode_UsesRetainedTopology(t *testing.T) {
+	scheme := runtime.NewScheme()
+	if err := corev1.AddToScheme(scheme); err != nil {
+		t.Fatalf("failed to add core API to scheme: %v", err)
+	}
+	pv := &corev1.PersistentVolume{
+		ObjectMeta: metav1.ObjectMeta{Name: "durability-pv"},
+		Spec: corev1.PersistentVolumeSpec{
+			PersistentVolumeSource: corev1.PersistentVolumeSource{
+				CSI: &corev1.CSIPersistentVolumeSource{
+					Driver:       "localdisk.csi.acstor.io",
+					VolumeHandle: "durability-volume",
+					VolumeAttributes: map[string]string{
+						FailoverModeParam: FailoverModeDurability,
+					},
+				},
+			},
+			NodeAffinity: &corev1.VolumeNodeAffinity{
+				Required: &corev1.NodeSelector{
+					NodeSelectorTerms: []corev1.NodeSelectorTerm{{
+						MatchExpressions: []corev1.NodeSelectorRequirement{{
+							Key:      KubernetesNodeHostNameLabel,
+							Operator: corev1.NodeSelectorOpIn,
+							Values:   []string{"node-a"},
+						}},
+					}},
+				},
+			},
+		},
+	}
+	h := createTestHandler()
+	h.client = fake.NewClientBuilder().WithScheme(scheme).WithObjects(pv).Build()
+
+	nodes, mode, response := h.getPvNodesAndFailoverMode(context.Background(), pv.Name)
+
+	if response != nil {
+		t.Fatalf("unexpected admission response: %#v", response)
+	}
+	if mode != FailoverModeDurability {
+		t.Fatalf("mode = %q, want %q", mode, FailoverModeDurability)
+	}
+	if !slices.Equal(nodes, []string{"node-a"}) {
+		t.Fatalf("nodes = %v, want [node-a]", nodes)
+	}
+}
+
 func TestGetPvNodesAndFailoverMode(t *testing.T) {
 	// This test would require mocking the Kubernetes client
 	// For now, we'll focus on the core affinity logic above

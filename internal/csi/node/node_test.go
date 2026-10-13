@@ -40,6 +40,9 @@ const (
 	testVolumeID             = "vg#pv"
 	recoveryOKVolumeID       = "vg#testrecoveryok"
 	recoveryBrokenVolumeID   = "vg#testrecoverybroken"
+	durabilityOwnedVolumeID  = "vg#durability-owned"
+	durabilityWrongVolumeID  = "vg#durability-wrong"
+	durabilityTopologyID     = "vg#durability-topology"
 	invalidStagingPath       = "invalidStagingPath"
 	validStagingPath         = "/vg/pv"
 	validTargetPath          = "validTargetPath"
@@ -170,6 +173,74 @@ func initTestNodeServer(_ *testing.T, ctrl *gomock.Controller) *Server {
 								selectedInitialNodeParam: "test-node",
 								// capacity not set.
 							},
+						},
+					},
+				},
+			},
+			{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "durability-owned",
+					Annotations: map[string]string{
+						selectedNodeAnnotation: testNodeName,
+					},
+				},
+				Spec: corev1.PersistentVolumeSpec{
+					PersistentVolumeSource: corev1.PersistentVolumeSource{
+						CSI: &corev1.CSIPersistentVolumeSource{
+							Driver:       driverName,
+							VolumeHandle: durabilityOwnedVolumeID,
+							VolumeAttributes: map[string]string{
+								core.FailoverModeParam:             core.FailoverModeDurability,
+								"localdisk.csi.acstor.io/capacity": "1Gi",
+							},
+						},
+					},
+				},
+			},
+			{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "durability-wrong",
+					Annotations: map[string]string{
+						selectedNodeAnnotation: "other-node",
+					},
+				},
+				Spec: corev1.PersistentVolumeSpec{
+					PersistentVolumeSource: corev1.PersistentVolumeSource{
+						CSI: &corev1.CSIPersistentVolumeSource{
+							Driver:       driverName,
+							VolumeHandle: durabilityWrongVolumeID,
+							VolumeAttributes: map[string]string{
+								core.FailoverModeParam:             core.FailoverModeDurability,
+								"localdisk.csi.acstor.io/capacity": "1Gi",
+							},
+						},
+					},
+				},
+			},
+			{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "durability-topology",
+				},
+				Spec: corev1.PersistentVolumeSpec{
+					PersistentVolumeSource: corev1.PersistentVolumeSource{
+						CSI: &corev1.CSIPersistentVolumeSource{
+							Driver:       driverName,
+							VolumeHandle: durabilityTopologyID,
+							VolumeAttributes: map[string]string{
+								core.FailoverModeParam:             core.FailoverModeDurability,
+								"localdisk.csi.acstor.io/capacity": "1Gi",
+							},
+						},
+					},
+					NodeAffinity: &corev1.VolumeNodeAffinity{
+						Required: &corev1.NodeSelector{
+							NodeSelectorTerms: []corev1.NodeSelectorTerm{{
+								MatchExpressions: []corev1.NodeSelectorRequirement{{
+									Key:      corev1.LabelHostname,
+									Operator: corev1.NodeSelectorOpIn,
+									Values:   []string{testNodeName},
+								}},
+							}},
 						},
 					},
 				},
@@ -593,6 +664,8 @@ func TestNodeStageVolume(t *testing.T) {
 		resp        *csi.NodeStageVolumeResponse
 		expectErr   error
 		expectMount func(mntDir string, m *mounter.MockMounter)
+		configure   func(*Server)
+		verify      func(*testing.T, *Server)
 	}{
 		{
 			name: "Success",
@@ -752,6 +825,126 @@ func TestNodeStageVolume(t *testing.T) {
 			resp:      nil,
 			expectErr: status.Error(codes.Internal, fmt.Errorf("volume request size is missing in pv attribute localdisk.csi.acstor.io/capacity - recovery impossible").Error()),
 		},
+		{
+			name: "durability volume stages only through existing-volume path",
+			req: &csi.NodeStageVolumeRequest{
+				VolumeCapability: &csi.VolumeCapability{
+					AccessType: stdVolCapBlock,
+					AccessMode: &volumeCap,
+				},
+				VolumeId:          durabilityOwnedVolumeID,
+				StagingTargetPath: validStagingPath,
+			},
+			resp: &csi.NodeStageVolumeResponse{},
+			verify: func(t *testing.T, ns *Server) {
+				t.Helper()
+				volume := ns.volume.(*core.Fake)
+				if volume.EnsureExistingCalls != 1 || volume.EnsureCalls != 0 {
+					t.Fatalf(
+						"ensure calls = %d, existing-only calls = %d; want 0 and 1",
+						volume.EnsureCalls,
+						volume.EnsureExistingCalls,
+					)
+				}
+			},
+		},
+		{
+			name: "durability volume uses retained PV topology as owner",
+			req: &csi.NodeStageVolumeRequest{
+				VolumeCapability: &csi.VolumeCapability{
+					AccessType: stdVolCapBlock,
+					AccessMode: &volumeCap,
+				},
+				VolumeId:          durabilityTopologyID,
+				StagingTargetPath: validStagingPath,
+			},
+			resp: &csi.NodeStageVolumeResponse{},
+			verify: func(t *testing.T, ns *Server) {
+				t.Helper()
+				volume := ns.volume.(*core.Fake)
+				if volume.EnsureExistingCalls != 1 || volume.EnsureCalls != 0 {
+					t.Fatalf(
+						"ensure calls = %d, existing-only calls = %d; want 0 and 1",
+						volume.EnsureCalls,
+						volume.EnsureExistingCalls,
+					)
+				}
+			},
+		},
+		{
+			name: "durability volume on another node is rejected before ensure",
+			req: &csi.NodeStageVolumeRequest{
+				VolumeCapability: &csi.VolumeCapability{
+					AccessType: stdVolCapBlock,
+					AccessMode: &volumeCap,
+				},
+				VolumeId:          durabilityWrongVolumeID,
+				StagingTargetPath: validStagingPath,
+			},
+			expectErr: status.Error(
+				codes.FailedPrecondition,
+				"durability volume belongs to node other-node, not node node-name",
+			),
+			verify: func(t *testing.T, ns *Server) {
+				t.Helper()
+				volume := ns.volume.(*core.Fake)
+				if volume.EnsureExistingCalls != 0 || volume.EnsureCalls != 0 {
+					t.Fatalf("wrong-node staging performed ensure calls: %#v", volume)
+				}
+			},
+		},
+		{
+			name: "durability volume without PV metadata is rejected",
+			req: &csi.NodeStageVolumeRequest{
+				VolumeCapability: &csi.VolumeCapability{
+					AccessType: stdVolCapBlock,
+					AccessMode: &volumeCap,
+				},
+				VolumeId:          "vg#durability-no-pv",
+				StagingTargetPath: validStagingPath,
+				VolumeContext: map[string]string{
+					core.FailoverModeParam:   core.FailoverModeDurability,
+					selectedInitialNodeParam: testNodeName,
+				},
+			},
+			expectErr: status.Error(
+				codes.NotFound,
+				"durability volume metadata is unavailable",
+			),
+			verify: func(t *testing.T, ns *Server) {
+				t.Helper()
+				volume := ns.volume.(*core.Fake)
+				if volume.EnsureExistingCalls != 0 || volume.EnsureCalls != 0 {
+					t.Fatalf("staging without PV metadata performed ensure calls: %#v", volume)
+				}
+			},
+		},
+		{
+			name: "missing durability volume is not recreated",
+			req: &csi.NodeStageVolumeRequest{
+				VolumeCapability: &csi.VolumeCapability{
+					AccessType: stdVolCapBlock,
+					AccessMode: &volumeCap,
+				},
+				VolumeId:          durabilityOwnedVolumeID,
+				StagingTargetPath: validStagingPath,
+			},
+			configure: func(ns *Server) {
+				ns.volume.(*core.Fake).Err = core.ErrVolumeNotFound
+			},
+			expectErr: status.Error(codes.NotFound, core.ErrVolumeNotFound.Error()),
+			verify: func(t *testing.T, ns *Server) {
+				t.Helper()
+				volume := ns.volume.(*core.Fake)
+				if volume.EnsureExistingCalls != 1 || volume.EnsureCalls != 0 {
+					t.Fatalf(
+						"ensure calls = %d, existing-only calls = %d; want 0 and 1",
+						volume.EnsureCalls,
+						volume.EnsureExistingCalls,
+					)
+				}
+			},
+		},
 	}
 	for _, test := range tests {
 		var tt = test
@@ -767,6 +960,9 @@ func TestNodeStageVolume(t *testing.T) {
 			}()
 
 			ns := initTestNodeServer(t, ctrl)
+			if tt.configure != nil {
+				tt.configure(ns)
+			}
 			if tt.expectMount != nil {
 				tt.expectMount(mntDir, ns.mounter.(*mounter.MockMounter))
 			}
@@ -786,6 +982,9 @@ func TestNodeStageVolume(t *testing.T) {
 			if !reflect.DeepEqual(resp, tt.resp) {
 				t.Errorf("NodeStageVolume() resp:\n %+v\n expected:\n %+v", resp, tt.resp)
 				return
+			}
+			if tt.verify != nil {
+				tt.verify(t, ns)
 			}
 		})
 	}
