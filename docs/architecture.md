@@ -338,6 +338,12 @@ adds node affinity.
 reference durability and availability PVs receive the durability restriction.
 Multiple durability PVs must have a common storage node.
 
+Durability volumes retain CSI accessible topology even when the hyperconverged
+webhook is enabled. This keeps hard PV topology available for initially
+unbound claims. Durability staging also rejects a node that does not match the
+recorded owner and refuses to allocate an empty replacement when the LV is
+missing.
+
 ### Availability-mode failover
 
 ```mermaid
