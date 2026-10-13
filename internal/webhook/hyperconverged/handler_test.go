@@ -383,6 +383,68 @@ var _ = Describe("When Hyperconverged controller is running", Serial, func() {
 			Expect(requiredNodes).To(ContainElement("test-node-2"))
 			Expect(preferredNodes).To(BeEmpty()) // Should not have preferred affinity
 		})
+
+		It("Should deny a pod when any ordinary PVC is missing", func() {
+			params := map[string]string{
+				FailoverModeParam: FailoverModeDurability,
+			}
+			storageClass := GenStorageClass("test-sc-durability-missing", lvm.DriverName, params)
+			durabilityPVC := GenPVC(storageClass.Name, testNamespace.Name, "16Gi")
+
+			Expect(k8sClient.Create(ctx, storageClass)).To(Succeed())
+			Expect(k8sClient.Create(ctx, durabilityPVC)).To(Succeed())
+
+			durabilityPV := GenPersistentVolume(
+				durabilityPVC.Spec.VolumeName,
+				testNamespace.Name,
+				lvm.DriverName,
+				"node-a",
+			)
+			durabilityPV.Spec.CSI.VolumeAttributes[FailoverModeParam] = FailoverModeDurability
+			Expect(k8sClient.Create(ctx, durabilityPV)).To(Succeed())
+
+			durabilityVolume := corev1.Volume{
+				Name: "durability",
+				VolumeSource: corev1.VolumeSource{
+					PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
+						ClaimName: durabilityPVC.Name,
+					},
+				},
+			}
+			missingVolume := corev1.Volume{
+				Name: "missing",
+				VolumeSource: corev1.VolumeSource{
+					PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
+						ClaimName: "missing-x",
+					},
+				},
+			}
+
+			for _, volumes := range [][]corev1.Volume{
+				{durabilityVolume, missingVolume},
+				{missingVolume, durabilityVolume},
+			} {
+				pod := GenPod(testNamespace.Name, volumes, nil)
+				pod.Spec.Affinity = &corev1.Affinity{
+					NodeAffinity: &corev1.NodeAffinity{
+						RequiredDuringSchedulingIgnoredDuringExecution: &corev1.NodeSelector{
+							NodeSelectorTerms: []corev1.NodeSelectorTerm{{
+								MatchExpressions: []corev1.NodeSelectorRequirement{{
+									Key:      KubernetesNodeHostNameLabel,
+									Operator: corev1.NodeSelectorOpIn,
+									Values:   []string{"node-b"},
+								}},
+							}},
+						},
+					},
+				}
+
+				err := k8sClient.Create(ctx, pod)
+				Expect(err).To(MatchError(ContainSubstring(
+					"does not exist; create it before retrying Pod creation",
+				)))
+			}
+		})
 	})
 
 	Context("When pod has hyperconverged volume with invalid failover mode", func() {
