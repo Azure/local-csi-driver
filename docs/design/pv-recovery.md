@@ -65,25 +65,28 @@ PV Recovery is implemented across three components that work together:
 +-----------+-----------+      +----------+----------+      +-----------+----------+
             |                             |                              |
             v                             v                              v
-  Remove node affinity         Annotate PV with              Clean up orphaned LVM
-  from PV; store initial       selected-node; recreate       volumes on old node
-  node in VolumeContext        empty LVM volume
+  Availability: remove         Availability: update          Clean up orphaned LVM
+  topology; durability:        selected-node and recreate    volumes on old node
+  retain hard topology         an empty LVM volume
 ```
 
 ### 1. Volume Creation (ControllerServer)
 
 When `--run-alongside-webhook=true`, the `CreateVolume` handler:
 
-- Removes accessible topology from the CSI volume response
+- For availability mode, removes accessible topology from the CSI response
   (`vol.AccessibleTopology = nil`), which prevents Kubernetes from setting node
   affinity on the PV.
+- For durability mode, retains accessible topology so Kubernetes preserves a
+  hard binding and scheduling restriction to the node containing the volume.
 - Stores the creating node in `VolumeContext` under the key
   `localdisk.csi.acstor.io/selected-initial-node` so the system knows where the
   volume was originally created.
 
 ### 2. Volume Staging (NodeServer)
 
-During `NodeStageVolume`, when `removePvNodeAffinity` is enabled:
+During availability-mode `NodeStageVolume`, when `removePvNodeAffinity` is
+enabled:
 
 - The node reads the PV and checks the `selected-node` annotation
   (`localdisk.csi.acstor.io/selected-node`) and the `selected-initial-node`
@@ -94,6 +97,11 @@ During `NodeStageVolume`, when `removePvNodeAffinity` is enabled:
 - The node calls `NodeEnsureVolume` which creates a new empty LVM logical
   volume with the original capacity if one does not already exist locally.
 - The volume is then formatted and mounted normally.
+
+For durability mode, staging verifies that the current node matches the
+recorded owner. It uses an existing-only ensure operation that can reactivate
+and reuse the LV but cannot allocate an empty replacement. Missing durability
+storage returns an error and leaves ownership unchanged.
 
 ### 3. Volume Deletion (ControllerServer)
 
