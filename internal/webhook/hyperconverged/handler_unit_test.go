@@ -4,12 +4,23 @@
 package hyperconverged
 
 import (
+	"context"
+	"encoding/json"
 	"math/rand"
 	"slices"
 	"testing"
 
+	jsonpatch "github.com/evanphx/json-patch/v5"
+	admissionv1 "k8s.io/api/admission/v1"
 	corev1 "k8s.io/api/core/v1"
+	storagev1 "k8s.io/api/storage/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
+
+	"local-csi-driver/internal/csi"
 )
 
 // Helper functions for test setup and validation
@@ -208,6 +219,123 @@ func validateNodeList(expectedNodes, actualNodes []string) bool {
 	return true
 }
 
+func claimTestHandler(t *testing.T, objects ...client.Object) *handler {
+	t.Helper()
+	scheme := runtime.NewScheme()
+	if err := corev1.AddToScheme(scheme); err != nil {
+		t.Fatalf("failed to add core API to scheme: %v", err)
+	}
+	if err := storagev1.AddToScheme(scheme); err != nil {
+		t.Fatalf("failed to add storage API to scheme: %v", err)
+	}
+	h, err := NewHandler(
+		"test-namespace",
+		fake.NewClientBuilder().WithScheme(scheme).WithObjects(objects...).Build(),
+		scheme,
+	)
+	if err != nil {
+		t.Fatalf("failed to create handler: %v", err)
+	}
+	return h
+}
+
+func claimTestResponse(t *testing.T, h *handler, pod *corev1.Pod) admission.Response {
+	t.Helper()
+	raw, err := json.Marshal(pod)
+	if err != nil {
+		t.Fatalf("failed to marshal pod: %v", err)
+	}
+	return h.Handle(context.Background(), admission.Request{
+		AdmissionRequest: admissionv1.AdmissionRequest{
+			Namespace: pod.Namespace,
+			Kind:      metav1.GroupVersionKind{Kind: "Pod"},
+			Operation: admissionv1.Create,
+			Object:    runtime.RawExtension{Raw: raw},
+		},
+	})
+}
+
+func applyClaimPatch(t *testing.T, pod *corev1.Pod, response admission.Response) *corev1.Pod {
+	t.Helper()
+	if !response.Allowed {
+		t.Fatalf("expected allowed response, got %v", response.Result)
+	}
+	original, err := json.Marshal(pod)
+	if err != nil {
+		t.Fatalf("failed to marshal pod: %v", err)
+	}
+	patchData, err := json.Marshal(response.Patches)
+	if err != nil {
+		t.Fatalf("failed to marshal patch: %v", err)
+	}
+	patch, err := jsonpatch.DecodePatch(patchData)
+	if err != nil {
+		t.Fatalf("failed to decode patch: %v", err)
+	}
+	mutatedData, err := patch.Apply(original)
+	if err != nil {
+		t.Fatalf("failed to apply patch: %v", err)
+	}
+	mutated := &corev1.Pod{}
+	if err := json.Unmarshal(mutatedData, mutated); err != nil {
+		t.Fatalf("failed to unmarshal patched pod: %v", err)
+	}
+	return mutated
+}
+
+func claimStorageClass(name string) *storagev1.StorageClass {
+	return &storagev1.StorageClass{
+		ObjectMeta:  metav1.ObjectMeta{Name: name},
+		Provisioner: "localdisk.csi.acstor.io",
+		Parameters: map[string]string{
+			FailoverModeParam: FailoverModeDurability,
+		},
+	}
+}
+
+func claimPVC(name, storageClass, pvName string) *corev1.PersistentVolumeClaim {
+	return &corev1.PersistentVolumeClaim{
+		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: "test-namespace"},
+		Spec: corev1.PersistentVolumeClaimSpec{
+			StorageClassName: &storageClass,
+			VolumeName:       pvName,
+		},
+	}
+}
+
+func claimPV(name, node string) *corev1.PersistentVolume {
+	return &corev1.PersistentVolume{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: name,
+			Annotations: map[string]string{
+				csi.SelectedNodeAnnotation: node,
+			},
+		},
+		Spec: corev1.PersistentVolumeSpec{
+			PersistentVolumeSource: corev1.PersistentVolumeSource{
+				CSI: &corev1.CSIPersistentVolumeSource{
+					Driver:       "localdisk.csi.acstor.io",
+					VolumeHandle: name,
+					VolumeAttributes: map[string]string{
+						FailoverModeParam: FailoverModeDurability,
+					},
+				},
+			},
+		},
+	}
+}
+
+func claimVolume(name, claimName string) corev1.Volume {
+	return corev1.Volume{
+		Name: name,
+		VolumeSource: corev1.VolumeSource{
+			PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
+				ClaimName: claimName,
+			},
+		},
+	}
+}
+
 // Test functions split by scenario
 
 func TestPatchPodWithNodeAffinity_AvailabilityMode(t *testing.T) {
@@ -322,6 +450,101 @@ func TestPatchPodWithNodeAffinity_ExistingRequiredAffinity(t *testing.T) {
 	testPod := pod.DeepCopy()
 	applyAffinityLogic(testPod, nodeNames, FailoverModeDurability)
 	validateRequiredAffinity(t, testPod, nodeNames)
+}
+
+func TestHandle_ClaimResolution(t *testing.T) {
+	storageClass := claimStorageClass("local")
+	durabilityPV := claimPV("durability-pv", "node-a")
+	durabilityPVC := claimPVC("durability-data", storageClass.Name, durabilityPV.Name)
+
+	t.Run("missing ordinary PVC is denied in either order", func(t *testing.T) {
+		for _, volumes := range [][]corev1.Volume{
+			{
+				claimVolume("durability", durabilityPVC.Name),
+				claimVolume("missing", "missing-x"),
+			},
+			{
+				claimVolume("missing", "missing-x"),
+				claimVolume("durability", durabilityPVC.Name),
+			},
+		} {
+			h := claimTestHandler(t, storageClass, durabilityPV, durabilityPVC)
+			pod := createTestPod()
+			pod.Spec.Volumes = volumes
+			response := claimTestResponse(t, h, pod)
+			if response.Allowed {
+				t.Fatal("expected missing ordinary PVC to deny admission")
+			}
+			want := "PVC test-namespace/missing-x does not exist; create it before retrying Pod creation"
+			if response.Result.Message != want {
+				t.Fatalf("denial message = %q, want %q", response.Result.Message, want)
+			}
+		}
+	})
+
+	t.Run("missing generic ephemeral claim preserves resolved durability", func(t *testing.T) {
+		h := claimTestHandler(t, storageClass, durabilityPV, durabilityPVC)
+		pod := createTestPod()
+		pod.Spec.Volumes = []corev1.Volume{
+			{
+				Name: "scratch",
+				VolumeSource: corev1.VolumeSource{
+					Ephemeral: &corev1.EphemeralVolumeSource{
+						VolumeClaimTemplate: &corev1.PersistentVolumeClaimTemplate{
+							Spec: corev1.PersistentVolumeClaimSpec{
+								StorageClassName: &storageClass.Name,
+							},
+						},
+					},
+				},
+			},
+			claimVolume("durability", durabilityPVC.Name),
+		}
+		mutated := applyClaimPatch(t, pod, claimTestResponse(t, h, pod))
+		required := mutated.Spec.Affinity.NodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution
+		if required == nil || !findRequiredAffinityNodes(required.NodeSelectorTerms, []string{"node-a"}) {
+			t.Fatal("expected resolved durability placement to be preserved")
+		}
+	})
+
+	t.Run("generated generic ephemeral claim name uses volume name", func(t *testing.T) {
+		generatedPV := claimPV("generated-pv", "node-a")
+		generatedPVC := claimPVC("test-pod-scratch", storageClass.Name, generatedPV.Name)
+		h := claimTestHandler(t, storageClass, generatedPV, generatedPVC)
+		pod := createTestPod()
+		pod.Spec.Volumes = []corev1.Volume{{
+			Name: "scratch",
+			VolumeSource: corev1.VolumeSource{
+				Ephemeral: &corev1.EphemeralVolumeSource{
+					VolumeClaimTemplate: &corev1.PersistentVolumeClaimTemplate{
+						Spec: corev1.PersistentVolumeClaimSpec{
+							StorageClassName: &storageClass.Name,
+						},
+					},
+				},
+			},
+		}}
+		mutated := applyClaimPatch(t, pod, claimTestResponse(t, h, pod))
+		required := mutated.Spec.Affinity.NodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution
+		if required == nil || !findRequiredAffinityNodes(required.NodeSelectorTerms, []string{"node-a"}) {
+			t.Fatal("expected generated claim placement to be resolved")
+		}
+	})
+
+	t.Run("unbound claim does not discard resolved durability", func(t *testing.T) {
+		unboundPVC := claimPVC("unbound", storageClass.Name, "")
+		h := claimTestHandler(t, storageClass, durabilityPV, durabilityPVC, unboundPVC)
+		pod := createTestPod()
+		pod.Spec.Volumes = []corev1.Volume{
+			claimVolume("unbound", unboundPVC.Name),
+			claimVolume("durability", durabilityPVC.Name),
+		}
+		mutated := applyClaimPatch(t, pod, claimTestResponse(t, h, pod))
+		required := mutated.Spec.Affinity.NodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution
+		if required == nil || !findRequiredAffinityNodes(required.NodeSelectorTerms, []string{"node-a"}) {
+			t.Fatal("expected resolved durability placement to be preserved")
+		}
+	})
 }
 
 func TestGetPvNodesAndFailoverMode(t *testing.T) {
