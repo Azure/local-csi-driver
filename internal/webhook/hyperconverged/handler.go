@@ -218,7 +218,10 @@ func (h *handler) patchPodWithNodeAffinity(pod *corev1.Pod, nodeNames []string, 
 			required := newPod.Spec.Affinity.NodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution
 			for i := range required.NodeSelectorTerms {
 				term := &required.NodeSelectorTerms[i]
-				// Empty terms are intentionally unsatisfiable and must stay empty.
+				// An empty term matches no nodes. Appending the storage
+				// requirement would make it satisfiable and widen the ORed
+				// selector, letting the Pod bypass its other required terms,
+				// so leave it unchanged.
 				if len(term.MatchExpressions) == 0 && len(term.MatchFields) == 0 {
 					continue
 				}
