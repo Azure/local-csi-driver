@@ -17,6 +17,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/component-helpers/scheduling/corev1/nodeaffinity"
 
 	"local-csi-driver/internal/csi"
 	"local-csi-driver/internal/csi/core/lvm"
@@ -383,6 +384,68 @@ var _ = Describe("When Hyperconverged controller is running", Serial, func() {
 			Expect(requiredNodes).To(ContainElement("test-node-2"))
 			Expect(preferredNodes).To(BeEmpty()) // Should not have preferred affinity
 		})
+
+		It("Should deny a pod when any ordinary PVC is missing", func() {
+			params := map[string]string{
+				FailoverModeParam: FailoverModeDurability,
+			}
+			storageClass := GenStorageClass("test-sc-durability-missing", lvm.DriverName, params)
+			durabilityPVC := GenPVC(storageClass.Name, testNamespace.Name, "16Gi")
+
+			Expect(k8sClient.Create(ctx, storageClass)).To(Succeed())
+			Expect(k8sClient.Create(ctx, durabilityPVC)).To(Succeed())
+
+			durabilityPV := GenPersistentVolume(
+				durabilityPVC.Spec.VolumeName,
+				testNamespace.Name,
+				lvm.DriverName,
+				"node-a",
+			)
+			durabilityPV.Spec.CSI.VolumeAttributes[FailoverModeParam] = FailoverModeDurability
+			Expect(k8sClient.Create(ctx, durabilityPV)).To(Succeed())
+
+			durabilityVolume := corev1.Volume{
+				Name: "durability",
+				VolumeSource: corev1.VolumeSource{
+					PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
+						ClaimName: durabilityPVC.Name,
+					},
+				},
+			}
+			missingVolume := corev1.Volume{
+				Name: "missing",
+				VolumeSource: corev1.VolumeSource{
+					PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
+						ClaimName: "missing-x",
+					},
+				},
+			}
+
+			for _, volumes := range [][]corev1.Volume{
+				{durabilityVolume, missingVolume},
+				{missingVolume, durabilityVolume},
+			} {
+				pod := GenPod(testNamespace.Name, volumes, nil)
+				pod.Spec.Affinity = &corev1.Affinity{
+					NodeAffinity: &corev1.NodeAffinity{
+						RequiredDuringSchedulingIgnoredDuringExecution: &corev1.NodeSelector{
+							NodeSelectorTerms: []corev1.NodeSelectorTerm{{
+								MatchExpressions: []corev1.NodeSelectorRequirement{{
+									Key:      KubernetesNodeHostNameLabel,
+									Operator: corev1.NodeSelectorOpIn,
+									Values:   []string{"node-b"},
+								}},
+							}},
+						},
+					},
+				}
+
+				err := k8sClient.Create(ctx, pod)
+				Expect(err).To(MatchError(ContainSubstring(
+					"does not exist; create it before retrying Pod creation",
+				)))
+			}
+		})
 	})
 
 	Context("When pod has hyperconverged volume with invalid failover mode", func() {
@@ -473,8 +536,8 @@ var _ = Describe("When Hyperconverged controller is running", Serial, func() {
 				durabilityStorageClass   = GenStorageClass("test-sc-mixed-dur", lvm.DriverName, durabilityParams)
 				availabilityPVC          = GenPVC(availabilityStorageClass.Name, testNamespace.Name, "8Gi")
 				durabilityPVC            = GenPVC(durabilityStorageClass.Name, testNamespace.Name, "8Gi")
-				mixedPod                 *corev1.Pod
-				volumes                  []corev1.Volume
+				availabilityVolume       corev1.Volume
+				durabilityVolume         corev1.Volume
 				volumeMounts             []corev1.VolumeMount
 			)
 
@@ -510,46 +573,89 @@ var _ = Describe("When Hyperconverged controller is running", Serial, func() {
 			Expect(k8sClient.Create(ctx, durabilityPV)).To(Succeed())
 			Eventually(k8sClient.Get).WithArguments(ctx, types.NamespacedName{Name: durabilityPV.Name}, durabilityPV).Should(Succeed())
 
-			volumes = []corev1.Volume{
-				{
-					Name: "test-volume-mixed-avail",
-					VolumeSource: corev1.VolumeSource{
-						PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
-							ClaimName: availabilityPVC.Name,
-						},
+			availabilityVolume = corev1.Volume{
+				Name: "test-volume-mixed-avail",
+				VolumeSource: corev1.VolumeSource{
+					PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
+						ClaimName: availabilityPVC.Name,
 					},
 				},
-				{
-					Name: "test-volume-mixed-dur",
-					VolumeSource: corev1.VolumeSource{
-						PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
-							ClaimName: durabilityPVC.Name,
-						},
+			}
+			durabilityVolume = corev1.Volume{
+				Name: "test-volume-mixed-dur",
+				VolumeSource: corev1.VolumeSource{
+					PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
+						ClaimName: durabilityPVC.Name,
 					},
 				},
 			}
 			volumeMounts = []corev1.VolumeMount{
 				{
-					Name:      volumes[0].Name,
+					Name:      availabilityVolume.Name,
 					MountPath: "/mnt/mixed-avail",
 				},
 				{
-					Name:      volumes[1].Name,
+					Name:      durabilityVolume.Name,
 					MountPath: "/mnt/mixed-dur",
 				},
 			}
-			mixedPod = GenPod(testNamespace.Name, volumes, volumeMounts)
 
-			By("Creating Pod with mixed failover mode volumes")
-			Expect(k8sClient.Create(ctx, mixedPod)).To(Succeed())
-			Eventually(k8sClient.Get).WithArguments(ctx, types.NamespacedName{Namespace: mixedPod.Namespace, Name: mixedPod.Name}, mixedPod).Should(Succeed())
+			for _, volumes := range [][]corev1.Volume{
+				{durabilityVolume, availabilityVolume},
+				{availabilityVolume, durabilityVolume},
+			} {
+				mixedPod := GenPod(testNamespace.Name, volumes, volumeMounts)
 
-			By("Verifying Pod has required node affinity (durability mode takes precedence)")
-			requiredNodes := GetRequiredNodeAffinityValues(mixedPod.Spec.Affinity)
+				By("Creating Pod with mixed failover mode volumes")
+				Expect(k8sClient.Create(ctx, mixedPod)).To(Succeed())
+				Eventually(k8sClient.Get).WithArguments(
+					ctx,
+					types.NamespacedName{Namespace: mixedPod.Namespace, Name: mixedPod.Name},
+					mixedPod,
+				).Should(Succeed())
 
-			// When mixed modes exist, durability (required) should take precedence
-			Expect(requiredNodes).ToNot(BeEmpty())
-			Expect(requiredNodes).To(ContainElement("test-node-dur"))
+				By("Verifying durability takes precedence regardless of volume order")
+				Expect(GetRequiredNodeAffinityValues(mixedPod.Spec.Affinity)).To(ConsistOf("test-node-dur"))
+				Expect(GetPreferredNodeAffinityValues(mixedPod.Spec.Affinity)).To(BeEmpty())
+			}
+
+			By("Creating a mixed-mode Pod with conflicting caller affinity")
+			conflictingPod := GenPod(
+				testNamespace.Name,
+				[]corev1.Volume{availabilityVolume, durabilityVolume},
+				volumeMounts,
+			)
+			conflictingPod.Spec.Affinity = &corev1.Affinity{
+				NodeAffinity: &corev1.NodeAffinity{
+					RequiredDuringSchedulingIgnoredDuringExecution: &corev1.NodeSelector{
+						NodeSelectorTerms: []corev1.NodeSelectorTerm{{
+							MatchExpressions: []corev1.NodeSelectorRequirement{{
+								Key:      KubernetesNodeHostNameLabel,
+								Operator: corev1.NodeSelectorOpIn,
+								Values:   []string{"test-node-avail"},
+							}},
+						}},
+					},
+				},
+			}
+			Expect(k8sClient.Create(ctx, conflictingPod)).To(Succeed())
+			Eventually(k8sClient.Get).WithArguments(
+				ctx,
+				types.NamespacedName{Namespace: conflictingPod.Namespace, Name: conflictingPod.Name},
+				conflictingPod,
+			).Should(Succeed())
+
+			required := conflictingPod.Spec.Affinity.NodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution
+			matcher, err := nodeaffinity.NewNodeSelector(required)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(matcher.Match(&corev1.Node{ObjectMeta: metav1.ObjectMeta{
+				Name:   "test-node-dur",
+				Labels: map[string]string{KubernetesNodeHostNameLabel: "test-node-dur"},
+			}})).To(BeFalse())
+			Expect(matcher.Match(&corev1.Node{ObjectMeta: metav1.ObjectMeta{
+				Name:   "test-node-avail",
+				Labels: map[string]string{KubernetesNodeHostNameLabel: "test-node-avail"},
+			}})).To(BeFalse())
 		})
 	})
 })
