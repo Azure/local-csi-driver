@@ -661,6 +661,7 @@ func TestEnsureVolume(t *testing.T) {
 					Name:    "vg",
 					PVCount: 4,
 				}
+
 				createArgs := lvmMgr.CreateLVOptions{
 					Name:    "lv",
 					VGName:  "vg",
@@ -861,6 +862,49 @@ func TestEnsureVolume(t *testing.T) {
 		})
 	}
 
+}
+
+func TestNodeEnsureExistingVolume(t *testing.T) {
+	t.Parallel()
+	const capacity = int64(1024 * 1024 * 1024)
+
+	t.Run("missing volume fails without allocation", func(t *testing.T) {
+		t.Parallel()
+		l, _, manager, err := initTestLVM(gomock.NewController(t))
+		if err != nil {
+			t.Fatalf("failed to initialize LVM: %v", err)
+		}
+		manager.EXPECT().
+			GetLogicalVolume(gomock.Any(), "vg", "lv").
+			Return(nil, nil)
+
+		err = l.NodeEnsureExistingVolume(context.Background(), "vg#lv", capacity, 0)
+		if !errors.Is(err, core.ErrVolumeNotFound) {
+			t.Fatalf("NodeEnsureExistingVolume() error = %v, want %v", err, core.ErrVolumeNotFound)
+		}
+	})
+
+	t.Run("existing volume is prepared and reused", func(t *testing.T) {
+		t.Parallel()
+		l, _, manager, err := initTestLVM(gomock.NewController(t))
+		if err != nil {
+			t.Fatalf("failed to initialize LVM: %v", err)
+		}
+		logicalVolume := &lvmMgr.LogicalVolume{
+			Name: "lv",
+			Size: lvmMgr.Int64String(capacity),
+		}
+		manager.EXPECT().
+			GetLogicalVolume(gomock.Any(), "vg", "lv").
+			Return(logicalVolume, nil)
+		manager.EXPECT().
+			IsLogicalVolumeCorrupted(gomock.Any(), "vg", "lv").
+			Return(false, nil)
+
+		if err := l.NodeEnsureExistingVolume(context.Background(), "vg#lv", capacity, 0); err != nil {
+			t.Fatalf("NodeEnsureExistingVolume() error = %v, want nil", err)
+		}
+	})
 }
 
 func TestCleanup(t *testing.T) {
