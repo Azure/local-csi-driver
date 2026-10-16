@@ -6,6 +6,7 @@ package hyperconverged
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"math/rand"
 	"slices"
 	"testing"
@@ -514,6 +515,69 @@ func TestInjectNodeAffinity_MultiVolumePlacement(t *testing.T) {
 			t.Fatalf("unexpected denial message: %q", response.Result.Message)
 		}
 	})
+}
+
+func TestInjectNodeAffinity_UnplacedAvailability(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		durability []*corev1.PersistentVolume
+		denial     string
+	}{
+		{name: "availability only"},
+		{
+			name:       "resolved durability",
+			durability: []*corev1.PersistentVolume{multiVolumePV("durability", FailoverModeDurability, "node-a")},
+		},
+		{
+			name:       "unresolved durability",
+			durability: []*corev1.PersistentVolume{multiVolumePV("durability", FailoverModeDurability, "")},
+			denial:     "durability volume has no resolved storage node",
+		},
+		{
+			name: "conflicting durability",
+			durability: []*corev1.PersistentVolume{
+				multiVolumePV("durability-a", FailoverModeDurability, "node-a"),
+				multiVolumePV("durability-b", FailoverModeDurability, "node-b"),
+			},
+			denial: "durability volumes have no common storage node",
+		},
+	} {
+		for _, reverse := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/reverse=%t", tc.name, reverse), func(t *testing.T) {
+				pvs := append([]*corev1.PersistentVolume{
+					multiVolumePV("availability", FailoverModeAvailability, ""),
+				}, tc.durability...)
+				h := multiVolumeHandler(t, pvs...)
+				names := make([]string, len(pvs))
+				for i, pv := range pvs {
+					names[i] = pv.Name
+				}
+				if reverse {
+					slices.Reverse(names)
+				}
+				response := h.injectNodeAffinity(context.Background(), names, &corev1.Pod{})
+				if tc.denial != "" {
+					if response.Allowed || response.Result == nil || response.Result.Message != tc.denial {
+						t.Fatalf("expected denial %q, got %+v", tc.denial, response)
+					}
+					return
+				}
+				if !response.Allowed {
+					t.Fatalf("expected admission to succeed, got %+v", response)
+				}
+				if len(tc.durability) == 0 {
+					if len(response.Patches) != 0 {
+						t.Fatal("expected no affinity patch for unplaced availability-only volume")
+					}
+					return
+				}
+				mutated := applyMultiVolumePatch(t, response)
+				if got := multiVolumeRequiredNodes(t, mutated); !slices.Equal(got, []string{"node-a"}) {
+					t.Fatalf("required nodes = %v, want [node-a]", got)
+				}
+			})
+		}
+	}
 }
 
 func TestGetPvNodesAndFailoverMode(t *testing.T) {

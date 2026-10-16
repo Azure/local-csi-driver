@@ -356,11 +356,7 @@ func (h *handler) getPvNodesAndFailoverMode(ctx context.Context, pvName string) 
 			nodeName, ok = pv.Spec.CSI.VolumeAttributes[csi.SelectedInitialNodeParam]
 			if !ok {
 				log.Error(fmt.Errorf("pv is not assigned to a node"), "no node name found", "pod", pvName)
-				if failoverMode == FailoverModeDurability {
-					return nil, failoverMode, nil
-				}
-				response = admission.Allowed("pv is not assigned to a node")
-				return nil, failoverMode, &response
+				return nil, failoverMode, nil
 			}
 		}
 		nodeNamesList = append(nodeNamesList, nodeName)
