@@ -160,11 +160,13 @@ func (h *handler) injectNodeAffinity(ctx context.Context, pvNames []string, pod 
 	var pvNodes []string
 	var durabilityNodes []string
 	hasDurability := false
+	hasMetadataPlacement := false
+	hasTopologyPlacement := false
 
 	for _, pvName := range pvNames {
 		log.Info("getting nodes for volume", "volume name", pvName)
 		// if volume has existing replicas, get the nodes of the online replicas
-		pvNodeList, mode, response := h.getPvNodesAndFailoverMode(ctx, pvName)
+		pvNodeList, mode, hasTopology, response := h.getPvNodesAndFailoverMode(ctx, pvName)
 		if response != nil {
 			return *response
 		}
@@ -173,12 +175,23 @@ func (h *handler) injectNodeAffinity(ctx context.Context, pvNames []string, pod 
 			continue
 		}
 		if len(pvNodeList) == 0 {
+			if hasTopology {
+				hasDurability = true
+				hasTopologyPlacement = true
+				continue
+			}
 			return admission.Denied("durability volume has no resolved storage node")
 		}
 		if !hasDurability {
 			// Start the intersection with the first durability volume.
 			durabilityNodes = slices.Clone(pvNodeList)
 			hasDurability = true
+			hasMetadataPlacement = true
+			continue
+		}
+		if !hasMetadataPlacement {
+			durabilityNodes = slices.Clone(pvNodeList)
+			hasMetadataPlacement = true
 			continue
 		}
 		var commonNodes []string
@@ -192,8 +205,11 @@ func (h *handler) injectNodeAffinity(ctx context.Context, pvNames []string, pod 
 	}
 
 	if hasDurability {
-		if len(durabilityNodes) == 0 {
+		if hasMetadataPlacement && len(durabilityNodes) == 0 {
 			return admission.Denied("durability volumes have no common storage node")
+		}
+		if !hasMetadataPlacement && hasTopologyPlacement {
+			return admission.Allowed("durability PV node affinity will be enforced by the scheduler")
 		}
 		slices.Sort(durabilityNodes)
 		durabilityNodes = slices.Compact(durabilityNodes)
@@ -327,7 +343,7 @@ func isRetriableError(err error) bool {
 	}
 }
 
-func (h *handler) getPvNodesAndFailoverMode(ctx context.Context, pvName string) ([]string, string, *admission.Response) {
+func (h *handler) getPvNodesAndFailoverMode(ctx context.Context, pvName string) ([]string, string, bool, *admission.Response) {
 	var response admission.Response
 	var nodeNamesList []string
 	var failoverMode = FailoverModeAvailability // default to availability mode
@@ -339,11 +355,11 @@ func (h *handler) getPvNodesAndFailoverMode(ctx context.Context, pvName string) 
 	}
 	if err := retry.OnError(retry.DefaultRetry, isRetriableError, getPV); err != nil {
 		if apierrors.IsNotFound(err) {
-			return nil, failoverMode, nil
+			return nil, failoverMode, false, nil
 		}
 		log.Error(err, "failed to get persistent volume", "pvName", pvName)
 		response = admission.Errored(http.StatusBadRequest, err)
-		return nil, failoverMode, &response
+		return nil, failoverMode, false, &response
 	}
 
 	if pv != nil && pv.Spec.CSI != nil && pv.Spec.CSI.VolumeHandle != "" {
@@ -358,21 +374,30 @@ func (h *handler) getPvNodesAndFailoverMode(ctx context.Context, pvName string) 
 		}
 
 		// Get PV-s selected node annotation
-		nodeName, ok := pv.Annotations[csi.SelectedNodeAnnotation]
-		if !ok {
+		nodeName := pv.Annotations[csi.SelectedNodeAnnotation]
+		if nodeName == "" {
 			// Get the node name from volume context
-			nodeName, ok = pv.Spec.CSI.VolumeAttributes[csi.SelectedInitialNodeParam]
-			if !ok {
-				log.Error(fmt.Errorf("pv is not assigned to a node"), "no node name found", "pod", pvName)
-				if failoverMode == FailoverModeDurability {
-					return nil, failoverMode, nil
+			nodeName = pv.Spec.CSI.VolumeAttributes[csi.SelectedInitialNodeParam]
+			if nodeName == "" {
+				hasTopology := false
+				if failoverMode == FailoverModeDurability &&
+					pv.Spec.NodeAffinity != nil &&
+					pv.Spec.NodeAffinity.Required != nil {
+					for _, term := range pv.Spec.NodeAffinity.Required.NodeSelectorTerms {
+						if len(term.MatchExpressions) != 0 || len(term.MatchFields) != 0 {
+							hasTopology = true
+							break
+						}
+					}
 				}
-				response = admission.Allowed("pv is not assigned to a node")
-				return nil, failoverMode, &response
+				if !hasTopology {
+					log.Error(fmt.Errorf("pv is not assigned to a node"), "no node name found", "pod", pvName)
+				}
+				return nil, failoverMode, hasTopology, nil
 			}
 		}
 		nodeNamesList = append(nodeNamesList, nodeName)
 	}
 
-	return nodeNamesList, failoverMode, nil
+	return nodeNamesList, failoverMode, false, nil
 }

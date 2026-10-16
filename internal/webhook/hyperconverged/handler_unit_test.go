@@ -6,18 +6,22 @@ package hyperconverged
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"math/rand"
+	"slices"
+	"testing"
+
 	jsonpatch "github.com/evanphx/json-patch/v5"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/component-helpers/scheduling/corev1/nodeaffinity"
-	"local-csi-driver/internal/csi"
-	"math/rand"
+	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
-	"slices"
-	"testing"
+
+	"local-csi-driver/internal/csi"
 )
 
 // Helper functions for test setup and validation
@@ -530,12 +534,16 @@ func multiVolumeHandler(t *testing.T, pvs ...*corev1.PersistentVolume) *handler 
 	return h
 }
 
-func applyMultiVolumePatch(t *testing.T, response admission.Response) *corev1.Pod {
+func applyMultiVolumePatch(t *testing.T, response admission.Response, pods ...*corev1.Pod) *corev1.Pod {
 	t.Helper()
 	if !response.Allowed {
 		t.Fatalf("expected allowed response, got %v", response.Result)
 	}
-	original, err := json.Marshal(&corev1.Pod{})
+	pod := &corev1.Pod{}
+	if len(pods) > 0 {
+		pod = pods[0]
+	}
+	original, err := json.Marshal(pod)
 	if err != nil {
 		t.Fatalf("failed to marshal pod: %v", err)
 	}
@@ -673,6 +681,181 @@ func TestInjectNodeAffinity_MultiVolumePlacement(t *testing.T) {
 		}
 		if response.Result.Message != "durability volume has no resolved storage node" {
 			t.Fatalf("unexpected denial message: %q", response.Result.Message)
+		}
+	})
+}
+
+func TestInjectNodeAffinity_UnplacedAvailability(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		durability []*corev1.PersistentVolume
+		denial     string
+	}{
+		{name: "availability only"},
+		{
+			name:       "resolved durability",
+			durability: []*corev1.PersistentVolume{multiVolumePV("durability", FailoverModeDurability, "node-a")},
+		},
+		{
+			name:       "unresolved durability",
+			durability: []*corev1.PersistentVolume{multiVolumePV("durability", FailoverModeDurability, "")},
+			denial:     "durability volume has no resolved storage node",
+		},
+		{
+			name: "conflicting durability",
+			durability: []*corev1.PersistentVolume{
+				multiVolumePV("durability-a", FailoverModeDurability, "node-a"),
+				multiVolumePV("durability-b", FailoverModeDurability, "node-b"),
+			},
+			denial: "durability volumes have no common storage node",
+		},
+	} {
+		for _, reverse := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/reverse=%t", tc.name, reverse), func(t *testing.T) {
+				pvs := append([]*corev1.PersistentVolume{
+					multiVolumePV("availability", FailoverModeAvailability, ""),
+				}, tc.durability...)
+				h := multiVolumeHandler(t, pvs...)
+				names := make([]string, len(pvs))
+				for i, pv := range pvs {
+					names[i] = pv.Name
+				}
+				if reverse {
+					slices.Reverse(names)
+				}
+				response := h.injectNodeAffinity(context.Background(), names, &corev1.Pod{})
+				if tc.denial != "" {
+					if response.Allowed || response.Result == nil || response.Result.Message != tc.denial {
+						t.Fatalf("expected denial %q, got %+v", tc.denial, response)
+					}
+					return
+				}
+				if !response.Allowed {
+					t.Fatalf("expected admission to succeed, got %+v", response)
+				}
+				if len(tc.durability) == 0 {
+					if len(response.Patches) != 0 {
+						t.Fatal("expected no affinity patch for unplaced availability-only volume")
+					}
+					return
+				}
+				mutated := applyMultiVolumePatch(t, response)
+				if got := multiVolumeRequiredNodes(t, mutated); !slices.Equal(got, []string{"node-a"}) {
+					t.Fatalf("required nodes = %v, want [node-a]", got)
+				}
+			})
+		}
+	}
+}
+
+func TestInjectNodeAffinity_EmptyPlacementMetadata(t *testing.T) {
+	for _, tc := range []struct {
+		name         string
+		selectedNode *string
+		initialNode  *string
+		wantNode     string
+	}{
+		{name: "empty selected-node without initial node", selectedNode: ptr.To("")},
+		{name: "empty initial node", initialNode: ptr.To("")},
+		{name: "both node values empty", selectedNode: ptr.To(""), initialNode: ptr.To("")},
+		{name: "empty selected-node falls back to initial node", selectedNode: ptr.To(""), initialNode: ptr.To("node-a"), wantNode: "node-a"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			pv := multiVolumePV("durability", FailoverModeDurability, "")
+			if tc.selectedNode != nil {
+				pv.Annotations[csi.SelectedNodeAnnotation] = *tc.selectedNode
+			}
+			if tc.initialNode != nil {
+				pv.Spec.CSI.VolumeAttributes[csi.SelectedInitialNodeParam] = *tc.initialNode
+			}
+			h := multiVolumeHandler(t, pv)
+			response := h.injectNodeAffinity(context.Background(), []string{pv.Name}, &corev1.Pod{})
+			if tc.wantNode == "" {
+				if response.Allowed || response.Result == nil || response.Result.Message != "durability volume has no resolved storage node" {
+					t.Fatalf("expected unresolved durability denial, got %+v", response)
+				}
+				return
+			}
+			mutated := applyMultiVolumePatch(t, response)
+			if got := multiVolumeRequiredNodes(t, mutated); !slices.Equal(got, []string{tc.wantNode}) {
+				t.Fatalf("required nodes = %v, want [%s]", got, tc.wantNode)
+			}
+		})
+	}
+}
+
+func TestInjectNodeAffinity_TopologyFallbackDoesNotExpandAffinity(t *testing.T) {
+	topologyPV := func(name string) *corev1.PersistentVolume {
+		pv := multiVolumePV(name, FailoverModeDurability, "")
+		pv.Spec.NodeAffinity = &corev1.VolumeNodeAffinity{
+			Required: &corev1.NodeSelector{NodeSelectorTerms: []corev1.NodeSelectorTerm{
+				{MatchExpressions: []corev1.NodeSelectorRequirement{{
+					Key: "zone", Operator: corev1.NodeSelectorOpIn, Values: []string{"east"},
+				}}},
+				{MatchExpressions: []corev1.NodeSelectorRequirement{{
+					Key: "zone", Operator: corev1.NodeSelectorOpIn, Values: []string{"west"},
+				}}},
+			}},
+		}
+		return pv
+	}
+
+	t.Run("topology-only PV uses scheduler affinity without pod patch", func(t *testing.T) {
+		pv := topologyPV("topology-only")
+		h := multiVolumeHandler(t, pv)
+		pod := &corev1.Pod{}
+		response := h.injectNodeAffinity(context.Background(), []string{pv.Name}, pod)
+		if !response.Allowed || len(response.Patches) != 0 {
+			t.Fatalf("expected scheduler-enforced topology and no Pod patch, got %+v", response)
+		}
+	})
+
+	t.Run("many topology selectors do not expand Pod affinity", func(t *testing.T) {
+		pvs := make([]*corev1.PersistentVolume, 0, 13)
+		pvNames := make([]string, 0, 13)
+		for i := 0; i < 12; i++ {
+			pv := topologyPV(fmt.Sprintf("topology-%02d", i))
+			pvs = append(pvs, pv)
+			pvNames = append(pvNames, pv.Name)
+		}
+		ownerPV := multiVolumePV("owner", FailoverModeDurability, "node-a")
+		pvs = append(pvs, ownerPV)
+		pvNames = append(pvNames, ownerPV.Name)
+		h := multiVolumeHandler(t, pvs...)
+		pod := &corev1.Pod{Spec: corev1.PodSpec{Affinity: &corev1.Affinity{NodeAffinity: &corev1.NodeAffinity{
+			RequiredDuringSchedulingIgnoredDuringExecution: &corev1.NodeSelector{
+				NodeSelectorTerms: []corev1.NodeSelectorTerm{{
+					MatchExpressions: []corev1.NodeSelectorRequirement{{
+						Key: "pool", Operator: corev1.NodeSelectorOpIn, Values: []string{"blue"},
+					}},
+				}},
+			},
+		}}}}
+
+		response := h.injectNodeAffinity(context.Background(), pvNames, pod)
+		if !response.Allowed {
+			t.Fatalf("expected Pod admission, got %+v", response.Result)
+		}
+		patch, err := json.Marshal(response.Patches)
+		if err != nil {
+			t.Fatalf("failed to marshal patch: %v", err)
+		}
+		if len(patch) > 4096 {
+			t.Fatalf("patch size = %d bytes, want at most 4096", len(patch))
+		}
+		mutated := applyMultiVolumePatch(t, response, pod)
+		required := mutated.Spec.Affinity.NodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution
+		if required == nil || len(required.NodeSelectorTerms) != 1 || len(required.NodeSelectorTerms[0].MatchExpressions) != 2 {
+			t.Fatalf("expected one composed term preserving app and owner constraints, got %+v", required)
+		}
+		if !affinitySelectorMatches(t, required, "node-a", map[string]string{"pool": "blue"}) {
+			t.Fatal("owner node satisfying application affinity should match")
+		}
+		if affinitySelectorMatches(t, required, "node-a", map[string]string{"pool": "red"}) {
+			t.Fatal("application affinity must not be bypassed")
+		}
+		if affinitySelectorMatches(t, required, "node-b", map[string]string{"pool": "blue"}) {
+			t.Fatal("metadata-derived owner node must remain required")
 		}
 	})
 }

@@ -114,6 +114,12 @@ For Pods that reference multiple local-csi-driver PVs, durability constraints
 take precedence over availability preferences. Multiple durability volumes
 must have a common storage node.
 
+Before upgrading, verify that each workload's durability PVs resolve to a common
+storage node. Missing or conflicting placement now causes replacement Pod
+creation to be denied; running Pods are not evicted. Reconcile actual data
+placement before restarting affected workloads. `WaitForFirstConsumer` does not
+relocate already-bound PVs.
+
 ## Existing Pod affinity
 
 The webhook preserves existing `spec.affinity` and composes its storage
