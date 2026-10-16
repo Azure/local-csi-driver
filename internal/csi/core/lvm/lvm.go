@@ -487,6 +487,11 @@ func (l *LVM) ensurePhysicalVolume(ctx context.Context, device string) (*lvm.Phy
 // If the volume already exists, it returns it. Otherwise it creates the
 // volume and returns it.
 func (l *LVM) EnsureVolume(ctx context.Context, volumeId string, capacity int64, limit int64, isMountOperation bool) (int64, error) {
+	// Availability recovery keeps the historical create-if-missing behavior.
+	return l.ensureVolume(ctx, volumeId, capacity, limit, isMountOperation, true)
+}
+
+func (l *LVM) ensureVolume(ctx context.Context, volumeId string, capacity int64, limit int64, isMountOperation, allowCreate bool) (int64, error) {
 	ctx, span := l.tracer.Start(ctx, "volume.lvm.csi/EnsureVolume", trace.WithAttributes(
 		attribute.String("vol.id", volumeId),
 		attribute.Int64("vol.capacity", capacity),
@@ -546,6 +551,12 @@ func (l *LVM) EnsureVolume(ctx context.Context, volumeId string, capacity int64,
 			return 0, fmt.Errorf("volume size mismatch: request %d, limit %d, actual %d: %w", capacity, limit, lv.Size, core.ErrVolumeSizeMismatch)
 		}
 		return lvSize, nil
+	}
+
+	if !allowCreate {
+		// Stop before any volume-group or logical-volume allocation.
+		span.SetStatus(codes.Error, "existing logical volume not found")
+		return 0, fmt.Errorf("%w: logical volume %s/%s does not exist", core.ErrVolumeNotFound, id.VolumeGroup, id.LogicalVolume)
 	}
 
 	log.V(2).Info("no existing volume found, creating new one")

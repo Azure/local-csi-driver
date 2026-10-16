@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"strings"
@@ -20,6 +21,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	kevents "k8s.io/client-go/tools/events"
+	"k8s.io/component-helpers/scheduling/corev1/nodeaffinity"
 	"k8s.io/kubernetes/pkg/volume"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
@@ -32,8 +34,26 @@ import (
 )
 
 const (
-	defaultFsType = "ext4"
+	defaultFsType      = "ext4"
+	pvCSIIdentityIndex = "local-csi-driver.pv-csi-identity"
 )
+
+// RegisterPVIdentityIndex enables staging lookups by CSI driver and volume handle.
+func RegisterPVIdentityIndex(ctx context.Context, indexer client.FieldIndexer) error {
+	return indexer.IndexField(ctx, &corev1.PersistentVolume{}, pvCSIIdentityIndex, pvCSIIdentityKeys)
+}
+
+func pvCSIIdentityKeys(obj client.Object) []string {
+	pv, ok := obj.(*corev1.PersistentVolume)
+	if !ok || pv.Spec.CSI == nil || pv.Spec.CSI.Driver == "" || pv.Spec.CSI.VolumeHandle == "" {
+		return nil
+	}
+	return []string{pvCSIIdentityKey(pv.Spec.CSI.Driver, pv.Spec.CSI.VolumeHandle)}
+}
+
+func pvCSIIdentityKey(driver, handle string) string {
+	return driver + "\x00" + handle
+}
 
 type Server struct {
 	volume                   core.NodeInterface
@@ -356,85 +376,61 @@ func (ns *Server) NodeStageVolume(ctx context.Context, req *csi.NodeStageVolumeR
 	}
 	log := log.FromContext(ctx).WithName("NodeStageVolume").WithValues("volumeID", volumeID)
 
-	pvName, err := ns.volume.GetVolumeName(volumeID)
+	_, err := ns.volume.GetVolumeName(volumeID)
 	if err != nil {
 		span.SetStatus(otcodes.Error, "failed to get volume name")
 		log.Error(err, "failed to get volume name")
 		return nil, status.Error(codes.Internal, err.Error())
 	}
 
-	// Get the pv and add selected-node annotation.
-	pv := &corev1.PersistentVolume{}
-	if err := ns.k8sClient.Get(ctx, client.ObjectKey{Name: pvName}, pv); err != nil {
-		log.Error(err, "failed to get persistent volume")
-		// Do not return error, as pv is only for recreating empty volumes.
-		// If the volume is not found, the mount in the later stage will fail
-		// and the call will be retired.
+	pv, failoverMode, err := ns.getStagingPersistentVolume(ctx, req, span)
+	if err != nil {
+		return nil, err
+	}
+	if failoverMode == core.FailoverModeDurability {
+		if err := ns.validateDurabilityOwner(ctx, req, pv, span); err != nil {
+			return nil, err
+		}
 	}
 
 	if pv.Spec.ClaimRef != nil {
 		ctx = events.WithObjectIntoContext(ctx, ns.recorder, pv.Spec.ClaimRef)
 	}
 
-	// When removing node affinity from the PV, add the selected-node annotation to it.
-	// This annotation helps track the node to which the volume is associated.
-	if ns.removePvNodeAffinity {
-		original := pv.DeepCopy()
-		selectedNode, initialNode := "", ""
-		updatePv := false // Can't have dependency on the PV for sanity tests, so we use a flag to track if we need to update the PV.
-
-		// Mark current node as selected-node
-		if pv.Annotations == nil {
-			pv.Annotations = make(map[string]string)
-		}
-
-		// Check if the selected-node annotation is already set.
-		selectedNode, ok := pv.Annotations[ns.selectedNodeAnnotation]
-		if !ok {
-			// If not, check if the initial node is set in the volume attributes.
-			if pv.Spec.CSI != nil && pv.Spec.CSI.VolumeAttributes != nil {
-				initialNode, ok = pv.Spec.CSI.VolumeAttributes[ns.selectedInitialNodeParam]
-				// If the initial node is set, update the selected-node
-				// annotation only if it is not the current node.
-				if ok && !strings.EqualFold(initialNode, ns.nodeID) {
-					pv.Annotations[ns.selectedNodeAnnotation] = ns.nodeID
-					updatePv = true
-				}
-			}
-		} else if !strings.EqualFold(selectedNode, ns.nodeID) {
-			// If the selected-node annotation is set, but it is not the current
-			// node, update it to the current node.
-			pv.Annotations[ns.selectedNodeAnnotation] = ns.nodeID
-			updatePv = true
-		}
-
-		// Patch the PV with the current node as the selected-node if needed.
-		if updatePv {
-			if err := ns.k8sClient.Patch(ctx, pv, client.MergeFrom(original)); err != nil {
-				span.SetStatus(otcodes.Error, "failed to update pv with selected-node annotation")
-				log.Error(err, "failed to update pv with selected-node annotation")
-				return nil, status.Error(codes.Internal, err.Error())
-			}
-		}
+	if err := ns.updateSelectedNode(ctx, pv, failoverMode); err != nil {
+		span.SetStatus(otcodes.Error, "failed to update pv with selected-node annotation")
+		log.Error(err, "failed to update pv with selected-node annotation")
+		return nil, status.Error(codes.Internal, err.Error())
 	}
 
-	if pv.Spec.CSI != nil && pv.Spec.CSI.VolumeAttributes != nil {
+	if pv.Spec.CSI != nil && (pv.Spec.CSI.VolumeAttributes != nil || failoverMode == core.FailoverModeDurability) {
 		// Call volume manager to ensure the volume exists. Re-creating empty
 		// volumes is acceptable for local volumes.
 
 		// Get the capacity request from the PV attributes.
-		capacityBytes, limitBytes, err := getCapacityAndLimit(pv.Spec.CSI.VolumeAttributes, pv.Annotations)
+		capacityBytes, limitBytes, err := getStagingCapacityAndLimit(pv, failoverMode)
 		if err != nil {
 			log.Error(err, "failed to get capacity and limit from pv attributes")
 			span.SetStatus(otcodes.Error, "failed to get capacity and limit from pv attributes")
 			return nil, status.Error(codes.Internal, err.Error())
 		}
 
-		if err := ns.volume.NodeEnsureVolume(ctx, req.GetVolumeId(), capacityBytes, limitBytes); err != nil {
-			log.Error(err, "failed to publish volume")
+		var ensureErr error
+		if failoverMode == core.FailoverModeDurability {
+			// Durability may reuse an LV but must never create an empty replacement.
+			ensureErr = ns.volume.NodeEnsureExistingVolume(ctx, req.GetVolumeId(), capacityBytes, limitBytes)
+		} else {
+			// Availability mode preserves the existing empty-volume recovery behavior.
+			ensureErr = ns.volume.NodeEnsureVolume(ctx, req.GetVolumeId(), capacityBytes, limitBytes)
+		}
+		if ensureErr != nil {
+			log.Error(ensureErr, "failed to publish volume")
 			span.SetStatus(otcodes.Error, "failed to publish volume")
-			span.RecordError(err)
-			return nil, status.Error(codes.Internal, err.Error())
+			span.RecordError(ensureErr)
+			if errors.Is(ensureErr, core.ErrVolumeNotFound) {
+				return nil, status.Error(codes.NotFound, ensureErr.Error())
+			}
+			return nil, status.Error(codes.Internal, ensureErr.Error())
 		}
 	}
 
@@ -483,6 +479,198 @@ func (ns *Server) NodeStageVolume(ctx context.Context, req *csi.NodeStageVolumeR
 	log.V(2).Info("mounted")
 	span.SetStatus(otcodes.Ok, "mounted")
 	return &csi.NodeStageVolumeResponse{}, nil
+}
+
+func (ns *Server) getStagingPersistentVolume(
+	ctx context.Context,
+	req *csi.NodeStageVolumeRequest,
+	span trace.Span,
+) (*corev1.PersistentVolume, string, error) {
+	var pv *corev1.PersistentVolume
+	failoverMode := effectiveFailoverMode(req.GetVolumeContext())
+	// Check every matching PV before choosing policy, including matching-name PVs.
+	pvs := &corev1.PersistentVolumeList{}
+	if err := ns.k8sClient.List(ctx, pvs, client.MatchingFields{
+		pvCSIIdentityIndex: pvCSIIdentityKey(ns.driver, req.GetVolumeId()),
+	}); err != nil {
+		log.FromContext(ctx).Error(err, "failed to find persistent volume by CSI identity")
+		span.SetStatus(otcodes.Error, "failed to find persistent volume by CSI identity")
+		return nil, "", status.Error(codes.Internal, err.Error())
+	}
+	for i := range pvs.Items {
+		candidate := &pvs.Items[i]
+		if candidate.Spec.CSI == nil || candidate.Spec.CSI.Driver != ns.driver ||
+			candidate.Spec.CSI.VolumeHandle != req.GetVolumeId() {
+			continue
+		}
+		if pv != nil {
+			span.SetStatus(otcodes.Error, "multiple PVs identify the volume")
+			return nil, "", status.Error(codes.FailedPrecondition, "multiple PVs identify the CSI volume")
+		}
+		pv = candidate
+	}
+	if pv == nil {
+		if failoverMode == core.FailoverModeDurability {
+			span.SetStatus(otcodes.Error, "durability volume metadata is unavailable")
+			return nil, "", status.Error(codes.NotFound, "durability volume metadata is unavailable")
+		}
+		// Availability mode can recover using the request context.
+		return &corev1.PersistentVolume{}, failoverMode, nil
+	}
+
+	if pv.Spec.CSI != nil && pv.Spec.CSI.VolumeAttributes[core.FailoverModeParam] != "" {
+		// Prefer the policy persisted when the volume was created.
+		failoverMode = effectiveFailoverMode(pv.Spec.CSI.VolumeAttributes)
+	}
+	return pv, failoverMode, nil
+}
+
+func getStagingCapacityAndLimit(pv *corev1.PersistentVolume, failoverMode string) (int64, int64, error) {
+	attrs := pv.Spec.CSI.VolumeAttributes
+	if _, ok := attrs[lvm.CapacityParam]; !ok && failoverMode == core.FailoverModeDurability {
+		capacity := pv.Spec.Capacity[corev1.ResourceStorage]
+		if capacity.Sign() <= 0 {
+			return 0, 0, fmt.Errorf("durability PV storage capacity is missing or invalid")
+		}
+		attrs = maps.Clone(attrs)
+		if attrs == nil {
+			attrs = make(map[string]string)
+		}
+		attrs[lvm.CapacityParam] = capacity.String()
+	}
+	return getCapacityAndLimit(attrs, pv.Annotations)
+}
+
+func (ns *Server) validateDurabilityOwner(
+	ctx context.Context,
+	req *csi.NodeStageVolumeRequest,
+	pv *corev1.PersistentVolume,
+	span trace.Span,
+) error {
+	ownerNode := ""
+	if pv.Annotations != nil {
+		ownerNode = pv.Annotations[ns.selectedNodeAnnotation]
+	}
+	if ownerNode == "" && pv.Spec.CSI != nil {
+		ownerNode = pv.Spec.CSI.VolumeAttributes[ns.selectedInitialNodeParam]
+	}
+	if ownerNode == "" {
+		ownerNode = req.GetVolumeContext()[ns.selectedInitialNodeParam]
+	}
+	if ownerNode != "" && !strings.EqualFold(ownerNode, ns.nodeID) {
+		span.SetStatus(otcodes.Error, "durability volume belongs to another node")
+		return status.Errorf(
+			codes.FailedPrecondition,
+			"durability volume belongs to node %s, not node %s",
+			ownerNode,
+			ns.nodeID,
+		)
+	}
+	if ownerNode == "" && pv.Spec.NodeAffinity != nil && pv.Spec.NodeAffinity.Required != nil {
+		// Older PVs may identify the owner only through hard node topology.
+		node := &corev1.Node{}
+		if err := ns.k8sClient.Get(ctx, client.ObjectKey{Name: ns.nodeID}, node); err != nil {
+			log.FromContext(ctx).Error(err, "failed to get node for durability topology", "node", ns.nodeID)
+			span.SetStatus(otcodes.Error, "node metadata is unavailable")
+			return status.Error(codes.Internal, "failed to get node for durability topology")
+		}
+		hasTopology, nodeAllowed, err := pvTopologyAllowsNode(pv, node, ns.topologyKey())
+		if err != nil {
+			log.FromContext(ctx).Error(err, "invalid durability volume topology")
+			span.SetStatus(otcodes.Error, "invalid durability volume topology")
+			return status.Error(codes.FailedPrecondition, "invalid durability volume topology")
+		}
+		if hasTopology && !nodeAllowed {
+			span.SetStatus(otcodes.Error, "durability volume topology excludes this node")
+			return status.Errorf(
+				codes.FailedPrecondition,
+				"durability volume topology does not allow node %s",
+				ns.nodeID,
+			)
+		}
+		if hasTopology {
+			ownerNode = ns.nodeID
+		}
+	}
+	if ownerNode == "" {
+		span.SetStatus(otcodes.Error, "durability volume owner is missing")
+		return status.Error(codes.FailedPrecondition, "durability volume owner node is missing")
+	}
+	return nil
+}
+
+func (ns *Server) updateSelectedNode(
+	ctx context.Context,
+	pv *corev1.PersistentVolume,
+	failoverMode string,
+) error {
+	if !ns.removePvNodeAffinity || failoverMode == core.FailoverModeDurability {
+		return nil
+	}
+
+	original := pv.DeepCopy()
+	updatePV := false
+	if pv.Annotations == nil {
+		pv.Annotations = make(map[string]string)
+	}
+
+	selectedNode, ok := pv.Annotations[ns.selectedNodeAnnotation]
+	if !ok {
+		if pv.Spec.CSI != nil && pv.Spec.CSI.VolumeAttributes != nil {
+			initialNode, hasInitialNode := pv.Spec.CSI.VolumeAttributes[ns.selectedInitialNodeParam]
+			if hasInitialNode && !strings.EqualFold(initialNode, ns.nodeID) {
+				pv.Annotations[ns.selectedNodeAnnotation] = ns.nodeID
+				updatePV = true
+			}
+		}
+	} else if !strings.EqualFold(selectedNode, ns.nodeID) {
+		pv.Annotations[ns.selectedNodeAnnotation] = ns.nodeID
+		updatePV = true
+	}
+
+	if !updatePV {
+		return nil
+	}
+	return ns.k8sClient.Patch(ctx, pv, client.MergeFrom(original))
+}
+
+func effectiveFailoverMode(volumeContext map[string]string) string {
+	// Availability remains the default for missing and invalid values.
+	if volumeContext[core.FailoverModeParam] == core.FailoverModeDurability {
+		return core.FailoverModeDurability
+	}
+	return core.FailoverModeAvailability
+}
+
+func pvTopologyAllowsNode(pv *corev1.PersistentVolume, node *corev1.Node, topologyKey string) (bool, bool, error) {
+	if pv.Spec.NodeAffinity == nil || pv.Spec.NodeAffinity.Required == nil {
+		return false, false, nil
+	}
+	hasNodeTopology := false
+	for _, term := range pv.Spec.NodeAffinity.Required.NodeSelectorTerms {
+		identifiesNode := false
+		for _, requirement := range term.MatchExpressions {
+			if (requirement.Key != topologyKey && requirement.Key != corev1.LabelHostname) ||
+				requirement.Operator != corev1.NodeSelectorOpIn {
+				continue
+			}
+			hasNodeTopology = true
+			identifiesNode = true
+		}
+		if !identifiesNode {
+			continue
+		}
+		selector, err := nodeaffinity.NewNodeSelector(&corev1.NodeSelector{
+			NodeSelectorTerms: []corev1.NodeSelectorTerm{term},
+		})
+		if err != nil {
+			return true, false, err
+		}
+		if selector.Match(node) {
+			return true, true, nil
+		}
+	}
+	return hasNodeTopology, false, nil
 }
 
 // getCapacityAndLimit retrieves the capacity and limit from the PV attributes

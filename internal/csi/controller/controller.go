@@ -111,12 +111,38 @@ func (cs *Server) CreateVolume(ctx context.Context, req *csi.CreateVolumeRequest
 		return nil, fromCoreError(err)
 	}
 
+	// Normalize missing or invalid values to the availability policy.
+	failoverMode := core.FailoverModeAvailability
+	switch req.GetParameters()[core.FailoverModeParam] {
+	case core.FailoverModeDurability:
+		failoverMode = core.FailoverModeDurability
+	case "", core.FailoverModeAvailability:
+	default:
+		log.Info(
+			"invalid failover mode, using availability",
+			"mode", req.GetParameters()[core.FailoverModeParam],
+		)
+	}
+	if vol.VolumeContext == nil {
+		vol.VolumeContext = make(map[string]string)
+	}
+	// Carry the effective policy to the PV and NodeStageVolume.
+	vol.VolumeContext[core.FailoverModeParam] = failoverMode
+	if failoverMode == core.FailoverModeDurability && cs.nodeId != "" {
+		// Durability staging must remain on the node that created the volume.
+		vol.VolumeContext[cs.selectedInitialNodeParam] = cs.nodeId
+	}
+
 	// Remove node affinity from non-generic ephemeral volumes if the flag is enabled.
 	// This makes the persistent volume accessible from all nodes and eliminates
 	// the need for manual recovery during cluster restarts, where node names might change.
 	// This approach works effectively when a webhook enforces hyperconvergence of workloads
 	// and volumes; otherwise, it may not be suitable.
 	if cs.removePvNodeAffinity {
+		if cs.nodeId != "" {
+			vol.VolumeContext[cs.selectedInitialNodeParam] = cs.nodeId
+		}
+
 		if req.Parameters[core.PVCNameParam] == "" || req.Parameters[core.PVCNamespaceParam] == "" {
 			// The external-provisioner injects these parameters when
 			// `--extra-create-metadata=true` is set. Without them we have no
@@ -127,14 +153,13 @@ func (cs *Server) CreateVolume(ctx context.Context, req *csi.CreateVolumeRequest
 			return &csi.CreateVolumeResponse{Volume: vol}, nil
 		}
 
-		// if removePvNodeAffinity is set to true in favor of handling affinity
-		// through a webhook, we need to set the volume to be accessible
-		// from all nodes. We still keep a reference to the selected initial
-		// node in the volume context for the webhook to use.
-		if vol.VolumeContext == nil {
-			vol.VolumeContext = make(map[string]string)
+		if failoverMode == core.FailoverModeDurability {
+			// Keep hard PV topology as a scheduling backstop for durability.
+			span.SetStatus(otcodes.Ok, "durability volume created with accessible topology")
+			return &csi.CreateVolumeResponse{Volume: vol}, nil
 		}
-		vol.VolumeContext[cs.selectedInitialNodeParam] = cs.nodeId
+
+		// Availability mode relies on the webhook and permits recovery elsewhere.
 		vol.AccessibleTopology = nil
 	}
 

@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"math/rand"
 	"net/http"
+	"slices"
 	"time"
 
 	admissionv1 "k8s.io/api/admission/v1"
@@ -18,11 +19,13 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/util/retry"
+	"k8s.io/component-helpers/scheduling/corev1/nodeaffinity"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
 
 	"local-csi-driver/internal/csi"
+	"local-csi-driver/internal/csi/core"
 	"local-csi-driver/internal/csi/core/lvm"
 )
 
@@ -40,9 +43,9 @@ const (
 	KubernetesNodeHostNameLabel = "kubernetes.io/hostname"
 
 	// Failover mode parameter values.
-	FailoverModeAvailability = "availability"
-	FailoverModeDurability   = "durability"
-	FailoverModeParam        = "localdisk.csi.acstor.io/failover-mode"
+	FailoverModeAvailability = core.FailoverModeAvailability
+	FailoverModeDurability   = core.FailoverModeDurability
+	FailoverModeParam        = core.FailoverModeParam
 )
 
 // handler implements admission.Handler.
@@ -322,17 +325,79 @@ func (h *handler) getPvNodesAndFailoverMode(ctx context.Context, pvName string) 
 
 		// Get PV-s selected node annotation
 		nodeName, ok := pv.Annotations[csi.SelectedNodeAnnotation]
-		if !ok {
+		if !ok || nodeName == "" {
 			// Get the node name from volume context
 			nodeName, ok = pv.Spec.CSI.VolumeAttributes[csi.SelectedInitialNodeParam]
-			if !ok {
-				log.Error(fmt.Errorf("pv is not assigned to a node"), "no node name found", "pod", pvName)
-				response = admission.Allowed("pv is not assigned to a node")
+		}
+		if !ok || nodeName == "" {
+			// Durability volumes retain PV topology as the final placement source.
+			var err error
+			nodeNamesList, err = h.pvTopologyNodes(ctx, pv)
+			if err != nil {
+				log.Error(err, "failed to resolve PV topology", "pv", pvName)
+				response = admission.Errored(http.StatusInternalServerError, err)
 				return nil, failoverMode, &response
 			}
+			if len(nodeNamesList) != 0 {
+				return nodeNamesList, failoverMode, nil
+			}
+			log.Error(fmt.Errorf("pv is not assigned to a node"), "no node name found", "pod", pvName)
+			if failoverMode == FailoverModeDurability {
+				return nil, failoverMode, nil
+			}
+			response = admission.Allowed("pv is not assigned to a node")
+			return nil, failoverMode, &response
 		}
-		nodeNamesList = append(nodeNamesList, nodeName)
+		node := &corev1.Node{}
+		if err := h.client.Get(ctx, client.ObjectKey{Name: nodeName}, node); err != nil {
+			log.Error(err, "failed to resolve storage node hostname", "pv", pvName, "node", nodeName)
+			if apierrors.IsNotFound(err) {
+				if failoverMode == FailoverModeDurability {
+					response = admission.Denied(fmt.Sprintf("durability storage node %s does not exist", nodeName))
+					return nil, failoverMode, &response
+				}
+				// Availability volumes may recover elsewhere after their owner is deleted.
+				return nil, failoverMode, nil
+			}
+			response = admission.Errored(http.StatusInternalServerError, err)
+			return nil, failoverMode, &response
+		}
+		hostname := node.Labels[KubernetesNodeHostNameLabel]
+		if hostname == "" {
+			err := fmt.Errorf("storage node %s has no hostname label", nodeName)
+			log.Error(err, "failed to resolve storage node hostname", "pv", pvName)
+			response = admission.Errored(http.StatusInternalServerError, err)
+			return nil, failoverMode, &response
+		}
+		nodeNamesList = append(nodeNamesList, hostname)
 	}
 
 	return nodeNamesList, failoverMode, nil
+}
+
+func (h *handler) pvTopologyNodes(ctx context.Context, pv *corev1.PersistentVolume) ([]string, error) {
+	if pv.Spec.NodeAffinity == nil || pv.Spec.NodeAffinity.Required == nil {
+		return nil, nil
+	}
+	selector, err := nodeaffinity.NewNodeSelector(pv.Spec.NodeAffinity.Required)
+	if err != nil {
+		return nil, fmt.Errorf("invalid PV topology: %w", err)
+	}
+	nodeList := &corev1.NodeList{}
+	if err := h.client.List(ctx, nodeList); err != nil {
+		return nil, fmt.Errorf("failed to list nodes for PV topology: %w", err)
+	}
+	var nodes []string
+	for i := range nodeList.Items {
+		node := &nodeList.Items[i]
+		if selector.Match(node) {
+			hostname := node.Labels[KubernetesNodeHostNameLabel]
+			if hostname == "" {
+				return nil, fmt.Errorf("node %s matching PV topology has no hostname label", node.Name)
+			}
+			nodes = append(nodes, hostname)
+		}
+	}
+	slices.Sort(nodes)
+	return slices.Compact(nodes), nil
 }
