@@ -6,7 +6,9 @@ package hyperconverged
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"math/rand"
+	"net/http"
 	"slices"
 	"testing"
 
@@ -14,10 +16,12 @@ import (
 	admissionv1 "k8s.io/api/admission/v1"
 	corev1 "k8s.io/api/core/v1"
 	storagev1 "k8s.io/api/storage/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
 
 	"local-csi-driver/internal/csi"
@@ -228,15 +232,27 @@ func claimTestHandler(t *testing.T, objects ...client.Object) *handler {
 	if err := storagev1.AddToScheme(scheme); err != nil {
 		t.Fatalf("failed to add storage API to scheme: %v", err)
 	}
+	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(objects...).Build()
 	h, err := NewHandler(
 		"test-namespace",
-		fake.NewClientBuilder().WithScheme(scheme).WithObjects(objects...).Build(),
+		c,
+		c,
 		scheme,
 	)
 	if err != nil {
 		t.Fatalf("failed to create handler: %v", err)
 	}
 	return h
+}
+
+type failingClaimReader struct {
+	client.Reader
+	calls int
+}
+
+func (r *failingClaimReader) Get(_ context.Context, key client.ObjectKey, _ client.Object, _ ...client.GetOption) error {
+	r.calls++
+	return apierrors.NewForbidden(corev1.Resource("persistentvolumeclaims"), key.Name, errors.New("access denied"))
 }
 
 func claimTestResponse(t *testing.T, h *handler, pod *corev1.Pod) admission.Response {
@@ -457,7 +473,7 @@ func TestHandle_ClaimResolution(t *testing.T) {
 	durabilityPV := claimPV("durability-pv", "node-a")
 	durabilityPVC := claimPVC("durability-data", storageClass.Name, durabilityPV.Name)
 
-	t.Run("missing ordinary PVC is denied in either order", func(t *testing.T) {
+	t.Run("missing ordinary PVC preserves resolved durability in either order", func(t *testing.T) {
 		for _, volumes := range [][]corev1.Volume{
 			{
 				claimVolume("durability", durabilityPVC.Name),
@@ -471,14 +487,60 @@ func TestHandle_ClaimResolution(t *testing.T) {
 			h := claimTestHandler(t, storageClass, durabilityPV, durabilityPVC)
 			pod := createTestPod()
 			pod.Spec.Volumes = volumes
-			response := claimTestResponse(t, h, pod)
-			if response.Allowed {
-				t.Fatal("expected missing ordinary PVC to deny admission")
+			mutated := applyClaimPatch(t, pod, claimTestResponse(t, h, pod))
+			required := mutated.Spec.Affinity.NodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution
+			if required == nil || !findRequiredAffinityNodes(required.NodeSelectorTerms, []string{"node-a"}) {
+				t.Fatal("expected resolved durability placement to be preserved")
 			}
-			want := "PVC test-namespace/missing-x does not exist; create it before retrying Pod creation"
-			if response.Result.Message != want {
-				t.Fatalf("denial message = %q, want %q", response.Result.Message, want)
-			}
+		}
+	})
+
+	t.Run("pod can be created before its ordinary PVC", func(t *testing.T) {
+		h := claimTestHandler(t)
+		pod := createTestPod()
+		pod.Spec.Volumes = []corev1.Volume{claimVolume("missing", "missing-x")}
+		response := claimTestResponse(t, h, pod)
+		if !response.Allowed || len(response.Patches) != 0 {
+			t.Fatalf("expected allowed response without patches, got %+v", response)
+		}
+	})
+
+	t.Run("PVC missing from cache is resolved through API reader", func(t *testing.T) {
+		h := claimTestHandler(t, storageClass, durabilityPV)
+		h.apiReader = claimTestHandler(t, durabilityPVC).client
+		pod := createTestPod()
+		pod.Spec.Volumes = []corev1.Volume{claimVolume("durability", durabilityPVC.Name)}
+		mutated := applyClaimPatch(t, pod, claimTestResponse(t, h, pod))
+		required := mutated.Spec.Affinity.NodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution
+		if required == nil || !findRequiredAffinityNodes(required.NodeSelectorTerms, []string{"node-a"}) {
+			t.Fatal("expected API reader claim to enforce durability placement")
+		}
+	})
+
+	t.Run("API reader failure is not treated as a missing claim", func(t *testing.T) {
+		h := claimTestHandler(t)
+		reader := &failingClaimReader{}
+		h.apiReader = reader
+		pod := createTestPod()
+		pod.Spec.Volumes = []corev1.Volume{claimVolume("data", "data")}
+		response := claimTestResponse(t, h, pod)
+		if response.Allowed || response.Result == nil || response.Result.Code != http.StatusBadRequest {
+			t.Fatalf("expected lookup error response, got %+v", response)
+		}
+		if reader.calls != 1 {
+			t.Fatalf("API read calls = %d, want 1", reader.calls)
+		}
+	})
+
+	t.Run("cached PVC does not require an API read", func(t *testing.T) {
+		h := claimTestHandler(t, storageClass, durabilityPV, durabilityPVC)
+		reader := &failingClaimReader{}
+		h.apiReader = reader
+		pod := createTestPod()
+		pod.Spec.Volumes = []corev1.Volume{claimVolume("durability", durabilityPVC.Name)}
+		applyClaimPatch(t, pod, claimTestResponse(t, h, pod))
+		if reader.calls != 0 {
+			t.Fatalf("API read calls = %d, want 0", reader.calls)
 		}
 	})
 
@@ -507,11 +569,58 @@ func TestHandle_ClaimResolution(t *testing.T) {
 		}
 	})
 
+	t.Run("ephemeral template lookup failure preserves resolved durability", func(t *testing.T) {
+		for _, reverse := range []bool{false, true} {
+			h := claimTestHandler(t, storageClass, durabilityPV, durabilityPVC)
+			reads := 0
+			h.client = fake.NewClientBuilder().WithScheme(h.client.Scheme()).
+				WithObjects(storageClass, durabilityPV, durabilityPVC).WithInterceptorFuncs(interceptor.Funcs{
+				Get: func(ctx context.Context, c client.WithWatch, key client.ObjectKey, obj client.Object, opts ...client.GetOption) error {
+					if _, ok := obj.(*storagev1.StorageClass); ok && key.Name == "unreadable" {
+						reads++
+						return apierrors.NewForbidden(storagev1.Resource("storageclasses"), key.Name, errors.New("access denied"))
+					}
+					return c.Get(ctx, key, obj, opts...)
+				},
+			}).Build()
+			templateClass := "unreadable"
+			pod := createTestPod()
+			pod.Spec.Volumes = []corev1.Volume{
+				{
+					Name: "scratch",
+					VolumeSource: corev1.VolumeSource{
+						Ephemeral: &corev1.EphemeralVolumeSource{
+							VolumeClaimTemplate: &corev1.PersistentVolumeClaimTemplate{
+								Spec: corev1.PersistentVolumeClaimSpec{StorageClassName: &templateClass},
+							},
+						},
+					},
+				},
+				claimVolume("durability", durabilityPVC.Name),
+			}
+			if reverse {
+				slices.Reverse(pod.Spec.Volumes)
+			}
+			mutated := applyClaimPatch(t, pod, claimTestResponse(t, h, pod))
+			required := mutated.Spec.Affinity.NodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution
+			if required == nil || !findRequiredAffinityNodes(required.NodeSelectorTerms, []string{"node-a"}) {
+				t.Fatal("expected resolved durability placement despite template lookup failure")
+			}
+			if reads != 1 {
+				t.Fatalf("template StorageClass reads = %d, want 1", reads)
+			}
+		}
+	})
+
 	t.Run("generated generic ephemeral claim name uses volume name", func(t *testing.T) {
 		generatedPV := claimPV("generated-pv", "node-a")
 		generatedPVC := claimPVC("test-pod-scratch", storageClass.Name, generatedPV.Name)
-		h := claimTestHandler(t, storageClass, generatedPV, generatedPVC)
 		pod := createTestPod()
+		pod.UID = "current-pod"
+		generatedPVC.OwnerReferences = []metav1.OwnerReference{
+			*metav1.NewControllerRef(pod, corev1.SchemeGroupVersion.WithKind("Pod")),
+		}
+		h := claimTestHandler(t, storageClass, generatedPV, generatedPVC)
 		pod.Spec.Volumes = []corev1.Volume{{
 			Name: "scratch",
 			VolumeSource: corev1.VolumeSource{
@@ -528,6 +637,56 @@ func TestHandle_ClaimResolution(t *testing.T) {
 		required := mutated.Spec.Affinity.NodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution
 		if required == nil || !findRequiredAffinityNodes(required.NodeSelectorTerms, []string{"node-a"}) {
 			t.Fatal("expected generated claim placement to be resolved")
+		}
+	})
+
+	t.Run("unowned generic ephemeral claim does not override resolved durability", func(t *testing.T) {
+		for _, ownership := range []string{"stale owner", "no owner", "non-controller owner", "missing pod UID"} {
+			t.Run(ownership, func(t *testing.T) {
+				for _, reverse := range []bool{false, true} {
+					pod := createTestPod()
+					pod.UID = "current-pod"
+					stalePV := claimPV("stale-pv", "obsolete-node")
+					stalePVC := claimPVC("test-pod-scratch", storageClass.Name, stalePV.Name)
+					owner := *metav1.NewControllerRef(pod, corev1.SchemeGroupVersion.WithKind("Pod"))
+					switch ownership {
+					case "stale owner":
+						owner.UID = "previous-pod"
+						stalePVC.OwnerReferences = []metav1.OwnerReference{owner}
+					case "non-controller owner":
+						controller := false
+						owner.Controller = &controller
+						stalePVC.OwnerReferences = []metav1.OwnerReference{owner}
+					case "missing pod UID":
+						pod.UID = ""
+						owner.UID = ""
+						stalePVC.OwnerReferences = []metav1.OwnerReference{owner}
+					}
+					pod.Spec.Volumes = []corev1.Volume{
+						{
+							Name: "scratch",
+							VolumeSource: corev1.VolumeSource{
+								Ephemeral: &corev1.EphemeralVolumeSource{
+									VolumeClaimTemplate: &corev1.PersistentVolumeClaimTemplate{
+										Spec: corev1.PersistentVolumeClaimSpec{StorageClassName: &storageClass.Name},
+									},
+								},
+							},
+						},
+						claimVolume("durability", durabilityPVC.Name),
+					}
+					if reverse {
+						slices.Reverse(pod.Spec.Volumes)
+					}
+					h := claimTestHandler(t, storageClass, durabilityPV, durabilityPVC, stalePV, stalePVC)
+					mutated := applyClaimPatch(t, pod, claimTestResponse(t, h, pod))
+					required := mutated.Spec.Affinity.NodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution
+					if required == nil || !findRequiredAffinityNodes(required.NodeSelectorTerms, []string{"node-a"}) ||
+						findRequiredAffinityNodes(required.NodeSelectorTerms, []string{"obsolete-node"}) {
+						t.Fatalf("unexpected placement for %s (reverse=%t): %+v", ownership, reverse, required)
+					}
+				}
+			})
 		}
 	})
 
