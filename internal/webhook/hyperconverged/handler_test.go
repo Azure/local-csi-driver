@@ -261,7 +261,10 @@ var _ = Describe("When Hyperconverged controller is running", Serial, func() {
 			for i := 1; i <= numNodes; i++ {
 				By(fmt.Sprintf("Creating Test Node %d for availability mode", i))
 				node := GenNode()
+				node.Name = fmt.Sprintf("test-node-%d", i)
+				node.Labels[NodeLabel] = node.Name
 				Expect(k8sClient.Create(ctx, node)).To(Succeed())
+				Eventually(cachedReader.Get).WithArguments(ctx, types.NamespacedName{Name: node.Name}, &corev1.Node{}).Should(Succeed())
 				Eventually(k8sClient.Get).WithArguments(ctx, types.NamespacedName{Name: node.Name}, node).Should(Succeed())
 			}
 
@@ -333,7 +336,10 @@ var _ = Describe("When Hyperconverged controller is running", Serial, func() {
 			for i := 1; i <= numNodes; i++ {
 				By(fmt.Sprintf("Creating Test Node %d for durability mode", i))
 				node := GenNode()
+				node.Name = fmt.Sprintf("test-node-%d", i)
+				node.Labels[NodeLabel] = node.Name
 				Expect(k8sClient.Create(ctx, node)).To(Succeed())
+				Eventually(cachedReader.Get).WithArguments(ctx, types.NamespacedName{Name: node.Name}, &corev1.Node{}).Should(Succeed())
 				Eventually(k8sClient.Get).WithArguments(ctx, types.NamespacedName{Name: node.Name}, node).Should(Succeed())
 			}
 
@@ -404,7 +410,10 @@ var _ = Describe("When Hyperconverged controller is running", Serial, func() {
 			for i := 1; i <= numNodes; i++ {
 				By(fmt.Sprintf("Creating Test Node %d for invalid mode", i))
 				node := GenNode()
+				node.Name = fmt.Sprintf("test-node-%d", i+1)
+				node.Labels[NodeLabel] = node.Name
 				Expect(k8sClient.Create(ctx, node)).To(Succeed())
+				Eventually(cachedReader.Get).WithArguments(ctx, types.NamespacedName{Name: node.Name}, &corev1.Node{}).Should(Succeed())
 				Eventually(k8sClient.Get).WithArguments(ctx, types.NamespacedName{Name: node.Name}, node).Should(Succeed())
 			}
 
@@ -481,7 +490,15 @@ var _ = Describe("When Hyperconverged controller is running", Serial, func() {
 			for i := 1; i <= numNodes; i++ {
 				By(fmt.Sprintf("Creating Test Node %d for mixed modes", i))
 				node := GenNode()
+				node.Name = "test-node-avail"
+				if i == 2 {
+					node.Name = "test-node-dur"
+				} else if i > 2 {
+					node.Name = fmt.Sprintf("test-node-%d", i)
+				}
+				node.Labels[NodeLabel] = node.Name
 				Expect(k8sClient.Create(ctx, node)).To(Succeed())
+				Eventually(cachedReader.Get).WithArguments(ctx, types.NamespacedName{Name: node.Name}, &corev1.Node{}).Should(Succeed())
 				Eventually(k8sClient.Get).WithArguments(ctx, types.NamespacedName{Name: node.Name}, node).Should(Succeed())
 			}
 
