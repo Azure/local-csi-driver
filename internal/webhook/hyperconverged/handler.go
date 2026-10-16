@@ -397,26 +397,32 @@ func (h *handler) getPvNodesAndFailoverMode(ctx context.Context, pvName string) 
 				return nil, failoverMode, hasTopology, nil
 			}
 		}
-		nodeNamesList = append(nodeNamesList, nodeName)
+		node := &corev1.Node{}
+		if err := h.client.Get(ctx, client.ObjectKey{Name: nodeName}, node); err != nil {
+			log.Error(err, "failed to resolve storage node hostname", "pv", pvName, "node", nodeName)
+			if apierrors.IsNotFound(err) {
+				if failoverMode == FailoverModeDurability {
+					response = admission.Denied(fmt.Sprintf("durability storage node %s does not exist", nodeName))
+					return nil, failoverMode, false, &response
+				}
+				// Availability volumes may recover elsewhere after their owner is deleted.
+				return nil, failoverMode, false, nil
+			}
+			response = admission.Errored(http.StatusInternalServerError, err)
+			return nil, failoverMode, false, &response
+		}
+		hostname := node.Labels[KubernetesNodeHostNameLabel]
+		if hostname == "" {
+			err := fmt.Errorf("storage node %s has no hostname label", nodeName)
+			log.Error(err, "failed to resolve storage node hostname", "pv", pvName)
+			if failoverMode == FailoverModeAvailability {
+				return nil, failoverMode, false, nil
+			}
+			response = admission.Errored(http.StatusInternalServerError, err)
+			return nil, failoverMode, false, &response
+		}
+		nodeNamesList = append(nodeNamesList, hostname)
 	}
 
 	return nodeNamesList, failoverMode, false, nil
-}
-
-func pvHostnameTopologyNodes(pv *corev1.PersistentVolume) []string {
-	// Extract the hostname values created from CSI AccessibleTopology.
-	if pv.Spec.NodeAffinity == nil || pv.Spec.NodeAffinity.Required == nil {
-		return nil
-	}
-	var nodes []string
-	for _, term := range pv.Spec.NodeAffinity.Required.NodeSelectorTerms {
-		for _, requirement := range term.MatchExpressions {
-			if requirement.Key == KubernetesNodeHostNameLabel &&
-				requirement.Operator == corev1.NodeSelectorOpIn {
-				nodes = append(nodes, requirement.Values...)
-			}
-		}
-	}
-	slices.Sort(nodes)
-	return slices.Compact(nodes)
 }

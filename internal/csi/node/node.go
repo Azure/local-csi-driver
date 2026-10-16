@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"strings"
@@ -20,6 +21,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	kevents "k8s.io/client-go/tools/events"
+	"k8s.io/component-helpers/scheduling/corev1/nodeaffinity"
 	"k8s.io/kubernetes/pkg/volume"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
@@ -32,8 +34,26 @@ import (
 )
 
 const (
-	defaultFsType = "ext4"
+	defaultFsType      = "ext4"
+	pvCSIIdentityIndex = "local-csi-driver.pv-csi-identity"
 )
+
+// RegisterPVIdentityIndex enables staging lookups by CSI driver and volume handle.
+func RegisterPVIdentityIndex(ctx context.Context, indexer client.FieldIndexer) error {
+	return indexer.IndexField(ctx, &corev1.PersistentVolume{}, pvCSIIdentityIndex, pvCSIIdentityKeys)
+}
+
+func pvCSIIdentityKeys(obj client.Object) []string {
+	pv, ok := obj.(*corev1.PersistentVolume)
+	if !ok || pv.Spec.CSI == nil || pv.Spec.CSI.Driver == "" || pv.Spec.CSI.VolumeHandle == "" {
+		return nil
+	}
+	return []string{pvCSIIdentityKey(pv.Spec.CSI.Driver, pv.Spec.CSI.VolumeHandle)}
+}
+
+func pvCSIIdentityKey(driver, handle string) string {
+	return driver + "\x00" + handle
+}
 
 type Server struct {
 	volume                   core.NodeInterface
@@ -356,19 +376,19 @@ func (ns *Server) NodeStageVolume(ctx context.Context, req *csi.NodeStageVolumeR
 	}
 	log := log.FromContext(ctx).WithName("NodeStageVolume").WithValues("volumeID", volumeID)
 
-	pvName, err := ns.volume.GetVolumeName(volumeID)
+	_, err := ns.volume.GetVolumeName(volumeID)
 	if err != nil {
 		span.SetStatus(otcodes.Error, "failed to get volume name")
 		log.Error(err, "failed to get volume name")
 		return nil, status.Error(codes.Internal, err.Error())
 	}
 
-	pv, failoverMode, err := ns.getStagingPersistentVolume(ctx, req, pvName, span)
+	pv, failoverMode, err := ns.getStagingPersistentVolume(ctx, req, span)
 	if err != nil {
 		return nil, err
 	}
 	if failoverMode == core.FailoverModeDurability {
-		if err := ns.validateDurabilityOwner(req, pv, span); err != nil {
+		if err := ns.validateDurabilityOwner(ctx, req, pv, span); err != nil {
 			return nil, err
 		}
 	}
@@ -383,12 +403,15 @@ func (ns *Server) NodeStageVolume(ctx context.Context, req *csi.NodeStageVolumeR
 		return nil, status.Error(codes.Internal, err.Error())
 	}
 
-	if pv.Spec.CSI != nil && pv.Spec.CSI.VolumeAttributes != nil {
+	storageCapacity := pv.Spec.Capacity[corev1.ResourceStorage]
+	if pv.Spec.CSI != nil && (pv.Spec.CSI.VolumeAttributes != nil ||
+		failoverMode == core.FailoverModeDurability ||
+		storageCapacity.Sign() > 0) {
 		// Call volume manager to ensure the volume exists. Re-creating empty
 		// volumes is acceptable for local volumes.
 
 		// Get the capacity request from the PV attributes.
-		capacityBytes, limitBytes, err := getCapacityAndLimit(pv.Spec.CSI.VolumeAttributes, pv.Annotations)
+		capacityBytes, limitBytes, err := getStagingCapacityAndLimit(pv)
 		if err != nil {
 			log.Error(err, "failed to get capacity and limit from pv attributes")
 			span.SetStatus(otcodes.Error, "failed to get capacity and limit from pv attributes")
@@ -464,22 +487,26 @@ func (ns *Server) NodeStageVolume(ctx context.Context, req *csi.NodeStageVolumeR
 func (ns *Server) getStagingPersistentVolume(
 	ctx context.Context,
 	req *csi.NodeStageVolumeRequest,
-	pvName string,
 	span trace.Span,
 ) (*corev1.PersistentVolume, string, error) {
-	pv := &corev1.PersistentVolume{}
 	failoverMode := effectiveFailoverMode(req.GetVolumeContext())
-	if err := ns.k8sClient.Get(ctx, client.ObjectKey{Name: pvName}, pv); err != nil {
-		log.FromContext(ctx).Error(err, "failed to get persistent volume")
+	pv, ambiguous, err := ns.getPersistentVolumeByCSIIdentity(ctx, req.GetVolumeId())
+	if err != nil {
+		log.FromContext(ctx).Error(err, "failed to find persistent volume by CSI identity")
+		span.SetStatus(otcodes.Error, "failed to find persistent volume by CSI identity")
+		return nil, "", status.Error(codes.Internal, err.Error())
+	}
+	if ambiguous {
+		span.SetStatus(otcodes.Error, "multiple PVs identify the volume")
+		return nil, "", status.Error(codes.FailedPrecondition, "multiple PVs identify the CSI volume")
+	}
+	if pv == nil {
 		if failoverMode == core.FailoverModeDurability {
 			span.SetStatus(otcodes.Error, "durability volume metadata is unavailable")
-			if client.IgnoreNotFound(err) == nil {
-				return nil, "", status.Error(codes.NotFound, "durability volume metadata is unavailable")
-			}
-			return nil, "", status.Error(codes.Internal, err.Error())
+			return nil, "", status.Error(codes.NotFound, "durability volume metadata is unavailable")
 		}
-		// Availability mode can recover using the request context. Later staging
-		// returns an error if recovery is not possible.
+		// Availability mode can recover using the request context.
+		return &corev1.PersistentVolume{}, failoverMode, nil
 	}
 
 	if pv.Spec.CSI != nil && pv.Spec.CSI.VolumeAttributes[core.FailoverModeParam] != "" {
@@ -489,7 +516,50 @@ func (ns *Server) getStagingPersistentVolume(
 	return pv, failoverMode, nil
 }
 
+func (ns *Server) getPersistentVolumeByCSIIdentity(
+	ctx context.Context,
+	volumeID string,
+) (*corev1.PersistentVolume, bool, error) {
+	pvs := &corev1.PersistentVolumeList{}
+	if err := ns.k8sClient.List(ctx, pvs, client.MatchingFields{
+		pvCSIIdentityIndex: pvCSIIdentityKey(ns.driver, volumeID),
+	}); err != nil {
+		return nil, false, err
+	}
+
+	var pv *corev1.PersistentVolume
+	for i := range pvs.Items {
+		candidate := &pvs.Items[i]
+		if candidate.Spec.CSI == nil || candidate.Spec.CSI.Driver != ns.driver ||
+			candidate.Spec.CSI.VolumeHandle != volumeID {
+			continue
+		}
+		if pv != nil {
+			return nil, true, nil
+		}
+		pv = candidate
+	}
+	return pv, false, nil
+}
+
+func getStagingCapacityAndLimit(pv *corev1.PersistentVolume) (int64, int64, error) {
+	attrs := pv.Spec.CSI.VolumeAttributes
+	if _, ok := attrs[lvm.CapacityParam]; !ok {
+		capacity := pv.Spec.Capacity[corev1.ResourceStorage]
+		if capacity.Sign() <= 0 {
+			return 0, 0, fmt.Errorf("PV storage capacity is missing or invalid")
+		}
+		attrs = maps.Clone(attrs)
+		if attrs == nil {
+			attrs = make(map[string]string)
+		}
+		attrs[lvm.CapacityParam] = capacity.String()
+	}
+	return getCapacityAndLimit(attrs, pv.Annotations)
+}
+
 func (ns *Server) validateDurabilityOwner(
+	ctx context.Context,
 	req *csi.NodeStageVolumeRequest,
 	pv *corev1.PersistentVolume,
 	span trace.Span,
@@ -513,9 +583,20 @@ func (ns *Server) validateDurabilityOwner(
 			ns.nodeID,
 		)
 	}
-	if ownerNode == "" {
+	if ownerNode == "" && pv.Spec.NodeAffinity != nil && pv.Spec.NodeAffinity.Required != nil {
 		// Older PVs may identify the owner only through hard node topology.
-		hasTopology, nodeAllowed := pvTopologyAllowsNode(pv, ns.nodeID)
+		node := &corev1.Node{}
+		if err := ns.k8sClient.Get(ctx, client.ObjectKey{Name: ns.nodeID}, node); err != nil {
+			log.FromContext(ctx).Error(err, "failed to get node for durability topology", "node", ns.nodeID)
+			span.SetStatus(otcodes.Error, "node metadata is unavailable")
+			return status.Error(codes.Internal, "failed to get node for durability topology")
+		}
+		hasTopology, nodeAllowed, err := pvTopologyAllowsNode(pv, node, ns.topologyKey())
+		if err != nil {
+			log.FromContext(ctx).Error(err, "invalid durability volume topology")
+			span.SetStatus(otcodes.Error, "invalid durability volume topology")
+			return status.Error(codes.FailedPrecondition, "invalid durability volume topology")
+		}
 		if hasTopology && !nodeAllowed {
 			span.SetStatus(otcodes.Error, "durability volume topology excludes this node")
 			return status.Errorf(
@@ -552,12 +633,16 @@ func (ns *Server) updateSelectedNode(
 
 	selectedNode, ok := pv.Annotations[ns.selectedNodeAnnotation]
 	if !ok {
-		if pv.Spec.CSI != nil && pv.Spec.CSI.VolumeAttributes != nil {
-			initialNode, hasInitialNode := pv.Spec.CSI.VolumeAttributes[ns.selectedInitialNodeParam]
-			if hasInitialNode && !strings.EqualFold(initialNode, ns.nodeID) {
-				pv.Annotations[ns.selectedNodeAnnotation] = ns.nodeID
-				updatePV = true
-			}
+		if pv.Name == "" {
+			return nil
+		}
+		initialNode := ""
+		if pv.Spec.CSI != nil {
+			initialNode = pv.Spec.CSI.VolumeAttributes[ns.selectedInitialNodeParam]
+		}
+		if initialNode == "" || !strings.EqualFold(initialNode, ns.nodeID) {
+			pv.Annotations[ns.selectedNodeAnnotation] = ns.nodeID
+			updatePV = true
 		}
 	} else if !strings.EqualFold(selectedNode, ns.nodeID) {
 		pv.Annotations[ns.selectedNodeAnnotation] = ns.nodeID
@@ -578,27 +663,41 @@ func effectiveFailoverMode(volumeContext map[string]string) string {
 	return core.FailoverModeAvailability
 }
 
-func pvTopologyAllowsNode(pv *corev1.PersistentVolume, nodeID string) (bool, bool) {
-	// Return whether hostname topology exists and whether it permits this node.
+func pvTopologyAllowsNode(pv *corev1.PersistentVolume, node *corev1.Node, topologyKey string) (bool, bool, error) {
 	if pv.Spec.NodeAffinity == nil || pv.Spec.NodeAffinity.Required == nil {
-		return false, false
+		return false, false, nil
 	}
-	hasHostnameTopology := false
+	hasNodeTopology := false
 	for _, term := range pv.Spec.NodeAffinity.Required.NodeSelectorTerms {
+		identifiesNode := false
 		for _, requirement := range term.MatchExpressions {
-			if requirement.Key != corev1.LabelHostname ||
+			if (requirement.Key != topologyKey && requirement.Key != corev1.LabelHostname) ||
 				requirement.Operator != corev1.NodeSelectorOpIn {
 				continue
 			}
-			hasHostnameTopology = true
-			for _, value := range requirement.Values {
-				if strings.EqualFold(value, nodeID) {
-					return true, true
-				}
+			hasNodeTopology = true
+			identifiesNode = true
+		}
+		for _, requirement := range term.MatchFields {
+			if requirement.Key == "metadata.name" && requirement.Operator == corev1.NodeSelectorOpIn {
+				hasNodeTopology = true
+				identifiesNode = true
 			}
 		}
+		if !identifiesNode {
+			continue
+		}
+		selector, err := nodeaffinity.NewNodeSelector(&corev1.NodeSelector{
+			NodeSelectorTerms: []corev1.NodeSelectorTerm{term},
+		})
+		if err != nil {
+			return true, false, err
+		}
+		if selector.Match(node) {
+			return true, true, nil
+		}
 	}
-	return hasHostnameTopology, false
+	return hasNodeTopology, false, nil
 }
 
 // getCapacityAndLimit retrieves the capacity and limit from the PV attributes
@@ -695,20 +794,24 @@ func (ns *Server) NodeExpandVolume(ctx context.Context, req *csi.NodeExpandVolum
 
 	log := log.FromContext(ctx).WithName("NodeExpandVolume").WithValues("volumeID", req.GetVolumeId(), "capacityBytes", req.GetCapacityRange().GetRequiredBytes())
 
-	pvName, err := ns.volume.GetVolumeName(req.GetVolumeId())
+	_, err := ns.volume.GetVolumeName(req.GetVolumeId())
 	if err != nil {
 		log.Error(err, "failed to get volume name")
 		span.SetStatus(otcodes.Error, "failed to get volume name")
 		return nil, status.Error(codes.InvalidArgument, err.Error())
 	}
 
-	var pv corev1.PersistentVolume
-	if err := ns.k8sClient.Get(ctx, client.ObjectKey{Name: pvName}, &pv); err != nil {
-		log.Error(err, "failed to get persistent volume for events")
-		// Do not return an error, it best effort to get the pv for events.
+	pv, ambiguous, err := ns.getPersistentVolumeByCSIIdentity(ctx, req.GetVolumeId())
+	if err != nil {
+		log.Error(err, "failed to get persistent volume for expansion")
+		span.SetStatus(otcodes.Error, "failed to get persistent volume for expansion")
+		return nil, status.Error(codes.Internal, "failed to get persistent volume for expansion")
 	}
-
-	if pv.Spec.ClaimRef != nil {
+	if ambiguous {
+		span.SetStatus(otcodes.Error, "multiple PVs identify the volume")
+		return nil, status.Error(codes.Internal, "multiple PVs identify the CSI volume")
+	}
+	if pv != nil && pv.Spec.ClaimRef != nil {
 		ctx = events.WithObjectIntoContext(ctx, ns.recorder, pv.Spec.ClaimRef)
 	}
 
@@ -723,13 +826,13 @@ func (ns *Server) NodeExpandVolume(ctx context.Context, req *csi.NodeExpandVolum
 	// Persist the actual expanded LV size as a PV annotation so that
 	// failover-driven recovery in NodeStageVolume recreates the volume at the
 	// expanded size.
-	if pv.Name != "" {
+	if pv != nil {
 		original := pv.DeepCopy()
 		if pv.Annotations == nil {
 			pv.Annotations = make(map[string]string)
 		}
 		pv.Annotations[lvm.ExpandedCapacityParam] = fmt.Sprint(resp.GetCapacityBytes())
-		if err := ns.k8sClient.Patch(ctx, &pv, client.MergeFrom(original)); err != nil {
+		if err := ns.k8sClient.Patch(ctx, pv, client.MergeFrom(original)); err != nil {
 			log.Error(err, "failed to patch PV with expanded capacity annotation")
 			span.SetStatus(otcodes.Error, "failed to patch PV with expanded capacity annotation")
 			span.RecordError(err)
