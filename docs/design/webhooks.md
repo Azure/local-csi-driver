@@ -117,10 +117,12 @@ therefore produce order-dependent behavior.
 
 ## Existing Pod affinity
 
-The webhook preserves existing `spec.affinity` and appends its storage
+The webhook preserves existing `spec.affinity` and composes its storage
 requirement:
 
-- Durability mode appends a required node selector term.
+- Durability mode adds the storage requirement to every existing non-empty
+  required node selector term, preserving Kubernetes AND semantics. Empty
+  selectors and empty terms remain unsatisfiable.
 - Availability mode appends a preferred term with weight 100.
 
 Applications should inspect the resulting Pod affinity when combining storage
