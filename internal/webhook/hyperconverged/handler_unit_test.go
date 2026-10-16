@@ -6,8 +6,10 @@ package hyperconverged
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math/rand"
+	"net/http"
 	"slices"
 	"testing"
 
@@ -15,12 +17,14 @@ import (
 	admissionv1 "k8s.io/api/admission/v1"
 	corev1 "k8s.io/api/core/v1"
 	storagev1 "k8s.io/api/storage/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/component-helpers/scheduling/corev1/nodeaffinity"
 	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
 
 	"local-csi-driver/internal/csi"
@@ -509,11 +513,8 @@ func claimTestHandler(t *testing.T, objects ...client.Object) *handler {
 	if err := storagev1.AddToScheme(scheme); err != nil {
 		t.Fatalf("failed to add storage API to scheme: %v", err)
 	}
-	h, err := NewHandler(
-		"test-namespace",
-		fake.NewClientBuilder().WithScheme(scheme).WithObjects(objects...).Build(),
-		scheme,
-	)
+	k8sClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(objects...).Build()
+	h, err := NewHandler("test-namespace", k8sClient, k8sClient, scheme)
 	if err != nil {
 		t.Fatalf("failed to create handler: %v", err)
 	}
@@ -617,55 +618,135 @@ func TestHandle_ClaimResolution(t *testing.T) {
 	storageClass := claimStorageClass("local")
 	durabilityPV := claimPV("durability-pv", "node-a")
 	durabilityPVC := claimPVC("durability-data", storageClass.Name, durabilityPV.Name)
-
-	t.Run("missing ordinary PVC is denied in either order", func(t *testing.T) {
-		for _, volumes := range [][]corev1.Volume{
-			{claimVolume("durability", durabilityPVC.Name), claimVolume("missing", "missing-x")},
-			{claimVolume("missing", "missing-x"), claimVolume("durability", durabilityPVC.Name)},
-		} {
-			h := claimTestHandler(t, storageClass, durabilityPV, durabilityPVC)
-			pod := createTestPod()
-			pod.Spec.Volumes = volumes
-			response := claimTestResponse(t, h, pod)
-			if response.Allowed {
-				t.Fatal("expected missing ordinary PVC to deny admission")
-			}
-			want := "PVC test-namespace/missing-x does not exist; create it before retrying Pod creation"
-			if response.Result.Message != want {
-				t.Fatalf("denial message = %q, want %q", response.Result.Message, want)
-			}
-		}
+	t.Run("missing ordinary PVC preserves resolved durability in either order", func(t *testing.T) {
+		testClaimResolution_missing_ordinary_PVC_preserves_resolved_durability_in_either_order(t, storageClass, durabilityPV, durabilityPVC)
 	})
-
+	t.Run("pod can be created before its ordinary PVC", func(t *testing.T) {
+		testClaimResolution_pod_can_be_created_before_its_ordinary_PVC(t)
+	})
+	t.Run("PVC missing from cache is resolved through API reader", func(t *testing.T) {
+		testClaimResolution_PVC_missing_from_cache_is_resolved_through_API_reader(t, storageClass, durabilityPV, durabilityPVC)
+	})
+	t.Run("API reader failure is not treated as a missing claim", func(t *testing.T) {
+		testClaimResolution_API_reader_failure_is_not_treated_as_a_missing_claim(t)
+	})
+	t.Run("cached PVC does not require an API read", func(t *testing.T) {
+		testClaimResolution_cached_PVC_does_not_require_an_API_read(t, storageClass, durabilityPV, durabilityPVC)
+	})
 	t.Run("missing generic ephemeral claim preserves resolved durability", func(t *testing.T) {
+		testClaimResolution_missing_generic_ephemeral_claim_preserves_resolved_durability(t, storageClass, durabilityPV, durabilityPVC)
+	})
+	t.Run("ephemeral template lookup failure preserves resolved durability", func(t *testing.T) {
+		testClaimResolution_ephemeral_template_lookup_failure_preserves_resolved_durability(t, storageClass, durabilityPV, durabilityPVC)
+	})
+	t.Run("generated generic ephemeral claim name uses volume name", func(t *testing.T) {
+		testClaimResolution_generated_generic_ephemeral_claim_name_uses_volume_name(t, storageClass)
+	})
+	t.Run("unowned generic ephemeral claim does not override resolved durability", func(t *testing.T) {
+		testClaimResolution_unowned_generic_ephemeral_claim_does_not_override_resolved_durability(t, storageClass, durabilityPV, durabilityPVC)
+	})
+	t.Run("unbound claim does not discard resolved durability", func(t *testing.T) {
+		testClaimResolution_unbound_claim_does_not_discard_resolved_durability(t, storageClass, durabilityPV, durabilityPVC)
+	})
+}
+
+type failingClaimReader struct {
+	client.Reader
+	calls int
+}
+
+func (r *failingClaimReader) Get(_ context.Context, key client.ObjectKey, _ client.Object, _ ...client.GetOption) error {
+	r.calls++
+	return apierrors.NewForbidden(corev1.Resource("persistentvolumeclaims"), key.Name, errors.New("access denied"))
+}
+
+func testClaimResolution_missing_ordinary_PVC_preserves_resolved_durability_in_either_order(t *testing.T, storageClass *storagev1.StorageClass, durabilityPV *corev1.PersistentVolume, durabilityPVC *corev1.PersistentVolumeClaim) {
+
+	for _, volumes := range [][]corev1.Volume{
+		{
+			claimVolume("durability", durabilityPVC.Name),
+			claimVolume("missing", "missing-x"),
+		},
+		{
+			claimVolume("missing", "missing-x"),
+			claimVolume("durability", durabilityPVC.Name),
+		},
+	} {
 		h := claimTestHandler(t, storageClass, durabilityPV, durabilityPVC)
 		pod := createTestPod()
-		pod.Spec.Volumes = []corev1.Volume{
-			{
-				Name: "scratch",
-				VolumeSource: corev1.VolumeSource{
-					Ephemeral: &corev1.EphemeralVolumeSource{
-						VolumeClaimTemplate: &corev1.PersistentVolumeClaimTemplate{
-							Spec: corev1.PersistentVolumeClaimSpec{StorageClassName: &storageClass.Name},
-						},
-					},
-				},
-			},
-			claimVolume("durability", durabilityPVC.Name),
-		}
+		pod.Spec.Volumes = volumes
 		mutated := applyClaimPatch(t, pod, claimTestResponse(t, h, pod))
 		required := mutated.Spec.Affinity.NodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution
 		if required == nil || !findRequiredAffinityNodes(required.NodeSelectorTerms, []string{"node-a"}) {
 			t.Fatal("expected resolved durability placement to be preserved")
 		}
-	})
+	}
 
-	t.Run("generated generic ephemeral claim name uses volume name", func(t *testing.T) {
-		generatedPV := claimPV("generated-pv", "node-a")
-		generatedPVC := claimPVC("test-pod-scratch", storageClass.Name, generatedPV.Name)
-		h := claimTestHandler(t, storageClass, generatedPV, generatedPVC)
-		pod := createTestPod()
-		pod.Spec.Volumes = []corev1.Volume{{
+}
+
+func testClaimResolution_pod_can_be_created_before_its_ordinary_PVC(t *testing.T) {
+
+	h := claimTestHandler(t)
+	pod := createTestPod()
+	pod.Spec.Volumes = []corev1.Volume{claimVolume("missing", "missing-x")}
+	response := claimTestResponse(t, h, pod)
+	if !response.Allowed || len(response.Patches) != 0 {
+		t.Fatalf("expected allowed response without patches, got %+v", response)
+	}
+
+}
+
+func testClaimResolution_PVC_missing_from_cache_is_resolved_through_API_reader(t *testing.T, storageClass *storagev1.StorageClass, durabilityPV *corev1.PersistentVolume, durabilityPVC *corev1.PersistentVolumeClaim) {
+
+	h := claimTestHandler(t, storageClass, durabilityPV)
+	h.apiReader = claimTestHandler(t, durabilityPVC).client
+	pod := createTestPod()
+	pod.Spec.Volumes = []corev1.Volume{claimVolume("durability", durabilityPVC.Name)}
+	mutated := applyClaimPatch(t, pod, claimTestResponse(t, h, pod))
+	required := mutated.Spec.Affinity.NodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution
+	if required == nil || !findRequiredAffinityNodes(required.NodeSelectorTerms, []string{"node-a"}) {
+		t.Fatal("expected API reader claim to enforce durability placement")
+	}
+
+}
+
+func testClaimResolution_API_reader_failure_is_not_treated_as_a_missing_claim(t *testing.T) {
+
+	h := claimTestHandler(t)
+	reader := &failingClaimReader{}
+	h.apiReader = reader
+	pod := createTestPod()
+	pod.Spec.Volumes = []corev1.Volume{claimVolume("data", "data")}
+	response := claimTestResponse(t, h, pod)
+	if response.Allowed || response.Result == nil || response.Result.Code != http.StatusBadRequest {
+		t.Fatalf("expected lookup error response, got %+v", response)
+	}
+	if reader.calls != 1 {
+		t.Fatalf("API read calls = %d, want 1", reader.calls)
+	}
+
+}
+
+func testClaimResolution_cached_PVC_does_not_require_an_API_read(t *testing.T, storageClass *storagev1.StorageClass, durabilityPV *corev1.PersistentVolume, durabilityPVC *corev1.PersistentVolumeClaim) {
+
+	h := claimTestHandler(t, storageClass, durabilityPV, durabilityPVC)
+	reader := &failingClaimReader{}
+	h.apiReader = reader
+	pod := createTestPod()
+	pod.Spec.Volumes = []corev1.Volume{claimVolume("durability", durabilityPVC.Name)}
+	applyClaimPatch(t, pod, claimTestResponse(t, h, pod))
+	if reader.calls != 0 {
+		t.Fatalf("API read calls = %d, want 0", reader.calls)
+	}
+
+}
+
+func testClaimResolution_missing_generic_ephemeral_claim_preserves_resolved_durability(t *testing.T, storageClass *storagev1.StorageClass, durabilityPV *corev1.PersistentVolume, durabilityPVC *corev1.PersistentVolumeClaim) {
+
+	h := claimTestHandler(t, storageClass, durabilityPV, durabilityPVC)
+	pod := createTestPod()
+	pod.Spec.Volumes = []corev1.Volume{
+		{
 			Name: "scratch",
 			VolumeSource: corev1.VolumeSource{
 				Ephemeral: &corev1.EphemeralVolumeSource{
@@ -674,28 +755,159 @@ func TestHandle_ClaimResolution(t *testing.T) {
 					},
 				},
 			},
-		}}
-		mutated := applyClaimPatch(t, pod, claimTestResponse(t, h, pod))
-		required := mutated.Spec.Affinity.NodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution
-		if required == nil || !findRequiredAffinityNodes(required.NodeSelectorTerms, []string{"node-a"}) {
-			t.Fatal("expected generated claim placement to be resolved")
-		}
-	})
+		},
+		claimVolume("durability", durabilityPVC.Name),
+	}
+	mutated := applyClaimPatch(t, pod, claimTestResponse(t, h, pod))
+	required := mutated.Spec.Affinity.NodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution
+	if required == nil || !findRequiredAffinityNodes(required.NodeSelectorTerms, []string{"node-a"}) {
+		t.Fatal("expected resolved durability placement to be preserved")
+	}
 
-	t.Run("unbound claim does not discard resolved durability", func(t *testing.T) {
-		unboundPVC := claimPVC("unbound", storageClass.Name, "")
-		h := claimTestHandler(t, storageClass, durabilityPV, durabilityPVC, unboundPVC)
+}
+
+func testClaimResolution_ephemeral_template_lookup_failure_preserves_resolved_durability(t *testing.T, storageClass *storagev1.StorageClass, durabilityPV *corev1.PersistentVolume, durabilityPVC *corev1.PersistentVolumeClaim) {
+
+	for _, reverse := range []bool{false, true} {
+		h := claimTestHandler(t, storageClass, durabilityPV, durabilityPVC)
+		reads := 0
+		h.client = fake.NewClientBuilder().WithScheme(h.client.Scheme()).
+			WithObjects(storageClass, durabilityPV, durabilityPVC).WithInterceptorFuncs(interceptor.Funcs{
+			Get: func(ctx context.Context, c client.WithWatch, key client.ObjectKey, obj client.Object, opts ...client.GetOption) error {
+				if _, ok := obj.(*storagev1.StorageClass); ok && key.Name == "unreadable" {
+					reads++
+					return apierrors.NewForbidden(storagev1.Resource("storageclasses"), key.Name, errors.New("access denied"))
+				}
+				return c.Get(ctx, key, obj, opts...)
+			},
+		}).Build()
+		templateClass := "unreadable"
 		pod := createTestPod()
 		pod.Spec.Volumes = []corev1.Volume{
-			claimVolume("unbound", unboundPVC.Name),
+			{
+				Name: "scratch",
+				VolumeSource: corev1.VolumeSource{
+					Ephemeral: &corev1.EphemeralVolumeSource{
+						VolumeClaimTemplate: &corev1.PersistentVolumeClaimTemplate{
+							Spec: corev1.PersistentVolumeClaimSpec{StorageClassName: &templateClass},
+						},
+					},
+				},
+			},
 			claimVolume("durability", durabilityPVC.Name),
+		}
+		if reverse {
+			slices.Reverse(pod.Spec.Volumes)
 		}
 		mutated := applyClaimPatch(t, pod, claimTestResponse(t, h, pod))
 		required := mutated.Spec.Affinity.NodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution
 		if required == nil || !findRequiredAffinityNodes(required.NodeSelectorTerms, []string{"node-a"}) {
-			t.Fatal("expected resolved durability placement to be preserved")
+			t.Fatal("expected resolved durability placement despite template lookup failure")
 		}
-	})
+		if reads != 1 {
+			t.Fatalf("template StorageClass reads = %d, want 1", reads)
+		}
+	}
+
+}
+
+func testClaimResolution_generated_generic_ephemeral_claim_name_uses_volume_name(t *testing.T, storageClass *storagev1.StorageClass) {
+
+	generatedPV := claimPV("generated-pv", "node-a")
+	generatedPVC := claimPVC("test-pod-scratch", storageClass.Name, generatedPV.Name)
+	pod := createTestPod()
+	pod.UID = "current-pod"
+	generatedPVC.OwnerReferences = []metav1.OwnerReference{
+		*metav1.NewControllerRef(pod, corev1.SchemeGroupVersion.WithKind("Pod")),
+	}
+	h := claimTestHandler(t, storageClass, generatedPV, generatedPVC)
+	pod.Spec.Volumes = []corev1.Volume{{
+		Name: "scratch",
+		VolumeSource: corev1.VolumeSource{
+			Ephemeral: &corev1.EphemeralVolumeSource{
+				VolumeClaimTemplate: &corev1.PersistentVolumeClaimTemplate{
+					Spec: corev1.PersistentVolumeClaimSpec{
+						StorageClassName: &storageClass.Name,
+					},
+				},
+			},
+		},
+	}}
+	mutated := applyClaimPatch(t, pod, claimTestResponse(t, h, pod))
+	required := mutated.Spec.Affinity.NodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution
+	if required == nil || !findRequiredAffinityNodes(required.NodeSelectorTerms, []string{"node-a"}) {
+		t.Fatal("expected generated claim placement to be resolved")
+	}
+
+}
+
+func testClaimResolution_unowned_generic_ephemeral_claim_does_not_override_resolved_durability(t *testing.T, storageClass *storagev1.StorageClass, durabilityPV *corev1.PersistentVolume, durabilityPVC *corev1.PersistentVolumeClaim) {
+
+	for _, ownership := range []string{"stale owner", "no owner", "non-controller owner", "missing pod UID"} {
+		t.Run(ownership, func(t *testing.T) {
+			for _, reverse := range []bool{false, true} {
+				pod := createTestPod()
+				pod.UID = "current-pod"
+				stalePV := claimPV("stale-pv", "obsolete-node")
+				stalePVC := claimPVC("test-pod-scratch", storageClass.Name, stalePV.Name)
+				owner := *metav1.NewControllerRef(pod, corev1.SchemeGroupVersion.WithKind("Pod"))
+				switch ownership {
+				case "stale owner":
+					owner.UID = "previous-pod"
+					stalePVC.OwnerReferences = []metav1.OwnerReference{owner}
+				case "non-controller owner":
+					controller := false
+					owner.Controller = &controller
+					stalePVC.OwnerReferences = []metav1.OwnerReference{owner}
+				case "missing pod UID":
+					pod.UID = ""
+					owner.UID = ""
+					stalePVC.OwnerReferences = []metav1.OwnerReference{owner}
+				}
+				pod.Spec.Volumes = []corev1.Volume{
+					{
+						Name: "scratch",
+						VolumeSource: corev1.VolumeSource{
+							Ephemeral: &corev1.EphemeralVolumeSource{
+								VolumeClaimTemplate: &corev1.PersistentVolumeClaimTemplate{
+									Spec: corev1.PersistentVolumeClaimSpec{StorageClassName: &storageClass.Name},
+								},
+							},
+						},
+					},
+					claimVolume("durability", durabilityPVC.Name),
+				}
+				if reverse {
+					slices.Reverse(pod.Spec.Volumes)
+				}
+				h := claimTestHandler(t, storageClass, durabilityPV, durabilityPVC, stalePV, stalePVC)
+				mutated := applyClaimPatch(t, pod, claimTestResponse(t, h, pod))
+				required := mutated.Spec.Affinity.NodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution
+				if required == nil || !findRequiredAffinityNodes(required.NodeSelectorTerms, []string{"node-a"}) ||
+					findRequiredAffinityNodes(required.NodeSelectorTerms, []string{"obsolete-node"}) {
+					t.Fatalf("unexpected placement for %s (reverse=%t): %+v", ownership, reverse, required)
+				}
+			}
+		})
+	}
+
+}
+
+func testClaimResolution_unbound_claim_does_not_discard_resolved_durability(t *testing.T, storageClass *storagev1.StorageClass, durabilityPV *corev1.PersistentVolume, durabilityPVC *corev1.PersistentVolumeClaim) {
+
+	unboundPVC := claimPVC("unbound", storageClass.Name, "")
+	h := claimTestHandler(t, storageClass, durabilityPV, durabilityPVC, unboundPVC)
+	pod := createTestPod()
+	pod.Spec.Volumes = []corev1.Volume{
+		claimVolume("unbound", unboundPVC.Name),
+		claimVolume("durability", durabilityPVC.Name),
+	}
+	mutated := applyClaimPatch(t, pod, claimTestResponse(t, h, pod))
+	required := mutated.Spec.Affinity.NodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution
+	if required == nil || !findRequiredAffinityNodes(required.NodeSelectorTerms, []string{"node-a"}) {
+		t.Fatal("expected resolved durability placement to be preserved")
+	}
+
 }
 
 func multiVolumePV(name, mode, node string) *corev1.PersistentVolume {

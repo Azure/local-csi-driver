@@ -19,6 +19,8 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/util/retry"
+	"k8s.io/component-helpers/storage/ephemeral"
+	"k8s.io/klog/v2"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
@@ -33,6 +35,7 @@ type handler struct {
 	namespace string
 	rng       *rand.Rand
 	client    client.Client
+	apiReader client.Reader
 	decoder   admission.Decoder
 }
 
@@ -49,12 +52,13 @@ const (
 // handler implements admission.Handler.
 var _ admission.Handler = &handler{}
 
-func NewHandler(namespace string, client client.Client, scheme *runtime.Scheme) (*handler, error) {
+func NewHandler(namespace string, client client.Client, apiReader client.Reader, scheme *runtime.Scheme) (*handler, error) {
 	rng := rand.New(rand.NewSource(time.Now().UnixNano()))
 	return &handler{
 		namespace: namespace,
 		rng:       rng,
 		client:    client,
+		apiReader: apiReader,
 		decoder:   admission.NewDecoder(scheme),
 	}, nil
 }
@@ -97,7 +101,7 @@ func (h *handler) Handle(ctx context.Context, req admission.Request) admission.R
 			pvcName = volume.PersistentVolumeClaim.ClaimName
 		} else if isEphemeral {
 			// Kubernetes names generated ephemeral claims <pod-name>-<volume-name>.
-			pvcName = pod.Name + "-" + volume.Name
+			pvcName = ephemeral.VolumeClaimName(pod, &volume)
 			storageClassName = volume.Ephemeral.VolumeClaimTemplate.Spec.StorageClassName
 		} else {
 			continue
@@ -105,27 +109,33 @@ func (h *handler) Handle(ctx context.Context, req admission.Request) admission.R
 
 		pvc := &corev1.PersistentVolumeClaim{}
 		getPVC := func() error {
-			return h.client.Get(ctx, client.ObjectKey{Name: pvcName, Namespace: req.Namespace}, pvc)
+			key := client.ObjectKey{Name: pvcName, Namespace: req.Namespace}
+			if err := h.client.Get(ctx, key, pvc); !apierrors.IsNotFound(err) {
+				return err
+			}
+			// Confirm cache misses against the API before treating a claim as unresolved.
+			return h.apiReader.Get(ctx, key, pvc)
 		}
 
 		if err := retry.OnError(retry.DefaultRetry, isRetriableError, getPVC); err != nil {
 			if apierrors.IsNotFound(err) {
 				if !isEphemeral {
-					// A new Pod admission is required after an ordinary claim exists.
-					log.Info("denied pod with pvc not found", "pvc", pvcName, "pod", pod.Name, "namespace", pod.Namespace)
-					return admission.Denied(fmt.Sprintf(
-						"PVC %s/%s does not exist; create it before retrying Pod creation",
-						req.Namespace,
-						pvcName,
-					))
+					klog.Warningf("pvc %s/%s not found for pod %s; continuing with other volumes", pod.Namespace, pvcName, pod.Name)
+					continue
 				}
-				if response := h.validateEphemeralTemplatePolicy(ctx, storageClassName, pvcName, pod); response != nil {
-					return *response
-				}
+				h.validateEphemeralTemplatePolicy(ctx, storageClassName, pvcName, pod)
 				// Kubernetes creates the generic-ephemeral claim after Pod admission.
 				continue
 			}
+			log.Error(err, "failed to get persistent volume claim", "pvc", pvcName, "namespace", req.Namespace)
 			return admission.Errored(http.StatusBadRequest, err)
+		}
+
+		if isEphemeral && (pod.UID == "" || ephemeral.VolumeIsForPod(pod, pvc) != nil) {
+			log.V(2).Info("generic ephemeral pvc is not owned by this pod; continuing with other volumes",
+				"pvc", pvcName, "pod", pod.Name, "namespace", pod.Namespace)
+			h.validateEphemeralTemplatePolicy(ctx, storageClassName, pvcName, pod)
+			continue
 		}
 
 		storageClassName = pvc.Spec.StorageClassName
@@ -172,10 +182,10 @@ func (h *handler) validateEphemeralTemplatePolicy(
 	storageClassName *string,
 	pvcName string,
 	pod *corev1.Pod,
-) *admission.Response {
+) {
 	// Use the template StorageClass because the generated PVC does not exist yet.
 	if storageClassName == nil || *storageClassName == "" {
-		return nil
+		return
 	}
 
 	storageClass := &storagev1.StorageClass{}
@@ -184,14 +194,13 @@ func (h *handler) validateEphemeralTemplatePolicy(
 	}
 	if err := retry.OnError(retry.DefaultRetry, isRetriableError, getStorageClass); err != nil {
 		if apierrors.IsNotFound(err) {
-			return nil
+			return
 		}
 		log.Error(err, "failed to get storage class", "storageClassName", *storageClassName)
-		response := admission.Errored(http.StatusBadRequest, err)
-		return &response
+		return
 	}
 	if storageClass.Provisioner != lvm.DriverName {
-		return nil
+		return
 	}
 
 	mode := storageClass.Parameters[FailoverModeParam]
@@ -205,7 +214,6 @@ func (h *handler) validateEphemeralTemplatePolicy(
 		"namespace", pod.Namespace,
 		"failoverMode", mode,
 	)
-	return nil
 }
 
 func (h *handler) injectNodeAffinity(ctx context.Context, pvNames []string, pod *corev1.Pod) admission.Response {
