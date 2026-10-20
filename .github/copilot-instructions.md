@@ -21,6 +21,59 @@ controller-runtime architecture and conventions. Two binaries:
 No CRDs — operates on standard Kubernetes PersistentVolumes
 and PersistentVolumeClaims.
 
+## Backward compatibility review
+
+When reviewing runtime or deployment changes, use the
+`code-review-backward-compatibility` skill in
+`.github/skills/code-review-backward-compatibility/SKILL.md`.
+Compare behavior with the latest stable release and the PR base, including
+valid existing PVs, missing metadata, recovery, and cleanup side effects.
+Explicitly check whether best-effort lookups become required dependencies
+whose errors block admission, staging, or expansion. Distinguish intentional
+safety fixes from regressions. If released source is unavailable, report that
+limitation rather than claiming backward compatibility.
+Always assess rollback too: can the released version safely operate after
+the proposed version has created or modified resources and backend state?
+Include mixed-version rollout/rollback and report rollback constraints or
+unverified safety explicitly; forward upgrade compatibility is not enough.
+
+## CSI specification review
+
+When reviewing CSI RPCs, capabilities, validation, error handling, capacity,
+mounting, or lifecycle behavior, use the `code-review-csi-spec-conformance` skill in
+`.github/skills/code-review-csi-spec-conformance/SKILL.md`. Resolve and use the latest
+stable upstream CSI spec, including protobuf field comments and general error
+rules, rather than selecting it from the driver's dependency version. Report
+concrete violations with source and normative spec evidence, not assumptions
+about what Kubernetes or one backend usually does.
+
+## LVM review
+
+When reviewing changes that invoke or depend on LVM, use `code-review-lvm`
+in `.github/skills/code-review-lvm/SKILL.md` as part of the normal PR review,
+even when the changed code reaches LVM indirectly through a helper.
+Resolve the runtime image's installed LVM2 package and fetch its matching source
+with distro patches; a pinned base image does not pin an unversioned package
+install. Trace CLI contracts, partial success and retries, data-preserving
+recovery, capacity, ownership, concurrency, upgrade, and rollback against that
+source. Report source/provenance gaps explicitly and return findings through
+the normal review output. Do not mutate host storage during review.
+
+## Scalability review
+
+When reviewing runtime or deployment changes affecting controllers, webhooks,
+API clients, cloud calls, node volume operations, cleanup, or telemetry, use
+`code-review-scalability` in `.github/skills/code-review-scalability/SKILL.md`.
+Read and apply the skill even when the PR does not explicitly mention scale
+or performance; do not substitute a generic code review for these checks.
+Trace frequency and per-node/per-volume fan-out into actual API-server, ARM,
+storage data-plane, CPU, and memory costs. Distinguish cached reads from live
+requests and local filesystem calls from remote FUSE/NFS/SMB work. Report
+concrete scaling conditions and minimal fixes that preserve ownership,
+credential refresh, mount health, and required locking. Do not invent ARM
+traffic in local-only paths or treat every linear scan as a critical issue.
+Return findings through the normal PR-review output.
+
 ## Build, Test, and Lint
 
 ```bash
