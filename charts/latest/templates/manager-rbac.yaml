@@ -58,8 +58,10 @@ rules:
   - get
   - list
   - watch
+{{- if .Values.cleanup.pvCleanup.enabled }}
   - patch
   - delete
+{{- end }}
 {{- if or .Values.webhook.enforceEphemeral.enabled .Values.webhook.hyperconverged.enabled }}
 - apiGroups:
   - ""
