@@ -153,6 +153,9 @@ spec:
         terminationMessagePath: /tmp/termination-log
         terminationMessagePolicy: FallbackToLogsOnError
         volumeMounts:
+        - name: api-credentials
+          mountPath: /var/run/secrets/kubernetes.io/serviceaccount
+          readOnly: true
         - mountPath: /dev
           name: device
         - mountPath: /csi
@@ -218,6 +221,9 @@ spec:
             drop:
               - ALL
         volumeMounts:
+        - name: api-credentials
+          mountPath: /var/run/secrets/kubernetes.io/serviceaccount
+          readOnly: true
         - mountPath: /csi
           name: csi-socket-dir
 
@@ -251,6 +257,9 @@ spec:
             drop:
               - ALL
         volumeMounts:
+        - name: api-credentials
+          mountPath: /var/run/secrets/kubernetes.io/serviceaccount
+          readOnly: true
         - mountPath: /csi
           name: csi-socket-dir
 
@@ -299,9 +308,28 @@ spec:
         seccompProfile:
           type: RuntimeDefault
       serviceAccountName: {{ .Values.name }}-node
+      automountServiceAccountToken: false
       terminationGracePeriodSeconds: 60
       tolerations: {{- toYaml .Values.daemonset.tolerations | nindent 8 }}
       volumes:
+      - name: api-credentials
+        projected:
+          defaultMode: 420
+          sources:
+          - serviceAccountToken:
+              path: token
+              expirationSeconds: 3607
+          - configMap:
+              name: kube-root-ca.crt
+              items:
+              - key: ca.crt
+                path: ca.crt
+          - downwardAPI:
+              items:
+              - path: namespace
+                fieldRef:
+                  apiVersion: v1
+                  fieldPath: metadata.namespace
       - hostPath:
           path: /dev
           type: Directory
