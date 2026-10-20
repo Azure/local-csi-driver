@@ -74,6 +74,34 @@ credential refresh, mount health, and required locking. Do not invent ARM
 traffic in local-only paths or treat every linear scan as a critical issue.
 Return findings through the normal PR-review output.
 
+## General code review checks
+
+Alongside the specialized skills, apply these checks when relevant to the
+changed behavior. Trace affected callers and resources; report concrete failure
+conditions, not generic hardening suggestions.
+
+- **Security:** Check feature-specific RBAC and credential mounts, sensitive
+  data in logs/artifacts, and workflow trust boundaries. Verify that storage
+  cannot expose a previous workload's data when reused.
+- **Kubernetes lifecycle:** Trace feature toggles through rendered resources,
+  process flags, Services, ports, certificate identities, and readiness.
+  Check certificate renewal, owner references/finalizers, and whether shutdown
+  cleanup still has its API permissions and dependencies.
+- **Build and release:** Check event/ref filters, job conditions and outputs,
+  version/tag formats, build versus target architecture, and dependency/tool
+  version alignment. Verify that the artifact tested is the artifact published.
+- **Tests:** Wait for observable readiness and cache visibility, not just
+  successful creation. Distinguish the expected failure from unrelated errors.
+  Check fixture assumptions, background-controller interference, timing
+  tolerance, cleanup ordering, and report validity after redaction.
+- **Diagnostics:** Verify that events describe the actual operation, flags
+  configure the logger/exporter in use, and optional telemetry stays optional.
+  Check support-bundle selectors and collect evidence before teardown.
+- **Runtime platform:** Check container filesystem tools and their enabled
+  features against supported host kernels and architectures. Include helper
+  CPU/memory/time costs as volume size and inode count grow, not only as node
+  and volume counts grow.
+
 ## Build, Test, and Lint
 
 ```bash
