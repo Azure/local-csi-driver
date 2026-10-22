@@ -382,14 +382,9 @@ func (l *LVM) AvailableCapacity(ctx context.Context, vgName string) (int64, erro
 	})
 	select {
 	case res := <-ch:
-		if res.Err != nil {
-			return 0, res.Err
-		}
-		capacity, ok := res.Val.(int64)
-		if !ok {
-			return 0, fmt.Errorf("unexpected singleflight result type %T for volume group %q", res.Val, vgName)
-		}
-		return capacity, nil
+		// availableCapacity always returns an int64, so the assertion can't fail.
+		capacity, _ := res.Val.(int64)
+		return capacity, res.Err
 	case <-ctx.Done():
 		return 0, fmt.Errorf("waiting for capacity of volume group %q: %w", vgName, ctx.Err())
 	}
