@@ -373,8 +373,30 @@ func (l *LVM) GetCapacity(ctx context.Context, req *csi.GetCapacityRequest) (*cs
 	}, nil
 }
 
-// TODO(sc): use a cache.
+// AvailableCapacity returns the free capacity of the volume group. Concurrent
+// calls for the same volume group share one lvm call, and each caller returns
+// when that call finishes or when its own ctx is done.
 func (l *LVM) AvailableCapacity(ctx context.Context, vgName string) (int64, error) {
+	ch := l.capacityGroup.DoChan(vgName, func() (any, error) {
+		return l.availableCapacity(ctx, vgName)
+	})
+	select {
+	case res := <-ch:
+		if res.Err != nil {
+			return 0, res.Err
+		}
+		capacity, ok := res.Val.(int64)
+		if !ok {
+			return 0, fmt.Errorf("unexpected singleflight result type %T for volume group %q", res.Val, vgName)
+		}
+		return capacity, nil
+	case <-ctx.Done():
+		return 0, ctx.Err()
+	}
+}
+
+// TODO(sc): use a cache.
+func (l *LVM) availableCapacity(ctx context.Context, vgName string) (int64, error) {
 	log := log.FromContext(ctx)
 	ctx, span := l.tracer.Start(ctx, "volume.lvm.csi/AvailableCapacity", trace.WithAttributes(
 		attribute.String("vol.group", vgName),
