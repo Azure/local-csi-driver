@@ -391,7 +391,7 @@ func (l *LVM) AvailableCapacity(ctx context.Context, vgName string) (int64, erro
 		}
 		return capacity, nil
 	case <-ctx.Done():
-		return 0, ctx.Err()
+		return 0, fmt.Errorf("waiting for capacity of volume group %q: %w", vgName, ctx.Err())
 	}
 }
 
