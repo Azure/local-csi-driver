@@ -47,25 +47,63 @@ The table lists the configurable parameters in the current chart and their
 default values. The checked-in [`values.yaml`](values.yaml) remains the
 authoritative source.
 
+Each sidecar has an `image` mapping with a fully qualified `repository` and a
+separate `tag`. Dependabot updates the tags in these mappings.
+
+Legacy `repository` and `tag` overrides take precedence over the corresponding
+fields in `image`. Either field can be overridden independently; no
+`image: null` setting is needed. A legacy `registry` override is prepended
+when set. Otherwise, legacy repositories beginning with `/` are prefixed with
+`image.baseRepo`; other legacy repositories are used directly.
+
+`image.baseRepo` also applies to MCR repositories in the sidecar `image`
+mappings. Fully qualified repositories on other registries are used directly.
+For example, a shared mirror and an independent tag override can be configured
+without changing the repository paths:
+
+```yaml
+image:
+  baseRepo: mirror.example.com
+  csiResizer:
+    tag: v2.3.0
+```
+
+Dependabot checks the sidecar image tags daily with a seven-day cooldown.
+The default provisioner requires Kubernetes 1.34 or later. The Kind test
+configurations use Kubernetes 1.34.0 with Kind v0.30.0.
+`VolumeAttributesClass` is disabled in both the provisioner and resizer because
+the driver does not support volume modification.
+The Trivy workflow scans the rendered sidecar images for both Linux amd64
+and arm64 using the same vulnerability policy as the driver and manager images.
+
 <!-- markdownlint-disable MD033 -->
 | Parameter | Description | Default |
 | --- | --- | --- |
 | `name` | Base name used for generated Kubernetes resources. | `csi-local` |
-| `image.baseRepo` | Base repository prepended when an image repository begins with `/`. | `mcr.microsoft.com` |
+| `image.baseRepo` | Registry prefix for MCR sidecar image mappings and legacy repositories beginning with `/`, unless a per-image registry is set. | `mcr.microsoft.com` |
 | `image.driver.repository` | local-csi-driver container image repository. | `localcsidriver.azurecr.io/acstor/local-csi-driver` |
 | `image.driver.tag` | local-csi-driver image tag. Uses the chart application version when unset. | Unset |
 | `image.driver.pullPolicy` | local-csi-driver image pull policy. | `IfNotPresent` |
 | `image.manager.repository` | local-csi-manager container image repository. | `localcsidriver.azurecr.io/acstor/local-csi-manager` |
 | `image.manager.tag` | local-csi-manager image tag. Uses the chart application version when unset. | Unset |
 | `image.manager.pullPolicy` | local-csi-manager image pull policy. | `IfNotPresent` |
-| `image.csiProvisioner.repository` | external-provisioner container image repository. | `/oss/v2/kubernetes-csi/csi-provisioner` |
-| `image.csiProvisioner.tag` | external-provisioner image tag. | `v5.2.0` |
+| `image.csiProvisioner.image.repository` | external-provisioner container image repository, including its registry. | `mcr.microsoft.com/oss/v2/kubernetes-csi/csi-provisioner` |
+| `image.csiProvisioner.image.tag` | external-provisioner image tag. | `v6.4.0` |
+| `image.csiProvisioner.registry` | Legacy registry override. | Unset |
+| `image.csiProvisioner.repository` | Legacy repository override. Takes precedence over `image.csiProvisioner.image.repository`. | Unset |
+| `image.csiProvisioner.tag` | Legacy tag override. Takes precedence over `image.csiProvisioner.image.tag`. | Unset |
 | `image.csiProvisioner.pullPolicy` | external-provisioner image pull policy. | `IfNotPresent` |
-| `image.csiResizer.repository` | external-resizer container image repository. | `/oss/v2/kubernetes-csi/csi-resizer` |
-| `image.csiResizer.tag` | external-resizer image tag. | `v1.13.2` |
+| `image.csiResizer.image.repository` | external-resizer container image repository, including its registry. | `mcr.microsoft.com/oss/v2/kubernetes-csi/csi-resizer` |
+| `image.csiResizer.image.tag` | external-resizer image tag. | `v2.3.0` |
+| `image.csiResizer.registry` | Legacy registry override. | Unset |
+| `image.csiResizer.repository` | Legacy repository override. Takes precedence over `image.csiResizer.image.repository`. | Unset |
+| `image.csiResizer.tag` | Legacy tag override. Takes precedence over `image.csiResizer.image.tag`. | Unset |
 | `image.csiResizer.pullPolicy` | external-resizer image pull policy. | `IfNotPresent` |
-| `image.nodeDriverRegistrar.repository` | node-driver-registrar container image repository. | `/oss/v2/kubernetes-csi/csi-node-driver-registrar` |
-| `image.nodeDriverRegistrar.tag` | node-driver-registrar image tag. | `v2.16.0` |
+| `image.nodeDriverRegistrar.image.repository` | node-driver-registrar container image repository, including its registry. | `mcr.microsoft.com/oss/v2/kubernetes-csi/csi-node-driver-registrar` |
+| `image.nodeDriverRegistrar.image.tag` | node-driver-registrar image tag. | `v2.18.0` |
+| `image.nodeDriverRegistrar.registry` | Legacy registry override. | Unset |
+| `image.nodeDriverRegistrar.repository` | Legacy repository override. Takes precedence over `image.nodeDriverRegistrar.image.repository`. | Unset |
+| `image.nodeDriverRegistrar.tag` | Legacy tag override. Takes precedence over `image.nodeDriverRegistrar.image.tag`. | Unset |
 | `image.nodeDriverRegistrar.pullPolicy` | node-driver-registrar image pull policy. | `IfNotPresent` |
 | `daemonset.podSelector` | Pod selector labels for the DaemonSet. Uses chart defaults when empty. | `{}` |
 | `daemonset.updateStrategy` | DaemonSet update strategy. | <code>type: RollingUpdate<br>rollingUpdate:<br>&nbsp;&nbsp;maxUnavailable: 10%</code> |
