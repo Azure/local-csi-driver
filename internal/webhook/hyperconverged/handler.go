@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"math/rand"
 	"net/http"
+	"slices"
 	"time"
 
 	admissionv1 "k8s.io/api/admission/v1"
@@ -157,18 +158,73 @@ func (h *handler) injectNodeAffinity(ctx context.Context, pvNames []string, pod 
 	log.Info("starting to inject storage affinity for pod", "pod", pod.Name)
 
 	var pvNodes []string
-	var failoverMode string
-	var response *admission.Response
+	var durabilityNodes []string
+	hasDurability := false
+	hasMetadataPlacement := false
+	var topologySelectors []*corev1.NodeSelector
 
 	for _, pvName := range pvNames {
 		log.Info("getting nodes for volume", "volume name", pvName)
 		// if volume has existing replicas, get the nodes of the online replicas
-		var pvNodeList []string
-		pvNodeList, failoverMode, response = h.getPvNodesAndFailoverMode(ctx, pvName)
+		pvNodeList, mode, topology, response := h.getPvNodesAndFailoverMode(ctx, pvName)
 		if response != nil {
 			return *response
 		}
-		pvNodes = append(pvNodes, pvNodeList...)
+		if mode != FailoverModeDurability {
+			pvNodes = append(pvNodes, pvNodeList...)
+			continue
+		}
+		if len(pvNodeList) == 0 {
+			hasTopology := false
+			if topology != nil {
+				for _, term := range topology.NodeSelectorTerms {
+					if len(term.MatchExpressions) != 0 || len(term.MatchFields) != 0 {
+						hasTopology = true
+						break
+					}
+				}
+			}
+			if !hasTopology {
+				return admission.Denied("durability volume has no resolved storage node")
+			}
+			topologySelectors = append(topologySelectors, topology)
+			hasDurability = true
+			continue
+		}
+		hasDurability = true
+		if !hasMetadataPlacement {
+			// Start the intersection with the first durability volume.
+			durabilityNodes = slices.Clone(pvNodeList)
+			hasMetadataPlacement = true
+			continue
+		}
+		var commonNodes []string
+		// Every durability volume must already exist on the selected node.
+		for _, node := range durabilityNodes {
+			if slices.Contains(pvNodeList, node) {
+				commonNodes = append(commonNodes, node)
+			}
+		}
+		durabilityNodes = commonNodes
+	}
+
+	if hasDurability {
+		if hasMetadataPlacement && len(durabilityNodes) == 0 {
+			return admission.Denied("durability volumes have no common storage node")
+		}
+		slices.Sort(durabilityNodes)
+		durabilityNodes = slices.Compact(durabilityNodes)
+		if len(topologySelectors) > 0 && len(durabilityNodes) > 0 {
+			topologySelectors = append(topologySelectors, &corev1.NodeSelector{
+				NodeSelectorTerms: []corev1.NodeSelectorTerm{{
+					MatchExpressions: []corev1.NodeSelectorRequirement{{
+						Key: KubernetesNodeHostNameLabel, Operator: corev1.NodeSelectorOpIn, Values: durabilityNodes,
+					}},
+				}},
+			})
+			durabilityNodes = nil
+		}
+		return h.patchPodWithNodeAffinity(pod, durabilityNodes, FailoverModeDurability, topologySelectors...)
 	}
 
 	if len(pvNodes) == 0 {
@@ -176,11 +232,13 @@ func (h *handler) injectNodeAffinity(ctx context.Context, pvNames []string, pod 
 		return admission.Allowed("no nodes found for volume")
 	}
 
-	// add node affinity to the pod based on failover mode
-	return h.patchPodWithNodeAffinity(pod, pvNodes, failoverMode)
+	// Availability-only volumes use preferred node affinity.
+	return h.patchPodWithNodeAffinity(pod, pvNodes, FailoverModeAvailability)
 }
 
-func (h *handler) patchPodWithNodeAffinity(pod *corev1.Pod, nodeNames []string, failoverMode string) admission.Response {
+func (h *handler) patchPodWithNodeAffinity(
+	pod *corev1.Pod, nodeNames []string, failoverMode string, topologySelectors ...*corev1.NodeSelector,
+) admission.Response {
 	log.Info("list of nodes available for pod", "pod", pod.Name, "nodes", nodeNames, "failoverMode", failoverMode)
 
 	// add the node affinity to the pod based on failover mode
@@ -205,6 +263,9 @@ func (h *handler) patchPodWithNodeAffinity(pod *corev1.Pod, nodeNames []string, 
 	// Apply affinity based on failover mode
 	switch failoverMode {
 	case FailoverModeDurability:
+		if len(nodeNames) == 0 {
+			break
+		}
 		// Required affinity - pod must be scheduled on one of these nodes
 		log.Info("applying required node affinity for durability mode", "pod", pod.Name)
 		requiredTerm := corev1.NodeSelectorTerm{
@@ -244,6 +305,31 @@ func (h *handler) patchPodWithNodeAffinity(pod *corev1.Pod, nodeNames []string, 
 				preferredTerms...,
 			)
 		}
+	}
+
+	for _, selector := range topologySelectors {
+		required := newPod.Spec.Affinity.NodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution
+		if required == nil {
+			newPod.Spec.Affinity.NodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution = selector.DeepCopy()
+			continue
+		}
+		var terms []corev1.NodeSelectorTerm
+		// Selectors are ANDed by distributing their ORed terms. Empty terms match no nodes.
+		for _, left := range required.NodeSelectorTerms {
+			if len(left.MatchExpressions) == 0 && len(left.MatchFields) == 0 {
+				continue
+			}
+			for _, right := range selector.NodeSelectorTerms {
+				if len(right.MatchExpressions) == 0 && len(right.MatchFields) == 0 {
+					continue
+				}
+				term := left.DeepCopy()
+				term.MatchExpressions = append(term.MatchExpressions, right.MatchExpressions...)
+				term.MatchFields = append(term.MatchFields, right.MatchFields...)
+				terms = append(terms, *term)
+			}
+		}
+		required.NodeSelectorTerms = terms
 	}
 
 	marshalledPod, err := json.Marshal(pod)
@@ -290,7 +376,9 @@ func isRetriableError(err error) bool {
 	}
 }
 
-func (h *handler) getPvNodesAndFailoverMode(ctx context.Context, pvName string) ([]string, string, *admission.Response) {
+func (h *handler) getPvNodesAndFailoverMode(
+	ctx context.Context, pvName string,
+) ([]string, string, *corev1.NodeSelector, *admission.Response) {
 	var response admission.Response
 	var nodeNamesList []string
 	var failoverMode = FailoverModeAvailability // default to availability mode
@@ -302,11 +390,11 @@ func (h *handler) getPvNodesAndFailoverMode(ctx context.Context, pvName string) 
 	}
 	if err := retry.OnError(retry.DefaultRetry, isRetriableError, getPV); err != nil {
 		if apierrors.IsNotFound(err) {
-			return nil, failoverMode, nil
+			return nil, failoverMode, nil, nil
 		}
 		log.Error(err, "failed to get persistent volume", "pvName", pvName)
 		response = admission.Errored(http.StatusBadRequest, err)
-		return nil, failoverMode, &response
+		return nil, failoverMode, nil, &response
 	}
 
 	if pv != nil && pv.Spec.CSI != nil && pv.Spec.CSI.VolumeHandle != "" {
@@ -321,18 +409,21 @@ func (h *handler) getPvNodesAndFailoverMode(ctx context.Context, pvName string) 
 		}
 
 		// Get PV-s selected node annotation
-		nodeName, ok := pv.Annotations[csi.SelectedNodeAnnotation]
-		if !ok {
+		// An empty value is treated as absent so it never becomes a hostname requirement.
+		nodeName := pv.Annotations[csi.SelectedNodeAnnotation]
+		if nodeName == "" {
 			// Get the node name from volume context
-			nodeName, ok = pv.Spec.CSI.VolumeAttributes[csi.SelectedInitialNodeParam]
-			if !ok {
+			nodeName = pv.Spec.CSI.VolumeAttributes[csi.SelectedInitialNodeParam]
+			if nodeName == "" {
+				if failoverMode == FailoverModeDurability && pv.Spec.NodeAffinity != nil && pv.Spec.NodeAffinity.Required != nil {
+					return nil, failoverMode, pv.Spec.NodeAffinity.Required, nil
+				}
 				log.Error(fmt.Errorf("pv is not assigned to a node"), "no node name found", "pod", pvName)
-				response = admission.Allowed("pv is not assigned to a node")
-				return nil, failoverMode, &response
+				return nil, failoverMode, nil, nil
 			}
 		}
 		nodeNamesList = append(nodeNamesList, nodeName)
 	}
 
-	return nodeNamesList, failoverMode, nil
+	return nodeNamesList, failoverMode, nil, nil
 }
