@@ -165,7 +165,7 @@ spec:
         - --kube-api-qps={{ .Values.scalability.csiProvisioner.kubeApi.qps }}
         - --kube-api-burst={{ .Values.scalability.csiProvisioner.kubeApi.burst }}
         - --extra-create-metadata
-        - --feature-gates=Topology=true
+        - --feature-gates=Topology=true,VolumeAttributesClass=false
         - --strict-topology=true
         - --enable-capacity
         - --capacity-ownerref-level=0
@@ -217,6 +217,7 @@ spec:
       - name: csi-resizer
         args:
         - --csi-address=/csi/csi.sock
+        - --feature-gates=VolumeAttributesClass=false
         - --timeout=240s
         - --handle-volume-inuse-error=false
         - --http-endpoint=:{{ .Values.observability.csiResizer.http.port }}
