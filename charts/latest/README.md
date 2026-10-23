@@ -59,13 +59,13 @@ authoritative source.
 | `image.manager.tag` | local-csi-manager image tag. Uses the chart application version when unset. | Unset |
 | `image.manager.pullPolicy` | local-csi-manager image pull policy. | `IfNotPresent` |
 | `image.csiProvisioner.repository` | external-provisioner container image repository. | `/oss/v2/kubernetes-csi/csi-provisioner` |
-| `image.csiProvisioner.tag` | external-provisioner image tag. | `v5.2.0` |
+| `image.csiProvisioner.tag` | external-provisioner image tag. | `v6.1.1` |
 | `image.csiProvisioner.pullPolicy` | external-provisioner image pull policy. | `IfNotPresent` |
 | `image.csiResizer.repository` | external-resizer container image repository. | `/oss/v2/kubernetes-csi/csi-resizer` |
-| `image.csiResizer.tag` | external-resizer image tag. | `v1.13.2` |
+| `image.csiResizer.tag` | external-resizer image tag. | `v2.0.0` |
 | `image.csiResizer.pullPolicy` | external-resizer image pull policy. | `IfNotPresent` |
 | `image.nodeDriverRegistrar.repository` | node-driver-registrar container image repository. | `/oss/v2/kubernetes-csi/csi-node-driver-registrar` |
-| `image.nodeDriverRegistrar.tag` | node-driver-registrar image tag. | `v2.16.0` |
+| `image.nodeDriverRegistrar.tag` | node-driver-registrar image tag. | `v2.18.0` |
 | `image.nodeDriverRegistrar.pullPolicy` | node-driver-registrar image pull policy. | `IfNotPresent` |
 | `daemonset.podSelector` | Pod selector labels for the DaemonSet. Uses chart defaults when empty. | `{}` |
 | `daemonset.updateStrategy` | DaemonSet update strategy. | <code>type: RollingUpdate<br>rollingUpdate:<br>&nbsp;&nbsp;maxUnavailable: 10%</code> |
