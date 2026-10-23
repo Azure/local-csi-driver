@@ -3,8 +3,7 @@ name: csi-local
 
 # Container image configuration.
 image:
-  # The base repository for the container images. Will be used when `repository`
-  # begins with a '/' for a specific image.
+  # Registry prefix for default MCR sidecars and legacy '/' repositories.
   baseRepo: mcr.microsoft.com
   driver:
     repository: localcsidriver.azurecr.io/acstor/local-csi-driver
@@ -16,16 +15,19 @@ image:
     tag:
     pullPolicy: IfNotPresent
   csiProvisioner:
-    repository: /oss/v2/kubernetes-csi/csi-provisioner
-    tag: v5.2.0
+    image:
+      repository: mcr.microsoft.com/oss/v2/kubernetes-csi/csi-provisioner
+      tag: v6.4.0
     pullPolicy: IfNotPresent
   csiResizer:
-    repository: /oss/v2/kubernetes-csi/csi-resizer
-    tag: v1.13.2
+    image:
+      repository: mcr.microsoft.com/oss/v2/kubernetes-csi/csi-resizer
+      tag: v2.3.0
     pullPolicy: IfNotPresent
   nodeDriverRegistrar:
-    repository: /oss/v2/kubernetes-csi/csi-node-driver-registrar
-    tag: v2.16.0
+    image:
+      repository: mcr.microsoft.com/oss/v2/kubernetes-csi/csi-node-driver-registrar
+      tag: v2.18.0
     pullPolicy: IfNotPresent
 
 # DaemonSet configuration.
