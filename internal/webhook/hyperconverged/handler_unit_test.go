@@ -4,12 +4,21 @@
 package hyperconverged
 
 import (
+	"context"
+	"encoding/json"
 	"math/rand"
 	"slices"
 	"testing"
 
+	jsonpatch "github.com/evanphx/json-patch/v5"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/component-helpers/scheduling/corev1/nodeaffinity"
+	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+
+	"local-csi-driver/internal/csi"
+	"local-csi-driver/internal/csi/core/lvm"
 )
 
 // Helper functions for test setup and validation
@@ -322,6 +331,139 @@ func TestPatchPodWithNodeAffinity_ExistingRequiredAffinity(t *testing.T) {
 	testPod := pod.DeepCopy()
 	applyAffinityLogic(testPod, nodeNames, FailoverModeDurability)
 	validateRequiredAffinity(t, testPod, nodeNames)
+}
+
+func TestGetPvNodesAndFailoverMode_UsesRetainedTopology(t *testing.T) {
+	scheme := runtime.NewScheme()
+	if err := corev1.AddToScheme(scheme); err != nil {
+		t.Fatalf("failed to add core API to scheme: %v", err)
+	}
+	pv := &corev1.PersistentVolume{
+		ObjectMeta: metav1.ObjectMeta{Name: "durability-pv"},
+		Spec: corev1.PersistentVolumeSpec{
+			PersistentVolumeSource: corev1.PersistentVolumeSource{
+				CSI: &corev1.CSIPersistentVolumeSource{
+					Driver:       "localdisk.csi.acstor.io",
+					VolumeHandle: "durability-volume",
+					VolumeAttributes: map[string]string{
+						FailoverModeParam: FailoverModeDurability,
+					},
+				},
+			},
+			NodeAffinity: &corev1.VolumeNodeAffinity{
+				Required: &corev1.NodeSelector{
+					NodeSelectorTerms: []corev1.NodeSelectorTerm{{
+						MatchExpressions: []corev1.NodeSelectorRequirement{{
+							Key:      KubernetesNodeHostNameLabel,
+							Operator: corev1.NodeSelectorOpIn,
+							Values:   []string{"node-a"},
+						}},
+					}},
+				},
+			},
+		},
+	}
+	for _, key := range []string{lvm.TopologyKey, KubernetesNodeHostNameLabel, csi.SelectedNodeAnnotation, csi.SelectedInitialNodeParam} {
+		t.Run(key, func(t *testing.T) {
+			pv := pv.DeepCopy()
+			pv.Spec.NodeAffinity.Required.NodeSelectorTerms[0].MatchExpressions[0].Key = key
+			node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{
+				Name:   "node-a",
+				Labels: map[string]string{lvm.TopologyKey: "node-a", KubernetesNodeHostNameLabel: "host-a"},
+			}}
+			if key == KubernetesNodeHostNameLabel {
+				pv.Spec.NodeAffinity.Required.NodeSelectorTerms[0].MatchExpressions[0].Values = []string{"host-a"}
+			}
+			if key == csi.SelectedNodeAnnotation {
+				pv.Spec.NodeAffinity = nil
+				pv.Annotations = map[string]string{csi.SelectedNodeAnnotation: node.Name}
+			}
+			if key == csi.SelectedInitialNodeParam {
+				pv.Spec.NodeAffinity = nil
+				pv.Spec.CSI.VolumeAttributes[csi.SelectedInitialNodeParam] = node.Name
+			}
+			h := createTestHandler()
+			h.client = fake.NewClientBuilder().WithScheme(scheme).WithObjects(pv, node).Build()
+
+			nodes, mode, response := h.getPvNodesAndFailoverMode(context.Background(), pv.Name)
+
+			if response != nil {
+				t.Fatalf("unexpected admission response: %#v", response)
+			}
+			if mode != FailoverModeDurability {
+				t.Fatalf("mode = %q, want %q", mode, FailoverModeDurability)
+			}
+			if !slices.Equal(nodes, []string{"host-a"}) {
+				t.Fatalf("nodes = %v, want [host-a]", nodes)
+			}
+			pod := createTestPod()
+			result := h.injectNodeAffinity(context.Background(), []string{pv.Name}, pod)
+			if !result.Allowed || len(result.Patches) == 0 {
+				t.Fatalf("expected affinity patch, got %+v", result)
+			}
+			raw, err := json.Marshal(pod)
+			if err != nil {
+				t.Fatal(err)
+			}
+			patchBytes, err := json.Marshal(result.Patches)
+			if err != nil {
+				t.Fatal(err)
+			}
+			patch, err := jsonpatch.DecodePatch(patchBytes)
+			if err != nil {
+				t.Fatal(err)
+			}
+			mutated, err := patch.Apply(raw)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := json.Unmarshal(mutated, pod); err != nil {
+				t.Fatal(err)
+			}
+			selector, err := nodeaffinity.NewNodeSelector(pod.Spec.Affinity.NodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution)
+			if err != nil || !selector.Match(node) {
+				t.Fatalf("injected affinity excludes the volume owner: %v", err)
+			}
+		})
+	}
+}
+
+func TestGetPvNodesAndFailoverMode_OwnerLookupFailures(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		mode       string
+		nodeExists bool
+		allowed    bool
+	}{
+		{name: "missing durability owner is denied", mode: FailoverModeDurability},
+		{name: "missing availability owner permits recovery", mode: FailoverModeAvailability, allowed: true},
+		{name: "missing hostname is an error", mode: FailoverModeDurability, nodeExists: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			scheme := runtime.NewScheme()
+			if err := corev1.AddToScheme(scheme); err != nil {
+				t.Fatal(err)
+			}
+			pv := &corev1.PersistentVolume{
+				ObjectMeta: metav1.ObjectMeta{Name: "pv", Annotations: map[string]string{csi.SelectedNodeAnnotation: "owner"}},
+				Spec: corev1.PersistentVolumeSpec{PersistentVolumeSource: corev1.PersistentVolumeSource{
+					CSI: &corev1.CSIPersistentVolumeSource{
+						VolumeHandle: "vg#pv", VolumeAttributes: map[string]string{FailoverModeParam: tc.mode},
+					},
+				}},
+			}
+			builder := fake.NewClientBuilder().WithScheme(scheme).WithObjects(pv)
+			if tc.nodeExists {
+				builder.WithObjects(&corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "owner"}})
+			}
+			h := createTestHandler()
+			h.client = builder.Build()
+			result := h.injectNodeAffinity(context.Background(), []string{pv.Name}, createTestPod())
+			if result.Allowed != tc.allowed {
+				t.Fatalf("allowed = %t, want %t; result: %+v", result.Allowed, tc.allowed, result.Result)
+			}
+		})
+	}
 }
 
 func TestGetPvNodesAndFailoverMode(t *testing.T) {

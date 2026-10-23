@@ -19,10 +19,12 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	k8sruntime "k8s.io/apimachinery/pkg/runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 
 	"local-csi-driver/internal/csi/capability"
 	"local-csi-driver/internal/csi/core"
@@ -40,6 +42,9 @@ const (
 	testVolumeID             = "vg#pv"
 	recoveryOKVolumeID       = "vg#testrecoveryok"
 	recoveryBrokenVolumeID   = "vg#testrecoverybroken"
+	durabilityOwnedVolumeID  = "vg#durability-owned"
+	durabilityWrongVolumeID  = "vg#durability-wrong"
+	durabilityTopologyID     = "vg#durability-topology"
 	invalidStagingPath       = "invalidStagingPath"
 	validStagingPath         = "/vg/pv"
 	validTargetPath          = "validTargetPath"
@@ -165,7 +170,7 @@ func initTestNodeServer(_ *testing.T, ctrl *gomock.Controller) *Server {
 					PersistentVolumeSource: corev1.PersistentVolumeSource{
 						CSI: &corev1.CSIPersistentVolumeSource{
 							Driver:       driverName,
-							VolumeHandle: recoveryOKVolumeID,
+							VolumeHandle: recoveryBrokenVolumeID,
 							VolumeAttributes: map[string]string{
 								selectedInitialNodeParam: "test-node",
 								// capacity not set.
@@ -174,10 +179,86 @@ func initTestNodeServer(_ *testing.T, ctrl *gomock.Controller) *Server {
 					},
 				},
 			},
+			{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "durability-owned",
+					Annotations: map[string]string{
+						selectedNodeAnnotation: testNodeName,
+					},
+				},
+				Spec: corev1.PersistentVolumeSpec{
+					PersistentVolumeSource: corev1.PersistentVolumeSource{
+						CSI: &corev1.CSIPersistentVolumeSource{
+							Driver:       driverName,
+							VolumeHandle: durabilityOwnedVolumeID,
+							VolumeAttributes: map[string]string{
+								core.FailoverModeParam:             core.FailoverModeDurability,
+								"localdisk.csi.acstor.io/capacity": "1Gi",
+							},
+						},
+					},
+				},
+			},
+			{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "durability-wrong",
+					Annotations: map[string]string{
+						selectedNodeAnnotation: "other-node",
+					},
+				},
+				Spec: corev1.PersistentVolumeSpec{
+					PersistentVolumeSource: corev1.PersistentVolumeSource{
+						CSI: &corev1.CSIPersistentVolumeSource{
+							Driver:       driverName,
+							VolumeHandle: durabilityWrongVolumeID,
+							VolumeAttributes: map[string]string{
+								core.FailoverModeParam:             core.FailoverModeDurability,
+								"localdisk.csi.acstor.io/capacity": "1Gi",
+							},
+						},
+					},
+				},
+			},
+			{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "durability-topology",
+				},
+				Spec: corev1.PersistentVolumeSpec{
+					PersistentVolumeSource: corev1.PersistentVolumeSource{
+						CSI: &corev1.CSIPersistentVolumeSource{
+							Driver:       driverName,
+							VolumeHandle: durabilityTopologyID,
+							VolumeAttributes: map[string]string{
+								core.FailoverModeParam:             core.FailoverModeDurability,
+								"localdisk.csi.acstor.io/capacity": "1Gi",
+							},
+						},
+					},
+					NodeAffinity: &corev1.VolumeNodeAffinity{
+						Required: &corev1.NodeSelector{
+							NodeSelectorTerms: []corev1.NodeSelectorTerm{{
+								MatchExpressions: []corev1.NodeSelectorRequirement{{
+									Key:      testTopologyKey,
+									Operator: corev1.NodeSelectorOpIn,
+									Values:   []string{testNodeName},
+								}},
+							}},
+						},
+					},
+				},
+			},
 		},
 	}
 
-	client := fake.NewClientBuilder().WithScheme(scheme).
+	node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{
+		Name: testNodeName,
+		Labels: map[string]string{
+			testTopologyKey:      testNodeName,
+			corev1.LabelHostname: testNodeName,
+		},
+	}}
+	client := fake.NewClientBuilder().WithScheme(scheme).WithObjects(node).
+		WithIndex(&corev1.PersistentVolume{}, pvCSIIdentityIndex, pvCSIIdentityKeys).
 		WithLists(&pvs).
 		Build()
 
@@ -593,6 +674,8 @@ func TestNodeStageVolume(t *testing.T) {
 		resp        *csi.NodeStageVolumeResponse
 		expectErr   error
 		expectMount func(mntDir string, m *mounter.MockMounter)
+		configure   func(*Server)
+		verify      func(*testing.T, *Server)
 	}{
 		{
 			name: "Success",
@@ -750,7 +833,127 @@ func TestNodeStageVolume(t *testing.T) {
 				VolumeContext:     map[string]string{},
 			},
 			resp:      nil,
-			expectErr: status.Error(codes.Internal, fmt.Errorf("volume request size is missing in pv attribute localdisk.csi.acstor.io/capacity - recovery impossible").Error()),
+			expectErr: status.Error(codes.Internal, "PV storage capacity is missing or invalid"),
+		},
+		{
+			name: "durability volume stages only through existing-volume path",
+			req: &csi.NodeStageVolumeRequest{
+				VolumeCapability: &csi.VolumeCapability{
+					AccessType: stdVolCapBlock,
+					AccessMode: &volumeCap,
+				},
+				VolumeId:          durabilityOwnedVolumeID,
+				StagingTargetPath: validStagingPath,
+			},
+			resp: &csi.NodeStageVolumeResponse{},
+			verify: func(t *testing.T, ns *Server) {
+				t.Helper()
+				volume := ns.volume.(*core.Fake)
+				if volume.EnsureExistingCalls != 1 || volume.EnsureCalls != 0 {
+					t.Fatalf(
+						"ensure calls = %d, existing-only calls = %d; want 0 and 1",
+						volume.EnsureCalls,
+						volume.EnsureExistingCalls,
+					)
+				}
+			},
+		},
+		{
+			name: "durability volume uses retained PV topology as owner",
+			req: &csi.NodeStageVolumeRequest{
+				VolumeCapability: &csi.VolumeCapability{
+					AccessType: stdVolCapBlock,
+					AccessMode: &volumeCap,
+				},
+				VolumeId:          durabilityTopologyID,
+				StagingTargetPath: validStagingPath,
+			},
+			resp: &csi.NodeStageVolumeResponse{},
+			verify: func(t *testing.T, ns *Server) {
+				t.Helper()
+				volume := ns.volume.(*core.Fake)
+				if volume.EnsureExistingCalls != 1 || volume.EnsureCalls != 0 {
+					t.Fatalf(
+						"ensure calls = %d, existing-only calls = %d; want 0 and 1",
+						volume.EnsureCalls,
+						volume.EnsureExistingCalls,
+					)
+				}
+			},
+		},
+		{
+			name: "durability volume on another node is rejected before ensure",
+			req: &csi.NodeStageVolumeRequest{
+				VolumeCapability: &csi.VolumeCapability{
+					AccessType: stdVolCapBlock,
+					AccessMode: &volumeCap,
+				},
+				VolumeId:          durabilityWrongVolumeID,
+				StagingTargetPath: validStagingPath,
+			},
+			expectErr: status.Error(
+				codes.FailedPrecondition,
+				"durability volume belongs to node other-node, not node node-name",
+			),
+			verify: func(t *testing.T, ns *Server) {
+				t.Helper()
+				volume := ns.volume.(*core.Fake)
+				if volume.EnsureExistingCalls != 0 || volume.EnsureCalls != 0 {
+					t.Fatalf("wrong-node staging performed ensure calls: %#v", volume)
+				}
+			},
+		},
+		{
+			name: "durability volume without PV metadata is rejected",
+			req: &csi.NodeStageVolumeRequest{
+				VolumeCapability: &csi.VolumeCapability{
+					AccessType: stdVolCapBlock,
+					AccessMode: &volumeCap,
+				},
+				VolumeId:          "vg#durability-no-pv",
+				StagingTargetPath: validStagingPath,
+				VolumeContext: map[string]string{
+					core.FailoverModeParam:   core.FailoverModeDurability,
+					selectedInitialNodeParam: testNodeName,
+				},
+			},
+			expectErr: status.Error(
+				codes.NotFound,
+				"durability volume metadata is unavailable",
+			),
+			verify: func(t *testing.T, ns *Server) {
+				t.Helper()
+				volume := ns.volume.(*core.Fake)
+				if volume.EnsureExistingCalls != 0 || volume.EnsureCalls != 0 {
+					t.Fatalf("staging without PV metadata performed ensure calls: %#v", volume)
+				}
+			},
+		},
+		{
+			name: "missing durability volume is not recreated",
+			req: &csi.NodeStageVolumeRequest{
+				VolumeCapability: &csi.VolumeCapability{
+					AccessType: stdVolCapBlock,
+					AccessMode: &volumeCap,
+				},
+				VolumeId:          durabilityOwnedVolumeID,
+				StagingTargetPath: validStagingPath,
+			},
+			configure: func(ns *Server) {
+				ns.volume.(*core.Fake).Err = core.ErrVolumeNotFound
+			},
+			expectErr: status.Error(codes.NotFound, core.ErrVolumeNotFound.Error()),
+			verify: func(t *testing.T, ns *Server) {
+				t.Helper()
+				volume := ns.volume.(*core.Fake)
+				if volume.EnsureExistingCalls != 1 || volume.EnsureCalls != 0 {
+					t.Fatalf(
+						"ensure calls = %d, existing-only calls = %d; want 0 and 1",
+						volume.EnsureCalls,
+						volume.EnsureExistingCalls,
+					)
+				}
+			},
 		},
 	}
 	for _, test := range tests {
@@ -767,6 +970,9 @@ func TestNodeStageVolume(t *testing.T) {
 			}()
 
 			ns := initTestNodeServer(t, ctrl)
+			if tt.configure != nil {
+				tt.configure(ns)
+			}
 			if tt.expectMount != nil {
 				tt.expectMount(mntDir, ns.mounter.(*mounter.MockMounter))
 			}
@@ -787,7 +993,467 @@ func TestNodeStageVolume(t *testing.T) {
 				t.Errorf("NodeStageVolume() resp:\n %+v\n expected:\n %+v", resp, tt.resp)
 				return
 			}
+			if tt.verify != nil {
+				tt.verify(t, ns)
+			}
 		})
+	}
+}
+
+func TestValidateDurabilityOwner_RetainedTopology(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		key  string
+		node string
+		code codes.Code
+		field bool
+	}{
+		{name: "driver topology permits owner", key: lvm.TopologyKey, node: testNodeName, code: codes.OK},
+		{name: "driver topology excludes other node", key: lvm.TopologyKey, node: "other-node", code: codes.FailedPrecondition},
+		{name: "hostname topology permits owner", key: corev1.LabelHostname, node: testNodeName, code: codes.OK},
+		{name: "hostname topology excludes other node", key: corev1.LabelHostname, node: "other-node", code: codes.FailedPrecondition},
+		{name: "node name field permits owner", key: "metadata.name", node: testNodeName, code: codes.OK, field: true},
+		{name: "node name field excludes other node", key: "metadata.name", node: "other-node", code: codes.FailedPrecondition, field: true},
+		{name: "unrelated topology cannot identify owner", key: corev1.LabelTopologyZone, node: testNodeName, code: codes.FailedPrecondition},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			scheme := k8sruntime.NewScheme()
+			if err := corev1.AddToScheme(scheme); err != nil {
+				t.Fatal(err)
+			}
+			node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{
+				Name: testNodeName,
+				Labels: map[string]string{
+					lvm.TopologyKey:      testNodeName,
+					corev1.LabelHostname: testNodeName,
+				},
+			}}
+			ns := &Server{
+				driver: lvm.DriverName, nodeID: testNodeName,
+				k8sClient: fake.NewClientBuilder().WithScheme(scheme).WithObjects(node).Build(),
+			}
+			term := corev1.NodeSelectorTerm{}
+			if tc.field {
+				term.MatchFields = []corev1.NodeSelectorRequirement{{
+					Key: tc.key, Operator: corev1.NodeSelectorOpIn, Values: []string{tc.node},
+				}}
+			} else {
+				term.MatchExpressions = []corev1.NodeSelectorRequirement{{
+					Key: tc.key, Operator: corev1.NodeSelectorOpIn, Values: []string{tc.node},
+				}}
+			}
+			pv := &corev1.PersistentVolume{
+				Spec: corev1.PersistentVolumeSpec{
+					NodeAffinity: &corev1.VolumeNodeAffinity{
+						Required: &corev1.NodeSelector{
+							NodeSelectorTerms: []corev1.NodeSelectorTerm{term},
+						},
+					},
+				},
+			}
+			_, span := telemetry.NewNoopTracerProvider().Tracer("test").Start(context.Background(), tc.name)
+			defer span.End()
+			err := ns.validateDurabilityOwner(context.Background(), &csi.NodeStageVolumeRequest{}, pv, span)
+			if got := status.Code(err); got != tc.code {
+				t.Fatalf("status = %v, want %v; error: %v", got, tc.code, err)
+			}
+		})
+	}
+}
+
+func TestPVTopologyAllowsNode_SelectorSemantics(t *testing.T) {
+	node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{
+		Name: "node-b",
+		Labels: map[string]string{
+			lvm.TopologyKey:          "node-b",
+			corev1.LabelHostname:     "node-b",
+			corev1.LabelTopologyZone: "zone-b",
+		},
+	}}
+	topology := corev1.NodeSelectorRequirement{
+		Key: lvm.TopologyKey, Operator: corev1.NodeSelectorOpIn, Values: []string{"node-a", "node-b"},
+	}
+	hostname := corev1.NodeSelectorRequirement{
+		Key: corev1.LabelHostname, Operator: corev1.NodeSelectorOpIn, Values: []string{"node-a"},
+	}
+	for _, tc := range []struct {
+		name    string
+		terms   []corev1.NodeSelectorTerm
+		allowed bool
+	}{
+		{
+			name:  "requirements in a term are ANDed",
+			terms: []corev1.NodeSelectorTerm{{MatchExpressions: []corev1.NodeSelectorRequirement{topology, hostname}}},
+		},
+		{
+			name: "terms are ORed",
+			terms: []corev1.NodeSelectorTerm{
+				{MatchExpressions: []corev1.NodeSelectorRequirement{hostname}},
+				{MatchExpressions: []corev1.NodeSelectorRequirement{topology}},
+			},
+			allowed: true,
+		},
+		{
+			name: "other labels must match",
+			terms: []corev1.NodeSelectorTerm{{MatchExpressions: []corev1.NodeSelectorRequirement{
+				topology,
+				{Key: corev1.LabelTopologyZone, Operator: corev1.NodeSelectorOpIn, Values: []string{"zone-a"}},
+			}}},
+		},
+		{
+			name: "other operators are honored",
+			terms: []corev1.NodeSelectorTerm{{MatchExpressions: []corev1.NodeSelectorRequirement{
+				topology,
+				{Key: corev1.LabelTopologyZone, Operator: corev1.NodeSelectorOpNotIn, Values: []string{"zone-a"}},
+			}}},
+			allowed: true,
+		},
+		{
+			name: "node fields must match",
+			terms: []corev1.NodeSelectorTerm{{
+				MatchExpressions: []corev1.NodeSelectorRequirement{topology},
+				MatchFields: []corev1.NodeSelectorRequirement{
+					{Key: "metadata.name", Operator: corev1.NodeSelectorOpIn, Values: []string{"node-a"}},
+				},
+			}},
+		},
+		{
+			name: "node name field identifies the owner",
+			terms: []corev1.NodeSelectorTerm{{
+				MatchFields: []corev1.NodeSelectorRequirement{
+					{Key: "metadata.name", Operator: corev1.NodeSelectorOpIn, Values: []string{"node-b"}},
+				},
+			}},
+			allowed: true,
+		},
+		{
+			name: "nonmatching node name field excludes the node",
+			terms: []corev1.NodeSelectorTerm{{
+				MatchFields: []corev1.NodeSelectorRequirement{
+					{Key: "metadata.name", Operator: corev1.NodeSelectorOpIn, Values: []string{"node-a"}},
+				},
+			}},
+		},
+		{
+			name: "unrelated matching term does not establish ownership",
+			terms: []corev1.NodeSelectorTerm{
+				{MatchExpressions: []corev1.NodeSelectorRequirement{hostname}},
+				{MatchExpressions: []corev1.NodeSelectorRequirement{
+					{Key: corev1.LabelTopologyZone, Operator: corev1.NodeSelectorOpIn, Values: []string{"zone-b"}},
+				}},
+			},
+		},
+		{name: "empty selector"},
+		{name: "empty term", terms: []corev1.NodeSelectorTerm{{}}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			pv := &corev1.PersistentVolume{Spec: corev1.PersistentVolumeSpec{
+				NodeAffinity: &corev1.VolumeNodeAffinity{Required: &corev1.NodeSelector{NodeSelectorTerms: tc.terms}},
+			}}
+			_, allowed, err := pvTopologyAllowsNode(pv, node, lvm.TopologyKey)
+			if err != nil || allowed != tc.allowed {
+				t.Fatalf("allowed = %t, error = %v; want %t", allowed, err, tc.allowed)
+			}
+		})
+	}
+}
+
+func TestNodeStageVolume_UpdatesAvailabilityOwnerAcrossNodes(t *testing.T) {
+	ns := initTestNodeServer(t, gomock.NewController(t))
+	const volumeID = "vg#availability-owner-tracking"
+	pv := &corev1.PersistentVolume{
+		ObjectMeta: metav1.ObjectMeta{Name: "availability-owner-tracking"},
+		Spec: corev1.PersistentVolumeSpec{PersistentVolumeSource: corev1.PersistentVolumeSource{
+			CSI: &corev1.CSIPersistentVolumeSource{
+				Driver: driverName, VolumeHandle: volumeID,
+				VolumeAttributes: map[string]string{
+					core.FailoverModeParam: core.FailoverModeAvailability,
+					lvm.CapacityParam:     "1Gi",
+				},
+			},
+		}},
+	}
+	if err := ns.k8sClient.Create(context.Background(), pv); err != nil {
+		t.Fatal(err)
+	}
+
+	req := &csi.NodeStageVolumeRequest{
+		VolumeId: volumeID, StagingTargetPath: t.TempDir(),
+		VolumeCapability: &csi.VolumeCapability{
+			AccessType: &csi.VolumeCapability_Block{Block: &csi.VolumeCapability_BlockVolume{}},
+			AccessMode: &csi.VolumeCapability_AccessMode{Mode: csi.VolumeCapability_AccessMode_SINGLE_NODE_SINGLE_WRITER},
+		},
+	}
+	for _, nodeID := range []string{"node-a", "node-b"} {
+		ns.nodeID = nodeID
+		if _, err := ns.NodeStageVolume(context.Background(), req); err != nil {
+			t.Fatalf("NodeStageVolume() on %s: %v", nodeID, err)
+		}
+		var updatedPV corev1.PersistentVolume
+		if err := ns.k8sClient.Get(context.Background(), client.ObjectKey{Name: pv.Name}, &updatedPV); err != nil {
+			t.Fatalf("failed to get PV after staging on %s: %v", nodeID, err)
+		}
+		if got := updatedPV.Annotations[selectedNodeAnnotation]; got != nodeID {
+			t.Fatalf("selected-node after staging on %s = %q", nodeID, got)
+		}
+	}
+}
+
+func TestNodeStageVolume_StaticPVIdentity(t *testing.T) {
+	const handle = "vg#static-data"
+	for _, tc := range []struct {
+		name             string
+		collision        string
+		missing          bool
+		duplicate        bool
+		matchingName     bool
+		staticCapacity   bool
+		noAttributes     bool
+		requestMode      bool
+		availability     bool
+		lookupError      string
+		excludedTopology bool
+		code             codes.Code
+	}{
+		{name: "static PV has different name", requestMode: true},
+		{name: "policy resolved from static PV"},
+		{name: "same-name PV has another handle", collision: "handle"},
+		{name: "same-name PV has another driver", collision: "driver"},
+		{name: "same-name non-CSI PV", collision: "non-CSI"},
+		{name: "unrelated PV cannot authorize staging", collision: "handle", missing: true, requestMode: true, code: codes.NotFound},
+		{name: "different driver cannot authorize staging", collision: "driver", missing: true, requestMode: true, code: codes.NotFound},
+		{name: "ambiguous identity is rejected", duplicate: true, code: codes.FailedPrecondition},
+		{name: "matching-name ambiguity is rejected", duplicate: true, matchingName: true, requestMode: true, code: codes.FailedPrecondition},
+		{name: "static PV uses storage capacity", staticCapacity: true},
+		{name: "static PV without attributes uses existing-only preparation", staticCapacity: true, noAttributes: true, requestMode: true},
+		{name: "static availability PV uses storage capacity", staticCapacity: true, availability: true},
+		{name: "static availability PV without attributes uses storage capacity", staticCapacity: true, availability: true, noAttributes: true},
+		{name: "PV list error is surfaced", lookupError: "list", code: codes.Internal},
+		{name: "all topology expressions must match before staging", excludedTopology: true, code: codes.FailedPrecondition},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ns := initTestNodeServer(t, gomock.NewController(t))
+			pv := &corev1.PersistentVolume{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "static-pv", Annotations: map[string]string{selectedNodeAnnotation: testNodeName},
+				},
+				Spec: corev1.PersistentVolumeSpec{PersistentVolumeSource: corev1.PersistentVolumeSource{
+					CSI: &corev1.CSIPersistentVolumeSource{
+						Driver: driverName, VolumeHandle: handle,
+						VolumeAttributes: map[string]string{
+							core.FailoverModeParam: core.FailoverModeDurability,
+							lvm.CapacityParam:      "1Gi",
+						},
+					},
+				}},
+			}
+			if tc.matchingName {
+				pv.Name = "static-data"
+				pv.Spec.CSI.VolumeAttributes[core.FailoverModeParam] = core.FailoverModeAvailability
+			}
+			if tc.availability {
+				pv.Spec.CSI.VolumeAttributes[core.FailoverModeParam] = core.FailoverModeAvailability
+			}
+			if tc.staticCapacity {
+				delete(pv.Spec.CSI.VolumeAttributes, lvm.CapacityParam)
+				pv.Spec.Capacity = corev1.ResourceList{corev1.ResourceStorage: resource.MustParse("1Gi")}
+			}
+			if tc.noAttributes {
+				pv.Spec.CSI.VolumeAttributes = nil
+			}
+			if tc.excludedTopology {
+				pv.Annotations = nil
+				pv.Spec.NodeAffinity = &corev1.VolumeNodeAffinity{Required: &corev1.NodeSelector{
+					NodeSelectorTerms: []corev1.NodeSelectorTerm{{
+						MatchExpressions: []corev1.NodeSelectorRequirement{
+							{Key: testTopologyKey, Operator: corev1.NodeSelectorOpIn, Values: []string{testNodeName, "other-node"}},
+							{Key: corev1.LabelHostname, Operator: corev1.NodeSelectorOpIn, Values: []string{"other-node"}},
+						},
+					}},
+				}}
+			}
+			if !tc.missing {
+				if err := ns.k8sClient.Create(context.Background(), pv); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if tc.collision != "" || tc.duplicate {
+				other := pv.DeepCopy()
+				other.ResourceVersion = ""
+				other.Name = "static-data"
+				if tc.collision != "" {
+					other.Annotations = map[string]string{selectedNodeAnnotation: "other-node"}
+				}
+				if tc.duplicate {
+					other.Name = "duplicate-pv"
+					other.Spec.CSI.VolumeAttributes[core.FailoverModeParam] = core.FailoverModeDurability
+				}
+				switch tc.collision {
+				case "handle":
+					other.Spec.CSI.VolumeHandle = "vg#another-volume"
+				case "driver":
+					other.Spec.CSI.Driver = "another-driver"
+				case "non-CSI":
+					other.Spec.CSI = nil
+				}
+				if err := ns.k8sClient.Create(context.Background(), other); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if tc.lookupError != "" {
+				ns.k8sClient = fake.NewClientBuilder().WithScheme(ns.k8sClient.Scheme()).WithInterceptorFuncs(interceptor.Funcs{
+					List: func(context.Context, client.WithWatch, client.ObjectList, ...client.ListOption) error {
+						return errors.New("PV list failed")
+					},
+				}).Build()
+			}
+			req := &csi.NodeStageVolumeRequest{
+				VolumeId: handle, StagingTargetPath: t.TempDir(),
+				VolumeCapability: &csi.VolumeCapability{
+					AccessType: &csi.VolumeCapability_Block{Block: &csi.VolumeCapability_BlockVolume{}},
+					AccessMode: &csi.VolumeCapability_AccessMode{Mode: csi.VolumeCapability_AccessMode_SINGLE_NODE_SINGLE_WRITER},
+				},
+			}
+			if tc.requestMode {
+				req.VolumeContext = map[string]string{core.FailoverModeParam: core.FailoverModeDurability}
+			}
+			for range 2 {
+				_, err := ns.NodeStageVolume(context.Background(), req)
+				if status.Code(err) != tc.code {
+					t.Fatalf("status = %v, want %v; error: %v", status.Code(err), tc.code, err)
+				}
+			}
+			volume := ns.volume.(*core.Fake)
+			wantEnsureCalls, wantEnsureExistingCalls := 0, 0
+			if tc.code == codes.OK {
+				if tc.availability {
+					wantEnsureCalls = 2
+				} else {
+					wantEnsureExistingCalls = 2
+				}
+			}
+			if volume.EnsureCalls != wantEnsureCalls || volume.EnsureExistingCalls != wantEnsureExistingCalls {
+				t.Fatalf("ensure calls = %d, existing-only calls = %d; want %d and %d",
+					volume.EnsureCalls, volume.EnsureExistingCalls, wantEnsureCalls, wantEnsureExistingCalls)
+			}
+		})
+	}
+}
+
+func TestGetStagingCapacityAndLimit_StaticPV(t *testing.T) {
+	for _, tc := range []struct {
+		name         string
+		attrs        map[string]string
+		storage      string
+		expanded     string
+		wantCapacity int64
+		wantLimit    int64
+		wantError    bool
+	}{
+		{name: "PV capacity fallback", storage: "1Gi", wantCapacity: 1 << 30},
+		{name: "preserve expansion and limit", storage: "1Gi", expanded: "2Gi",
+			attrs: map[string]string{lvm.LimitParam: "3Gi"}, wantCapacity: 2 << 30, wantLimit: 3 << 30},
+		{name: "private capacity takes precedence", storage: "1Gi",
+			attrs: map[string]string{lvm.CapacityParam: "2Gi"}, wantCapacity: 2 << 30},
+		{name: "invalid private capacity is not hidden", storage: "1Gi",
+			attrs: map[string]string{lvm.CapacityParam: "invalid"}, wantError: true},
+		{name: "missing storage capacity", wantError: true},
+		{name: "invalid storage capacity", storage: "-1Gi", wantError: true},
+		{name: "availability PV capacity fallback", storage: "1Gi", wantCapacity: 1 << 30},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			pv := &corev1.PersistentVolume{
+				ObjectMeta: metav1.ObjectMeta{Annotations: map[string]string{lvm.ExpandedCapacityParam: tc.expanded}},
+				Spec: corev1.PersistentVolumeSpec{PersistentVolumeSource: corev1.PersistentVolumeSource{
+					CSI: &corev1.CSIPersistentVolumeSource{VolumeAttributes: tc.attrs},
+				}},
+			}
+			if tc.storage != "" {
+				pv.Spec.Capacity = corev1.ResourceList{corev1.ResourceStorage: resource.MustParse(tc.storage)}
+			}
+			original := pv.DeepCopy()
+			capacity, limit, err := getStagingCapacityAndLimit(pv)
+			if (err != nil) != tc.wantError {
+				t.Fatalf("error = %v, wantError = %t", err, tc.wantError)
+			}
+			if err == nil && (capacity != tc.wantCapacity || limit != tc.wantLimit) {
+				t.Fatalf("capacity/limit = %d/%d, want %d/%d", capacity, limit, tc.wantCapacity, tc.wantLimit)
+			}
+			if !reflect.DeepEqual(pv, original) {
+				t.Fatal("capacity lookup mutated the PV")
+			}
+		})
+	}
+}
+
+type testPVIndexer struct {
+	object  client.Object
+	field   string
+	extract client.IndexerFunc
+	err     error
+}
+
+func (i *testPVIndexer) IndexField(_ context.Context, obj client.Object, field string, extract client.IndexerFunc) error {
+	i.object, i.field, i.extract = obj, field, extract
+	return i.err
+}
+
+func TestPVIdentityIndex(t *testing.T) {
+	indexer := &testPVIndexer{}
+	if err := RegisterPVIdentityIndex(context.Background(), indexer); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := indexer.object.(*corev1.PersistentVolume); !ok || indexer.field != pvCSIIdentityIndex || indexer.extract == nil {
+		t.Fatalf("incorrect index registration: %+v", indexer)
+	}
+	expectedErr := errors.New("index registration failed")
+	if err := RegisterPVIdentityIndex(context.Background(), &testPVIndexer{err: expectedErr}); !errors.Is(err, expectedErr) {
+		t.Fatalf("registration error = %v, want %v", err, expectedErr)
+	}
+
+	scheme := k8sruntime.NewScheme()
+	if err := corev1.AddToScheme(scheme); err != nil {
+		t.Fatal(err)
+	}
+	c := fake.NewClientBuilder().WithScheme(scheme).
+		WithIndex(indexer.object, indexer.field, indexer.extract).Build()
+	for _, tc := range []struct{ name, driver, handle string }{
+		{"match", driverName, "vg#data"},
+		{"other-driver", "other-driver", "vg#data"},
+		{"other-handle", driverName, "vg#other"},
+		{"incomplete", driverName, ""},
+	} {
+		pv := &corev1.PersistentVolume{
+			ObjectMeta: metav1.ObjectMeta{Name: tc.name},
+			Spec: corev1.PersistentVolumeSpec{PersistentVolumeSource: corev1.PersistentVolumeSource{
+				CSI: &corev1.CSIPersistentVolumeSource{Driver: tc.driver, VolumeHandle: tc.handle},
+			}},
+		}
+		if err := c.Create(context.Background(), pv); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if keys := indexer.extract(&corev1.PersistentVolume{}); len(keys) != 0 {
+		t.Fatalf("non-CSI PV indexed as %v", keys)
+	}
+	list := &corev1.PersistentVolumeList{}
+	query := client.MatchingFields{pvCSIIdentityIndex: pvCSIIdentityKey(driverName, "vg#data")}
+	if err := c.List(context.Background(), list, query); err != nil {
+		t.Fatal(err)
+	}
+	if len(list.Items) != 1 || list.Items[0].Name != "match" {
+		t.Fatalf("index returned unrelated PVs: %+v", list.Items)
+	}
+	pv := list.Items[0].DeepCopy()
+	pv.Spec.CSI.VolumeHandle = "vg#updated"
+	if err := c.Update(context.Background(), pv); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.List(context.Background(), list, query); err != nil {
+		t.Fatal(err)
+	}
+	if len(list.Items) != 0 {
+		t.Fatalf("index retained stale identity: %+v", list.Items)
 	}
 }
 
@@ -892,8 +1558,12 @@ func TestNodeExpandVolume(t *testing.T) {
 		req             *csi.NodeExpandVolumeRequest
 		fakeCapacity    int64
 		fakeErr         error
+		pvName          string
+		lookupError     bool
+		missingPV       bool
 		expectErrCode   codes.Code
 		expectErr       bool
+		expectErrMsg    string
 		expectResp      bool
 		expectCapacity  int64
 		checkAnnotation bool
@@ -960,6 +1630,64 @@ func TestNodeExpandVolume(t *testing.T) {
 			expectCapacity:  expandCapacity,
 			checkAnnotation: true,
 		},
+		{
+			name: "Expansion persists annotation for PV with different name",
+			req: &csi.NodeExpandVolumeRequest{
+				VolumeId:   testVolumeID,
+				VolumePath: targetTest,
+				CapacityRange: &csi.CapacityRange{
+					RequiredBytes: expandCapacity,
+				},
+			},
+			fakeCapacity:    expandCapacity,
+			pvName:          "static-pv",
+			expectResp:      true,
+			expectCapacity:  expandCapacity,
+			checkAnnotation: true,
+		},
+		{
+			name: "PV lookup failure prevents expansion",
+			req: &csi.NodeExpandVolumeRequest{
+				VolumeId:   testVolumeID,
+				VolumePath: targetTest,
+				CapacityRange: &csi.CapacityRange{
+					RequiredBytes: expandCapacity,
+				},
+			},
+			fakeErr:       fmt.Errorf("expand should not run"),
+			lookupError:   true,
+			expectErr:     true,
+			expectErrCode: codes.Internal,
+			expectErrMsg:  "failed to get persistent volume for expansion",
+		},
+		{
+			name: "Expansion without PV delegates existence check to backend",
+			req: &csi.NodeExpandVolumeRequest{
+				VolumeId:   testVolumeID,
+				VolumePath: targetTest,
+				CapacityRange: &csi.CapacityRange{
+					RequiredBytes: expandCapacity,
+				},
+			},
+			fakeCapacity:   expandCapacity,
+			missingPV:      true,
+			expectResp:     true,
+			expectCapacity: expandCapacity,
+		},
+		{
+			name: "Backend reports missing LV when PV is absent",
+			req: &csi.NodeExpandVolumeRequest{
+				VolumeId:   testVolumeID,
+				VolumePath: targetTest,
+				CapacityRange: &csi.CapacityRange{
+					RequiredBytes: expandCapacity,
+				},
+			},
+			fakeErr:       core.ErrVolumeNotFound,
+			missingPV:     true,
+			expectErr:     true,
+			expectErrCode: codes.NotFound,
+		},
 	}
 
 	for _, tt := range tests {
@@ -994,9 +1722,22 @@ func TestNodeExpandVolume(t *testing.T) {
 					},
 				},
 			}
-			k8sClient := fake.NewClientBuilder().WithScheme(scheme).
-				WithObjects(&pv).
-				Build()
+			if tt.pvName != "" {
+				pv.Name = tt.pvName
+			}
+			clientBuilder := fake.NewClientBuilder().WithScheme(scheme).
+				WithIndex(&corev1.PersistentVolume{}, pvCSIIdentityIndex, pvCSIIdentityKeys)
+			if !tt.missingPV {
+				clientBuilder = clientBuilder.WithObjects(&pv)
+			}
+			if tt.lookupError {
+				clientBuilder = clientBuilder.WithInterceptorFuncs(interceptor.Funcs{
+					List: func(context.Context, client.WithWatch, client.ObjectList, ...client.ListOption) error {
+						return errors.New("PV list failed")
+					},
+				})
+			}
+			k8sClient := clientBuilder.Build()
 
 			caps := []*csi.NodeServiceCapability{
 				capability.NewNodeServiceCapability(csi.NodeServiceCapability_RPC_STAGE_UNSTAGE_VOLUME),
@@ -1010,6 +1751,8 @@ func TestNodeExpandVolume(t *testing.T) {
 				}
 				if st, ok := status.FromError(err); !ok || st.Code() != tt.expectErrCode {
 					t.Fatalf("NodeExpandVolume() error code = %v, want %v (err=%v)", st.Code(), tt.expectErrCode, err)
+				} else if tt.expectErrMsg != "" && st.Message() != tt.expectErrMsg {
+					t.Fatalf("NodeExpandVolume() error message = %q, want %q", st.Message(), tt.expectErrMsg)
 				}
 				return
 			}
@@ -1029,7 +1772,11 @@ func TestNodeExpandVolume(t *testing.T) {
 			// Verify expanded-capacity annotation was written to the PV.
 			if tt.checkAnnotation {
 				var updatedPV corev1.PersistentVolume
-				if err := k8sClient.Get(context.Background(), client.ObjectKey{Name: "pv"}, &updatedPV); err != nil {
+				pvName := tt.pvName
+				if pvName == "" {
+					pvName = "pv"
+				}
+				if err := k8sClient.Get(context.Background(), client.ObjectKey{Name: pvName}, &updatedPV); err != nil {
 					t.Fatalf("failed to get PV after expand: %v", err)
 				}
 				got := updatedPV.Annotations[lvm.ExpandedCapacityParam]

@@ -18,6 +18,7 @@ import (
 	driver "local-csi-driver/internal/csi"
 	"local-csi-driver/internal/csi/core/lvm"
 	"local-csi-driver/internal/csi/mounter"
+	"local-csi-driver/internal/csi/node"
 	"local-csi-driver/internal/csi/server"
 	"local-csi-driver/internal/gc"
 	"local-csi-driver/internal/pkg/block"
@@ -244,6 +245,10 @@ func main() {
 	})
 	if err != nil {
 		logAndExit(err, "unable to start manager")
+	}
+
+	if err := node.RegisterPVIdentityIndex(ctx, mgr.GetFieldIndexer()); err != nil {
+		logAndExit(err, "unable to register PV CSI identity index")
 	}
 
 	// Add telemetry to manager.

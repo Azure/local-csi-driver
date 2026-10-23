@@ -339,6 +339,12 @@ reference multiple local-csi-driver PVs should use the same mode for every PV.
 The current webhook applies the mode from the last processed PV to the combined
 node list, so mixed modes can produce order-dependent behavior.
 
+Durability volumes retain CSI accessible topology even when the hyperconverged
+webhook is enabled. This keeps hard PV topology available for initially
+unbound claims. Durability staging also rejects a node that does not match the
+recorded owner and refuses to allocate an empty replacement when the LV is
+missing.
+
 ### Availability-mode failover
 
 ```mermaid

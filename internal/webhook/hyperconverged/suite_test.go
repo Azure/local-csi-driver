@@ -42,6 +42,7 @@ var (
 	cfg          *rest.Config
 	testEnv      *envtest.Environment
 	k8sClient    client.Client
+	cachedReader client.Reader
 	k8sClientSet kubernetes.Clientset
 	ctx          context.Context
 	cancel       context.CancelFunc
@@ -158,6 +159,7 @@ var _ = BeforeSuite(func() {
 	})
 	Expect(err).NotTo(HaveOccurred(), "failed to create manager")
 
+	cachedReader = mgr.GetClient()
 	hyperconvergedHandler, err := NewHandler(namespace, mgr.GetClient(), mgr.GetScheme())
 	Expect(err).NotTo(HaveOccurred(), "failed to create hyperconverged controller")
 

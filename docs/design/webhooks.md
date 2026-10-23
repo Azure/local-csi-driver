@@ -78,10 +78,10 @@ adds node affinity for the nodes recorded in PV metadata.
 When the webhook is disabled, the driver returns accessible topology from
 `CreateVolume` and Kubernetes stores immutable node affinity on the PV. When
 the webhook is enabled, the chart also starts the driver with
-`--run-alongside-webhook=true`. For PVC-backed volumes with provisioner
-metadata, the driver then:
+`--run-alongside-webhook=true`. For PVC-backed availability volumes with
+provisioner metadata, the driver then:
 
-- Omits accessible topology from the CSI response
+- Omits accessible topology from the CSI response for availability mode
 - Stores the creating node in
   `localdisk.csi.acstor.io/selected-initial-node`
 - Updates `localdisk.csi.acstor.io/selected-node` when staging occurs on a
@@ -89,6 +89,10 @@ metadata, the driver then:
 
 The webhook uses this metadata to add Pod affinity instead of relying on
 immutable PV affinity.
+
+Durability volumes retain accessible topology in the CSI response. Kubernetes
+therefore records hard PV node affinity as a binding and scheduling backstop,
+including when a claim is not bound when the Pod is admitted.
 
 ## Failover modes
 
@@ -108,7 +112,9 @@ creates an empty LV using the recorded capacity.
 
 Durability mode restricts the Pod to the node recorded by the PV. It preserves
 access to the existing local data while that node remains recoverable, but the
-workload cannot run when the node is unavailable.
+workload cannot run when the node is unavailable. Staging also verifies the
+recorded owner node and requires the existing LV; it does not change ownership
+or create an empty durability replacement.
 
 For Pods that reference multiple local-csi-driver PVs, use the same failover
 mode for every PV. The current handler applies one affinity mode to the combined
