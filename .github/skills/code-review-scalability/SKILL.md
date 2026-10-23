@@ -73,6 +73,13 @@ benchmarks. Do not infer an outage merely from a loop or an O(N) operation.
   clientsets, and explicitly uncached kinds. A seemingly narrow Get can start
   a broad informer; an existing cache can instead make repeated Gets cheap.
   Inspect cache scope, startup synchronization, and replica count.
+- **Index registration:** Treat `FieldIndexer.IndexField` as a potential
+  informer dependency, not just a local lookup optimization. Registration
+  obtains an informer and creates one if absent; the informer lists and
+  watches the configured resource scope when the cache runs. Check existing
+  informer reuse, including full-object versus metadata-only caches, cache
+  scope, startup synchronization, and DaemonSet fan-out. A selective field
+  index does not narrow the underlying LIST/WATCH.
 - **Selection:** Distinguish filtering in application code, cache field
   indexes, and API-server selectors. Verify index registration and supported
   server fields for that resource. Missing cache indexes can produce errors;
