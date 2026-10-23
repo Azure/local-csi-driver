@@ -383,6 +383,59 @@ var _ = Describe("When Hyperconverged controller is running", Serial, func() {
 			Expect(requiredNodes).To(ContainElement("test-node-2"))
 			Expect(preferredNodes).To(BeEmpty()) // Should not have preferred affinity
 		})
+
+		It("Should preserve durability placement when an ordinary PVC is missing", func() {
+			params := map[string]string{
+				FailoverModeParam: FailoverModeDurability,
+			}
+			storageClass := GenStorageClass("test-sc-durability-missing", lvm.DriverName, params)
+			durabilityPVC := GenPVC(storageClass.Name, testNamespace.Name, "16Gi")
+
+			Expect(k8sClient.Create(ctx, storageClass)).To(Succeed())
+			Expect(k8sClient.Create(ctx, durabilityPVC)).To(Succeed())
+
+			durabilityPV := GenPersistentVolume(
+				durabilityPVC.Spec.VolumeName,
+				testNamespace.Name,
+				lvm.DriverName,
+				"node-a",
+			)
+			durabilityPV.Spec.CSI.VolumeAttributes[FailoverModeParam] = FailoverModeDurability
+			Expect(k8sClient.Create(ctx, durabilityPV)).To(Succeed())
+
+			Eventually(cachedReader.Get).WithArguments(
+				ctx, types.NamespacedName{Name: storageClass.Name}, &storagev1.StorageClass{},
+			).Should(Succeed())
+			Eventually(cachedReader.Get).WithArguments(
+				ctx, types.NamespacedName{Name: durabilityPV.Name}, &corev1.PersistentVolume{},
+			).Should(Succeed())
+
+			durabilityVolume := corev1.Volume{
+				Name: "durability",
+				VolumeSource: corev1.VolumeSource{
+					PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
+						ClaimName: durabilityPVC.Name,
+					},
+				},
+			}
+			missingVolume := corev1.Volume{
+				Name: "missing",
+				VolumeSource: corev1.VolumeSource{
+					PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
+						ClaimName: "missing-x",
+					},
+				},
+			}
+
+			for _, volumes := range [][]corev1.Volume{
+				{durabilityVolume, missingVolume},
+				{missingVolume, durabilityVolume},
+			} {
+				pod := GenPod(testNamespace.Name, volumes, nil)
+				Expect(k8sClient.Create(ctx, pod)).To(Succeed())
+				Expect(GetRequiredNodeAffinityValues(pod.Spec.Affinity)).To(ConsistOf("node-a"))
+			}
+		})
 	})
 
 	Context("When pod has hyperconverged volume with invalid failover mode", func() {

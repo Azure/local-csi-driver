@@ -323,7 +323,7 @@ func main() {
 		// Register hyperconverged webhook
 		if hyperconvergedWebhookConfig != "" {
 			log.Info("registering hyperconverged webhook")
-			hyperconvergedHandler, err := hyperconverged.NewHandler(namespace, mgr.GetClient(), mgr.GetScheme())
+			hyperconvergedHandler, err := hyperconverged.NewHandler(namespace, mgr.GetClient(), mgr.GetAPIReader(), mgr.GetScheme())
 			if err != nil {
 				logAndExit(err, "unable to create hyperconverged handler")
 			}
