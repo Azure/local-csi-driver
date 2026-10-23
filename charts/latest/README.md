@@ -3,6 +3,7 @@
 ## Prerequisites
 
 - [Install Helm](https://helm.sh/docs/intro/quickstart/#install-helm)
+- Kubernetes 1.34 or later, as required by the upstream CSI provisioner.
 
 ## Install
 
@@ -27,6 +28,9 @@ helm uninstall local-csi-driver --namespace kube-system
 This table list the configurable parameters of the latest Local CSI Driver chart
 and their default values.
 
+VolumeAttributesClass (VAC) is explicitly disabled in both the CSI provisioner
+and resizer with `VolumeAttributesClass=false`.
+
 <!-- markdownlint-disable MD033 -->
 | Parameter                                     | Description                                                                                                                                                                 | Default                                                                                                                  |
 | --------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
@@ -36,13 +40,13 @@ and their default values.
 | `image.driver.tag`                            | local-csi-driver container image tag. Uses chart version when unset (recommended).                                                                                          |                                                                                                                          |
 | `image.driver.pullPolicy`                     | local-csi-driver image pull policy.                                                                                                                                         | `IfNotPresent`                                                                                                           |
 | `image.csiProvisioner.repository`             | csi-provisioner container image.                                                                                                                                            | `/oss/kubernetes-csi/csi-provisioner`                                                                                    |
-| `image.csiProvisioner.tag`                    | csi-provisioner container image tag.                                                                                                                                        | `v5.2.0`                                                                                                                 |
+| `image.csiProvisioner.tag`                    | csi-provisioner container image tag.                                                                                                                                        | `v6.1.1`                                                                                                                 |
 | `image.csiProvisioner.pullPolicy`             | csi-provisioner image pull policy.                                                                                                                                          | `IfNotPresent`                                                                                                           |
 | `image.csiResizer.repository`                 | csi-resizer container image.                                                                                                                                                | `/oss/kubernetes-csi/csi-resizer`                                                                                        |
-| `image.csiResizer.tag`                        | csi-resizer container image tag.                                                                                                                                            | `v1.13.2`                                                                                                                |
+| `image.csiResizer.tag`                        | csi-resizer container image tag.                                                                                                                                            | `v2.0.0`                                                                                                                 |
 | `image.csiResizer.pullPolicy`                 | csi-resizer image pull policy.                                                                                                                                              | `IfNotPresent`                                                                                                           |
 | `image.nodeDriverRegistrar.repository`        | csi-node-driver-registrar container image.                                                                                                                                  | `/oss/kubernetes-csi/csi-node-driver-registrar`                                                                          |
-| `image.nodeDriverRegistrar.tag`               | csi-node-driver-registrar container image tag.                                                                                                                              | `v2.16.0`                                                                                                                |
+| `image.nodeDriverRegistrar.tag`               | csi-node-driver-registrar container image tag.                                                                                                                              | `v2.18.0`                                                                                                                |
 | `image.nodeDriverRegistrar.pullPolicy`        | csi-node-driver-registrar image pull policy.                                                                                                                                | `IfNotPresent`                                                                                                           |
 | `daemonset.podSelector`                       | Pod selector labels for the DaemonSet. These labels are immutable once created. If empty, uses default labels`.                                                             |                                                                                                                          |
 | `daemonset.updateStrategy`                    | Update strategy for the DaemonSet.                                                                                                                                          | <code>type: RollingUpdate<br>rollingUpdate:<br>&nbsp;&nbsp;maxUnavailable: 10%</code>                                    |
