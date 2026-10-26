@@ -4,12 +4,16 @@
 package hyperconverged
 
 import (
+	"encoding/json"
 	"math/rand"
 	"slices"
 	"testing"
 
+	jsonpatch "github.com/evanphx/json-patch/v5"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/component-helpers/scheduling/corev1/nodeaffinity"
+	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
 )
 
 // Helper functions for test setup and validation
@@ -208,6 +212,51 @@ func validateNodeList(expectedNodes, actualNodes []string) bool {
 	return true
 }
 
+func applyAffinityPatch(t *testing.T, pod *corev1.Pod, response admission.Response) *corev1.Pod {
+	t.Helper()
+	if !response.Allowed {
+		t.Fatalf("expected allowed response, got %v", response.Result)
+	}
+
+	original, err := json.Marshal(pod)
+	if err != nil {
+		t.Fatalf("failed to marshal pod: %v", err)
+	}
+	patchData, err := json.Marshal(response.Patches)
+	if err != nil {
+		t.Fatalf("failed to marshal patch: %v", err)
+	}
+	patch, err := jsonpatch.DecodePatch(patchData)
+	if err != nil {
+		t.Fatalf("failed to decode patch: %v", err)
+	}
+	mutatedData, err := patch.Apply(original)
+	if err != nil {
+		t.Fatalf("failed to apply patch: %v", err)
+	}
+
+	mutated := &corev1.Pod{}
+	if err := json.Unmarshal(mutatedData, mutated); err != nil {
+		t.Fatalf("failed to unmarshal patched pod: %v", err)
+	}
+	return mutated
+}
+
+func affinitySelectorMatches(t *testing.T, selector *corev1.NodeSelector, name string, labels map[string]string) bool {
+	t.Helper()
+	matcher, err := nodeaffinity.NewNodeSelector(selector)
+	if err != nil {
+		t.Fatalf("failed to create selector: %v", err)
+	}
+	if labels == nil {
+		labels = map[string]string{}
+	}
+	labels[KubernetesNodeHostNameLabel] = name
+	return matcher.Match(&corev1.Node{
+		ObjectMeta: metav1.ObjectMeta{Name: name, Labels: labels},
+	})
+}
+
 // Test functions split by scenario
 
 func TestPatchPodWithNodeAffinity_AvailabilityMode(t *testing.T) {
@@ -322,6 +371,117 @@ func TestPatchPodWithNodeAffinity_ExistingRequiredAffinity(t *testing.T) {
 	testPod := pod.DeepCopy()
 	applyAffinityLogic(testPod, nodeNames, FailoverModeDurability)
 	validateRequiredAffinity(t, testPod, nodeNames)
+}
+
+func TestRequiredAffinityComposition(t *testing.T) {
+	h := createTestHandler()
+
+	t.Run("conflicting caller affinity remains unsatisfiable", func(t *testing.T) {
+		pod := &corev1.Pod{
+			Spec: corev1.PodSpec{
+				Affinity: &corev1.Affinity{
+					NodeAffinity: &corev1.NodeAffinity{
+						RequiredDuringSchedulingIgnoredDuringExecution: &corev1.NodeSelector{
+							NodeSelectorTerms: []corev1.NodeSelectorTerm{{
+								MatchExpressions: []corev1.NodeSelectorRequirement{{
+									Key:      KubernetesNodeHostNameLabel,
+									Operator: corev1.NodeSelectorOpIn,
+									Values:   []string{"node-b"},
+								}},
+							}},
+						},
+					},
+				},
+			},
+		}
+
+		mutated := applyAffinityPatch(
+			t,
+			pod,
+			h.patchPodWithNodeAffinity(pod, []string{"node-a"}, FailoverModeDurability),
+		)
+		required := mutated.Spec.Affinity.NodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution
+		if affinitySelectorMatches(t, required, "node-a", nil) {
+			t.Error("storage node must not bypass conflicting caller affinity")
+		}
+		if affinitySelectorMatches(t, required, "node-b", nil) {
+			t.Error("caller node must not bypass storage affinity")
+		}
+	})
+
+	t.Run("every existing OR term receives storage restriction", func(t *testing.T) {
+		pod := &corev1.Pod{
+			Spec: corev1.PodSpec{
+				Affinity: &corev1.Affinity{
+					NodeAffinity: &corev1.NodeAffinity{
+						RequiredDuringSchedulingIgnoredDuringExecution: &corev1.NodeSelector{
+							NodeSelectorTerms: []corev1.NodeSelectorTerm{
+								{
+									MatchExpressions: []corev1.NodeSelectorRequirement{{
+										Key: "region", Operator: corev1.NodeSelectorOpIn, Values: []string{"east"},
+									}},
+								},
+								{
+									MatchExpressions: []corev1.NodeSelectorRequirement{{
+										Key: "disk", Operator: corev1.NodeSelectorOpIn, Values: []string{"nvme"},
+									}},
+								},
+							},
+						},
+					},
+				},
+			},
+		}
+
+		mutated := applyAffinityPatch(
+			t,
+			pod,
+			h.patchPodWithNodeAffinity(pod, []string{"node-a"}, FailoverModeDurability),
+		)
+		required := mutated.Spec.Affinity.NodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution
+		for i, term := range required.NodeSelectorTerms {
+			storageRequirements := 0
+			for _, requirement := range term.MatchExpressions {
+				if requirement.Key == KubernetesNodeHostNameLabel {
+					storageRequirements++
+				}
+			}
+			if storageRequirements != 1 {
+				t.Errorf("term %d has %d storage requirements, expected 1", i, storageRequirements)
+			}
+		}
+		if affinitySelectorMatches(t, required, "node-b", map[string]string{"region": "east", "disk": "nvme"}) {
+			t.Error("non-storage node must not match any existing OR term")
+		}
+	})
+
+	t.Run("empty selectors stay unsatisfiable", func(t *testing.T) {
+		for name, selector := range map[string]*corev1.NodeSelector{
+			"zero terms": {},
+			"empty term": {NodeSelectorTerms: []corev1.NodeSelectorTerm{{}}},
+		} {
+			t.Run(name, func(t *testing.T) {
+				pod := &corev1.Pod{
+					Spec: corev1.PodSpec{
+						Affinity: &corev1.Affinity{
+							NodeAffinity: &corev1.NodeAffinity{
+								RequiredDuringSchedulingIgnoredDuringExecution: selector,
+							},
+						},
+					},
+				}
+				mutated := applyAffinityPatch(
+					t,
+					pod,
+					h.patchPodWithNodeAffinity(pod, []string{"node-a"}, FailoverModeDurability),
+				)
+				required := mutated.Spec.Affinity.NodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution
+				if affinitySelectorMatches(t, required, "node-a", nil) {
+					t.Error("empty selector must remain unsatisfiable")
+				}
+			})
+		}
+	})
 }
 
 func TestGetPvNodesAndFailoverMode(t *testing.T) {
