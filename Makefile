@@ -506,7 +506,7 @@ HELM ?= $(LOCALBIN)/helm
 ## Tool Versions
 GOMOCK_VERSION ?= $(shell go list -m -f '{{.Version}}' go.uber.org/mock)
 ENVTEST_VERSION ?= release-0.21
-KIND_VERSION ?= v0.29.0
+KIND_VERSION ?= v0.30.0
 GOLANGCI_LINT_VERSION ?= v2.6.0
 GO_JUNIT_REPORT_VERSION ?= v2.1.0
 PROMETHEUS_VERSION ?= v0.77.1

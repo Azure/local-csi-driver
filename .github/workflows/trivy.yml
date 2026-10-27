@@ -12,6 +12,78 @@ on:
 permissions: {}
 
 jobs:
+  sidecar-images:
+    name: Resolve sidecar images
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    outputs:
+      images: ${{ steps.images.outputs.images }}
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25 # v2.22.1
+        with:
+          egress-policy: audit
+          disable-sudo: true
+
+      - name: Check out the code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Resolve images from the rendered DaemonSet
+        id: images
+        shell: bash
+        run: |
+          set -euo pipefail
+          make helm
+          images=$(bin/helm template sidecar-scan charts/latest \
+            --show-only templates/daemonset.yaml |
+            yq -e -o=json -I=0 '[
+              .spec.template.spec.containers[]
+              | select(.name == "csi-provisioner" or .name == "csi-resizer" or .name == "csi-registrar")
+              | {"name": .name, "image": .image}
+            ] | select(length == 3)')
+          printf 'images=%s\n' "$images" >> "$GITHUB_OUTPUT"
+
+  scan-sidecars:
+    name: Scan ${{ matrix.sidecar.name }} (${{ matrix.platform }})
+    needs: sidecar-images
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        sidecar: ${{ fromJSON(needs.sidecar-images.outputs.images) }}
+        platform: [linux/amd64, linux/arm64]
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25 # v2.22.1
+        with:
+          egress-policy: audit
+          disable-sudo: true
+
+      - name: Check out the code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Run Trivy vulnerability scanner on sidecar
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # 0.36.0
+        env:
+          TRIVY_DB_REPOSITORY: "public.ecr.aws/aquasecurity/trivy-db:2"
+          TRIVY_PLATFORM: ${{ matrix.platform }}
+        with:
+          image-ref: ${{ matrix.sidecar.image }}
+          format: 'table'
+          exit-code: '1'
+          ignore-unfixed: true
+          vuln-type: 'os,library'
+          severity: 'CRITICAL,HIGH,MEDIUM,LOW,UNKNOWN'
+
   build:
     name: Build
     runs-on: ubuntu-latest

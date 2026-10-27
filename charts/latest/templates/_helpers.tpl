@@ -6,6 +6,35 @@ Expand the name of the chart.
 {{- end }}
 
 {{/*
+Resolve a sidecar image with legacy overrides taking precedence.
+*/}}
+{{- define "chart.sidecarImage" -}}
+{{- $image := .image -}}
+{{- $repository := "" -}}
+{{- $tag := "" -}}
+{{- if $image.image -}}
+{{- $repository = $image.image.repository -}}
+{{- $tag = $image.image.tag -}}
+{{- end -}}
+{{- if hasKey $image "tag" -}}
+{{- $tag = $image.tag -}}
+{{- end -}}
+{{- if hasKey $image "repository" -}}
+{{- $repository = $image.repository -}}
+{{- if $image.registry -}}
+{{- $repository = printf "%v/%v" $image.registry (trimPrefix "/" $repository) -}}
+{{- else if hasPrefix "/" $repository -}}
+{{- $repository = printf "%v%v" .baseRepo $repository -}}
+{{- end -}}
+{{- else if $image.registry -}}
+{{- $repository = printf "%v/%v" $image.registry (join "/" (rest (splitList "/" $repository))) -}}
+{{- else if hasPrefix "mcr.microsoft.com/" $repository -}}
+{{- $repository = printf "%v%v" .baseRepo (trimPrefix "mcr.microsoft.com" $repository) -}}
+{{- end -}}
+{{- printf "%v:%v" $repository $tag -}}
+{{- end -}}
+
+{{/*
 Create a default fully qualified app name.
 We truncate at 63 chars because some Kubernetes name fields are limited to this (by the DNS naming spec).
 If release name contains chart name it will be used as a full name.
