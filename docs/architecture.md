@@ -335,9 +335,8 @@ adds node affinity.
 | `durability` | Required | The Pod remains pending until a node with the existing volume is available |
 
 `availability` is the default when the value is missing or invalid. Pods that
-reference multiple local-csi-driver PVs should use the same mode for every PV.
-The current webhook applies the mode from the last processed PV to the combined
-node list, so mixed modes can produce order-dependent behavior.
+reference durability and availability PVs receive the durability restriction.
+Multiple durability PVs must have a common storage node.
 
 ### Availability-mode failover
 

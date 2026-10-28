@@ -110,10 +110,15 @@ Durability mode restricts the Pod to the node recorded by the PV. It preserves
 access to the existing local data while that node remains recoverable, but the
 workload cannot run when the node is unavailable.
 
-For Pods that reference multiple local-csi-driver PVs, use the same failover
-mode for every PV. The current handler applies one affinity mode to the combined
-node list and uses the mode from the last processed PV. Mixed modes can
-therefore produce order-dependent behavior.
+For Pods that reference multiple local-csi-driver PVs, durability constraints
+take precedence over availability preferences. Multiple durability volumes
+must have a common storage node.
+
+Before upgrading, verify that each workload's durability PVs resolve to a common
+storage node. Missing or conflicting placement now causes replacement Pod
+creation to be denied; running Pods are not evicted. Reconcile actual data
+placement before restarting affected workloads. `WaitForFirstConsumer` does not
+relocate already-bound PVs.
 
 ## Existing Pod affinity
 
