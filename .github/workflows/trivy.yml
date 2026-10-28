@@ -54,6 +54,8 @@ jobs:
     timeout-minutes: 20
     permissions:
       contents: read
+      security-events: write # upload Trivy analysis results (SARIF)
+      actions: read # read workflow run metadata for private repos
     strategy:
       fail-fast: false
       matrix:
@@ -77,11 +79,18 @@ jobs:
           TRIVY_PLATFORM: ${{ matrix.platform }}
         with:
           image-ref: ${{ matrix.sidecar.image }}
-          format: 'table'
-          exit-code: '1'
+          format: 'sarif'
+          output: 'trivy-sidecar-results.sarif'
+          exit-code: '0'
           ignore-unfixed: true
           vuln-type: 'os,library'
           severity: 'CRITICAL,HIGH,MEDIUM,LOW,UNKNOWN'
+
+      - name: Upload sidecar scan results to GitHub Security tab
+        uses: github/codeql-action/upload-sarif@6f2ac81f5cd81fe351a197ba0b00d91d03cd2aee # v4.39.0
+        with:
+          sarif_file: 'trivy-sidecar-results.sarif'
+          category: 'trivy-${{ matrix.sidecar.name }}-${{ matrix.platform }}'
 
   build:
     name: Build
@@ -89,6 +98,8 @@ jobs:
     timeout-minutes: 20
     permissions:
       contents: read
+      security-events: write # upload Trivy analysis results (SARIF)
+      actions: read # read workflow run metadata for private repos
     steps:
       - name: Harden Runner
         uses: step-security/harden-runner@dc2769abcc0fcfbadfc1df54081c1608579ef6b2 # v2.22.2
@@ -130,18 +141,32 @@ jobs:
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # 0.36.0
         with:
           image-ref: 'test/local-csi-driver/driver:latest'
-          format: 'table'
-          exit-code: '1'
+          format: 'sarif'
+          output: 'trivy-driver-results.sarif'
+          exit-code: '0'
           ignore-unfixed: true
           vuln-type: 'os,library'
           severity: 'CRITICAL,HIGH,MEDIUM,LOW,UNKNOWN'
+
+      - name: Upload driver scan results to GitHub Security tab
+        uses: github/codeql-action/upload-sarif@6f2ac81f5cd81fe351a197ba0b00d91d03cd2aee # v4.39.0
+        with:
+          sarif_file: 'trivy-driver-results.sarif'
+          category: 'trivy-driver'
 
       - name: Run Trivy vulnerability scanner on manager
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # 0.36.0
         with:
           image-ref: 'test/local-csi-driver/manager:latest'
-          format: 'table'
-          exit-code: '1'
+          format: 'sarif'
+          output: 'trivy-manager-results.sarif'
+          exit-code: '0'
           ignore-unfixed: true
           vuln-type: 'os,library'
           severity: 'CRITICAL,HIGH,MEDIUM,LOW,UNKNOWN'
+
+      - name: Upload manager scan results to GitHub Security tab
+        uses: github/codeql-action/upload-sarif@6f2ac81f5cd81fe351a197ba0b00d91d03cd2aee # v4.39.0
+        with:
+          sarif_file: 'trivy-manager-results.sarif'
+          category: 'trivy-manager'
