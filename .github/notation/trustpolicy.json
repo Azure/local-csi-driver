@@ -1,0 +1,23 @@
+{
+  "version": "1.0",
+  "trustPolicies": [
+    {
+      "name": "microsoft-supply-chain",
+      "registryScopes": [
+        "mcr.microsoft.com/azurelinux/base/core",
+        "mcr.microsoft.com/azurelinux/distroless/minimal",
+        "mcr.microsoft.com/oss/go/microsoft/golang"
+      ],
+      "signatureVerification": {
+        "level": "strict"
+      },
+      "trustStores": [
+        "ca:supplychain",
+        "tsa:esrp"
+      ],
+      "trustedIdentities": [
+        "x509.subject: CN=Microsoft SCD Products RSA Signing,O=Microsoft Corporation,L=Redmond,ST=Washington,C=US"
+      ]
+    }
+  ]
+}
