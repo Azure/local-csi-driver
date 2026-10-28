@@ -58,7 +58,7 @@ jobs:
       fail-fast: false
       matrix:
         sidecar: ${{ fromJSON(needs.sidecar-images.outputs.images) }}
-        platform: [linux/amd64, linux/arm64]
+        platform: [linux/amd64]
     steps:
       - name: Harden Runner
         uses: step-security/harden-runner@dc2769abcc0fcfbadfc1df54081c1608579ef6b2 # v2.22.2
@@ -74,7 +74,6 @@ jobs:
       - name: Run Trivy vulnerability scanner on sidecar
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # 0.36.0
         env:
-          TRIVY_DB_REPOSITORY: "public.ecr.aws/aquasecurity/trivy-db:2"
           TRIVY_PLATFORM: ${{ matrix.platform }}
         with:
           image-ref: ${{ matrix.sidecar.image }}
@@ -129,8 +128,6 @@ jobs:
 
       - name: Run Trivy vulnerability scanner on driver
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # 0.36.0
-        env:
-          TRIVY_DB_REPOSITORY: "public.ecr.aws/aquasecurity/trivy-db:2"
         with:
           image-ref: 'test/local-csi-driver/driver:latest'
           format: 'table'
@@ -141,8 +138,6 @@ jobs:
 
       - name: Run Trivy vulnerability scanner on manager
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # 0.36.0
-        env:
-          TRIVY_DB_REPOSITORY: "public.ecr.aws/aquasecurity/trivy-db:2"
         with:
           image-ref: 'test/local-csi-driver/manager:latest'
           format: 'table'

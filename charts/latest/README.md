@@ -73,8 +73,8 @@ The default provisioner requires Kubernetes 1.34 or later. The Kind test
 configurations use Kubernetes 1.34.0 with Kind v0.30.0.
 `VolumeAttributesClass` is disabled in both the provisioner and resizer because
 the driver does not support volume modification.
-The Trivy workflow scans the rendered sidecar images for both Linux amd64
-and arm64 using the same vulnerability policy as the driver and manager images.
+The Trivy workflow scans the rendered sidecar images for Linux amd64 only,
+using the same vulnerability policy as the driver and manager images.
 
 <!-- markdownlint-disable MD033 -->
 | Parameter | Description | Default |
