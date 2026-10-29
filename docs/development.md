@@ -85,6 +85,18 @@ into the local Docker image store instead, override the output type:
 OUTPUT_TYPE=type=docker REGISTRY=<your registry> make docker-build
 ```
 
+### Base image signature verification
+
+On pushes to `main` and pull requests targeting `main` or release branches,
+CI uses Notation to verify the digest-pinned MCR base images in the Dockerfiles,
+including `Dockerfile.manager`. Verification requires the Microsoft supply-chain
+signer under a strict trust policy. The Microsoft supply-chain and timestamp
+trust roots are downloaded with pinned SHA-256 checksums.
+
+The workflow fails if an MCR base image is not digest-pinned or its signature
+cannot be verified. It verifies upstream base images, not the driver or manager
+images built by this project.
+
 ## Building the Helm chart
 
 To build the Helm chart, run:
