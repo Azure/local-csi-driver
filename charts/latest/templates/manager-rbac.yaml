@@ -16,8 +16,28 @@ rules:
   - get
   - list
   - watch
+{{- if .Values.webhook.enforceEphemeral.enabled }}
+- apiGroups:
+  - admissionregistration.k8s.io
+  resources:
+  - validatingwebhookconfigurations
+  resourceNames:
+  - {{ .Values.name }}-enforce-ephemeral
+  verbs:
   - update
   - patch
+{{- end }}
+{{- if .Values.webhook.hyperconverged.enabled }}
+- apiGroups:
+  - admissionregistration.k8s.io
+  resources:
+  - mutatingwebhookconfigurations
+  resourceNames:
+  - {{ .Values.name }}-hyperconverged-webhook
+  verbs:
+  - update
+  - patch
+{{- end }}
 - apiGroups:
   - coordination.k8s.io
   resources:
