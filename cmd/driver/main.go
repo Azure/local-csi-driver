@@ -18,6 +18,7 @@ import (
 	driver "local-csi-driver/internal/csi"
 	"local-csi-driver/internal/csi/core/lvm"
 	"local-csi-driver/internal/csi/mounter"
+	"local-csi-driver/internal/csi/node"
 	"local-csi-driver/internal/csi/server"
 	"local-csi-driver/internal/gc"
 	"local-csi-driver/internal/pkg/block"
@@ -234,16 +235,14 @@ func main() {
 		Cache: cache.Options{
 			DefaultTransform: cache.TransformStripManagedFields(),
 		},
-		Client: client.Options{
-			Cache: &client.CacheOptions{
-				DisableFor: []client.Object{
-					&storagev1.CSIDriver{},
-				},
-			},
-		},
+		Client: driverClientOptions(),
 	})
 	if err != nil {
 		logAndExit(err, "unable to start manager")
+	}
+
+	if err := node.RegisterPVIdentityIndex(ctx, mgr.GetFieldIndexer()); err != nil {
+		logAndExit(err, "unable to register PV CSI identity index")
 	}
 
 	// Add telemetry to manager.
@@ -401,6 +400,18 @@ func main() {
 	span.AddEvent("starting manager")
 	if err := mgr.Start(ctx); err != nil {
 		logAndExit(err, "problem running manager")
+	}
+}
+
+func driverClientOptions() client.Options {
+	return client.Options{
+		Cache: &client.CacheOptions{
+			DisableFor: []client.Object{
+				&storagev1.CSIDriver{},
+				// Node reads must stay targeted GETs, not start a DaemonSet-wide Node cache.
+				&corev1.Node{},
+			},
+		},
 	}
 }
 

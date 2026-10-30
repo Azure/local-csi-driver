@@ -487,6 +487,11 @@ func (l *LVM) ensurePhysicalVolume(ctx context.Context, device string) (*lvm.Phy
 // If the volume already exists, it returns it. Otherwise it creates the
 // volume and returns it.
 func (l *LVM) EnsureVolume(ctx context.Context, volumeId string, capacity int64, limit int64, isMountOperation bool) (int64, error) {
+	// Availability recovery keeps the historical create-if-missing behavior.
+	return l.ensureVolume(ctx, volumeId, capacity, limit, isMountOperation, true, false)
+}
+
+func (l *LVM) ensureVolume(ctx context.Context, volumeId string, capacity int64, limit int64, isMountOperation, allowCreate, allowSmallerExisting bool) (int64, error) {
 	ctx, span := l.tracer.Start(ctx, "volume.lvm.csi/EnsureVolume", trace.WithAttributes(
 		attribute.String("vol.id", volumeId),
 		attribute.Int64("vol.capacity", capacity),
@@ -538,14 +543,21 @@ func (l *LVM) EnsureVolume(ctx context.Context, volumeId string, capacity int64,
 		span.AddEvent("found existing volume", trace.WithAttributes(attribute.Int64("bytes", int64(lv.Size))))
 
 		lvSize := int64(lv.Size)
-		// Check volume size.
-		if lvSize < capacity || (limit > 0 && lvSize > limit) {
+		// Staging may precede NodeExpandVolume for a pending resize. Controller
+		// provisioning still requires an existing LV to satisfy the request.
+		if (!allowSmallerExisting && lvSize < capacity) || (limit > 0 && lvSize > limit) {
 			log.Error(err, "volume size mismatch", "request", capacity, "limit", limit, "actual", lv.Size)
 			span.SetStatus(codes.Error, "volume size mismatch")
 			recorder.Eventf(corev1.EventTypeWarning, provisionedLogicalVolumeSizeMismatch, "Volume size mismatch %s/%s: request %d, limit %d, actual %d", id.VolumeGroup, id.LogicalVolume, capacity, limit, lv.Size)
 			return 0, fmt.Errorf("volume size mismatch: request %d, limit %d, actual %d: %w", capacity, limit, lv.Size, core.ErrVolumeSizeMismatch)
 		}
 		return lvSize, nil
+	}
+
+	if !allowCreate {
+		// Stop before any volume-group or logical-volume allocation.
+		span.SetStatus(codes.Error, "existing logical volume not found")
+		return 0, fmt.Errorf("%w: logical volume %s/%s does not exist", core.ErrVolumeNotFound, id.VolumeGroup, id.LogicalVolume)
 	}
 
 	log.V(2).Info("no existing volume found, creating new one")
