@@ -31,6 +31,6 @@ roleRef:
   name: {{ .Values.name }}-metrics-auth-role
 subjects:
 - kind: ServiceAccount
-  name: cluster-manager
+  name: {{ .Values.name }}-manager
   namespace: '{{ .Release.Namespace }}'
 {{- end }}
