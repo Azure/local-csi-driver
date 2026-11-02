@@ -1,5 +1,6 @@
 # This patch adds a socat sidecar to the csi-local-node daemonset so
-# csi-sanity can talk to the CSI socket over TCP port 10000.
+# csi-sanity can talk to the Node socket over TCP port 10000 and
+# the Controller socket over TCP port 10002.
 #
 # We use the prebuilt alpine/socat image so the sidecar starts without
 # installing socat at runtime. The previous approach pulled
@@ -20,9 +21,20 @@ spec:
         imagePullPolicy: IfNotPresent
         args:
           - tcp-listen:10000,fork,reuseaddr
-          - unix-connect:/csi/csi.sock
+          - unix-connect:/csi-node/csi.sock
         securityContext:
           privileged: true
         volumeMounts:
-        - mountPath: /csi
-          name: csi-socket-dir
+        - mountPath: /csi-node
+          name: node-socket-dir
+      - name: socat-csi-controller
+        image: alpine/socat:1.8.0.3
+        imagePullPolicy: IfNotPresent
+        args:
+          - tcp-listen:10002,fork,reuseaddr
+          - unix-connect:/csi-controller/csi.sock
+        securityContext:
+          privileged: true
+        volumeMounts:
+        - mountPath: /csi-controller
+          name: controller-socket-dir

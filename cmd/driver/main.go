@@ -71,7 +71,8 @@ func main() {
 	var podName string
 	var podUID string
 	var namespace string
-	var csiAddr string
+	var csiNodeAddr string
+	var csiControllerAddr string
 	var metricsAddr string
 	var probeAddr string
 	var pprofAddr string
@@ -103,8 +104,10 @@ func main() {
 		"The UID of the pod this agent is running on. Used as the subject for node-scoped events.")
 	flag.StringVar(&namespace, "namespace", "default",
 		"The namespace to use for creating objects.")
-	flag.StringVar(&csiAddr, "csi-bind-address", "unix:///tmp/csi.sock",
-		"The address the CSI endpoint binds to. Format: <proto>://<address>")
+	flag.StringVar(&csiNodeAddr, "csi-node-bind-address", "unix:///tmp/csi.sock",
+		"The address the CSI Node endpoint binds to. Format: <proto>://<address>")
+	flag.StringVar(&csiControllerAddr, "csi-controller-bind-address", "unix:///tmp/csi-controller.sock",
+		"The address the CSI Controller endpoint binds to. Must differ from the Node endpoint. Format: <proto>://<address>")
 	flag.StringVar(&metricsAddr, "metrics-bind-address", "0", "The address the metrics endpoint binds to. "+
 		"Use :8443 for HTTPS or :8080 for HTTP, or leave as 0 to disable the metrics service.")
 	flag.StringVar(&probeAddr, "health-probe-bind-address", ":8081", "The address the probe endpoint binds to.")
@@ -382,7 +385,7 @@ func main() {
 	}
 
 	// Create the CSI server.
-	csiServer, err := server.NewCombined(csiAddr, driver.NewCombined(nodeName, selfPod, volumeClient, mgr.GetClient(), runAlongsideWebhook, recorder, tp), t)
+	csiServer, err := server.NewCombined(csiNodeAddr, csiControllerAddr, driver.NewCombined(nodeName, selfPod, volumeClient, mgr.GetClient(), runAlongsideWebhook, recorder, tp), t)
 	if err != nil {
 		logAndExit(err, "unable to create csi server")
 	}

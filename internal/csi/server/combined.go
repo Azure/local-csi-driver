@@ -5,14 +5,17 @@ package server
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
+	"path/filepath"
 
 	"github.com/container-storage-interface/spec/lib/go/csi"
 	"github.com/kubernetes-csi/csi-lib-utils/protosanitizer"
 	"go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc"
 	"go.opentelemetry.io/otel/metric"
 	"go.opentelemetry.io/otel/trace"
+	"golang.org/x/sync/errgroup"
 	"google.golang.org/grpc"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
@@ -29,35 +32,52 @@ type CombinedService interface {
 
 // CombinedServer is used to configure, start and stop the CSI server.
 type CombinedServer struct {
-	proto string
-	addr  string
+	nodeProto       string
+	nodeAddr        string
+	controllerProto string
+	controllerAddr  string
+	listen          func(network, address string) (net.Listener, error)
 
 	driver CombinedService
 	mp     metric.MeterProvider
 	tp     trace.TracerProvider
 }
 
-// NewCombinedServer creates a new CSI server.
+// NewCombined creates a CSI server with separate Node and Controller endpoints.
 //
-// The server will listen on the provided endpoint and use the provided driver
-// to handle incoming requests.
+// Both endpoints provide Identity RPCs. The Controller endpoint also provides
+// Node metadata RPCs needed by the external-provisioner and external-resizer.
 //
 // The provided tracer provider will be used to create tracers for the server.
-func NewCombined(endpoint string, driver CombinedService, t telemetry.Provider) (*CombinedServer, error) {
-	proto, addr, err := parseEndpoint(endpoint)
+func NewCombined(nodeEndpoint, controllerEndpoint string, driver CombinedService, t telemetry.Provider) (*CombinedServer, error) {
+	nodeProto, nodeAddr, err := parseEndpoint(nodeEndpoint)
 	if err != nil {
+		return nil, fmt.Errorf("invalid node endpoint: %w", err)
+	}
+	controllerProto, controllerAddr, err := parseEndpoint(controllerEndpoint)
+	if err != nil {
+		return nil, fmt.Errorf("invalid controller endpoint: %w", err)
+	}
+	if nodeProto == controllerProto && (nodeAddr == controllerAddr ||
+		(nodeProto == "unix" && filepath.Clean(nodeAddr) == filepath.Clean(controllerAddr))) {
+		return nil, fmt.Errorf("node and controller endpoints must be different")
+	}
+	if err := prepareEndpoint(nodeProto, nodeAddr); err != nil {
 		return nil, err
 	}
-	if err := prepareEndpoint(proto, addr); err != nil {
+	if err := prepareEndpoint(controllerProto, controllerAddr); err != nil {
 		return nil, err
 	}
 
 	return &CombinedServer{
-		proto:  proto,
-		addr:   addr,
-		driver: driver,
-		mp:     t.MeterProvider(),
-		tp:     t.TraceProvider(),
+		nodeProto:       nodeProto,
+		nodeAddr:        nodeAddr,
+		controllerProto: controllerProto,
+		controllerAddr:  controllerAddr,
+		listen:          net.Listen,
+		driver:          driver,
+		mp:              t.MeterProvider(),
+		tp:              t.TraceProvider(),
 	}, nil
 }
 
@@ -69,42 +89,83 @@ func NewCombined(endpoint string, driver CombinedService, t telemetry.Provider) 
 // The server will stop when the provided context is canceled.
 func (s *CombinedServer) Start(ctx context.Context) error {
 	log := log.FromContext(ctx)
-	log.V(2).Info("starting CSI server", "endpoint", s.addr)
+	log.V(2).Info("starting CSI servers", "nodeEndpoint", s.nodeAddr, "controllerEndpoint", s.controllerAddr)
 
-	listener, err := net.Listen(s.proto, s.addr)
+	nodeListener, err := s.listen(s.nodeProto, s.nodeAddr)
 	if err != nil {
-		return fmt.Errorf("failed to create listener on %s://%s: %w", s.proto, s.addr, err)
+		return fmt.Errorf("failed to create node listener on %s://%s: %w", s.nodeProto, s.nodeAddr, err)
 	}
+	defer func() { _ = nodeListener.Close() }()
+
+	controllerListener, err := s.listen(s.controllerProto, s.controllerAddr)
+	if err != nil {
+		return fmt.Errorf("failed to create controller listener on %s://%s: %w", s.controllerProto, s.controllerAddr, err)
+	}
+	defer func() { _ = controllerListener.Close() }()
 
 	opts := []otelgrpc.Option{
 		otelgrpc.WithMeterProvider(s.mp),
 		otelgrpc.WithTracerProvider(s.tp),
 	}
-	server := grpc.NewServer(
-		grpc.StatsHandler(otelgrpc.NewServerHandler(opts...)),
-		grpc.UnaryInterceptor(LoggingInterceptor),
-	)
+	newServer := func() *grpc.Server {
+		return grpc.NewServer(
+			grpc.StatsHandler(otelgrpc.NewServerHandler(opts...)),
+			grpc.UnaryInterceptor(LoggingInterceptor),
+		)
+	}
+	nodeServer := newServer()
+	controllerServer := newServer()
 
-	csi.RegisterIdentityServer(server, s.driver.GetIdentityServer())
-	csi.RegisterControllerServer(server, s.driver.GetControllerServer())
-	csi.RegisterNodeServer(server, s.driver.GetNodeServer())
+	csi.RegisterIdentityServer(nodeServer, s.driver.GetIdentityServer())
+	csi.RegisterNodeServer(nodeServer, s.driver.GetNodeServer())
+	csi.RegisterIdentityServer(controllerServer, s.driver.GetIdentityServer())
+	csi.RegisterControllerServer(controllerServer, s.driver.GetControllerServer())
+	csi.RegisterNodeServer(controllerServer, &nodeMetadataServer{node: s.driver.GetNodeServer()})
 
 	// Ensure the CSIDriver object exists in the cluster.
 	if err := s.driver.Register(ctx); err != nil {
 		return fmt.Errorf("failed to register driver: %w", err)
 	}
 
-	errCh := make(chan error, 1)
-	go func() {
-		log.V(2).Info("listening for connections", "endpoint", listener.Addr())
-		errCh <- server.Serve(listener)
-		close(errCh)
-	}()
-
+	group, ctx := errgroup.WithContext(ctx)
+	group.Go(func() error {
+		log.V(2).Info("listening for node connections", "endpoint", nodeListener.Addr())
+		if err := nodeServer.Serve(nodeListener); !errors.Is(err, grpc.ErrServerStopped) {
+			return err
+		}
+		return nil
+	})
+	group.Go(func() error {
+		log.V(2).Info("listening for controller connections", "endpoint", controllerListener.Addr())
+		if err := controllerServer.Serve(controllerListener); !errors.Is(err, grpc.ErrServerStopped) {
+			return err
+		}
+		return nil
+	})
 	<-ctx.Done()
-	server.GracefulStop()
+	stopped := make(chan struct{})
+	go func() {
+		controllerServer.GracefulStop()
+		close(stopped)
+	}()
+	nodeServer.GracefulStop()
+	<-stopped
 
-	return <-errCh
+	return group.Wait()
+}
+
+// nodeMetadataServer exposes discovery RPCs without Node volume operations.
+type nodeMetadataServer struct {
+	csi.UnimplementedNodeServer
+	node csi.NodeServer
+}
+
+func (s *nodeMetadataServer) NodeGetInfo(ctx context.Context, req *csi.NodeGetInfoRequest) (*csi.NodeGetInfoResponse, error) {
+	return s.node.NodeGetInfo(ctx, req)
+}
+
+func (s *nodeMetadataServer) NodeGetCapabilities(ctx context.Context, req *csi.NodeGetCapabilitiesRequest) (*csi.NodeGetCapabilitiesResponse, error) {
+	return s.node.NodeGetCapabilities(ctx, req)
 }
 
 // NeedLeaderElection returns false since the CSI controllers should run on each
