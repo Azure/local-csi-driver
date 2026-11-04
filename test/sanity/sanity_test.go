@@ -37,10 +37,10 @@ type testConfig struct {
 	testSuiteName string
 	// labels are the labels for the test
 	labels Labels
-	// controllerAddressPort is the address of the csi-controller plugin after port forwarding
+	// nodeAddressPort is the local port for the Node endpoint.
+	nodeAddressPort string
+	// controllerAddressPort is the local port for the Controller endpoint.
 	controllerAddressPort string
-	// socatPort is the port on which the socat is listening for the socket in agent or manager
-	socatPort string
 	// skips are the test patterns that are not supported by the driver
 	skips []string
 }
@@ -50,8 +50,8 @@ var TestConfigs = []testConfig{
 	{
 		testSuiteName:         "lvm CSI Sanity Suite",
 		labels:                Label("lvm", "sanity"),
-		controllerAddressPort: "10001",
-		socatPort:             "10000",
+		nodeAddressPort:       "10001",
+		controllerAddressPort: "10003",
 		skips: []string{
 			// no intent to fix, we would need to decouple LV name from PV name
 			"CreateVolume should not fail when creating volume with maximum-length name",
@@ -61,23 +61,12 @@ var TestConfigs = []testConfig{
 
 // SetupPortForwarding forwards the csi-node and csi-controller ports.
 func (t *testConfig) SetupPortForwarding(ctx context.Context) {
-
-	components := []struct {
-		// resource to port-forward
-		resource string
-		// port to port-forward
-		port string
-	}{
-		{controllerDs, t.controllerAddressPort},
-	}
-
-	for _, component := range components {
-		t.portForward(component.resource, component.port, t.socatPort)
-	}
+	// One port-forward keeps both endpoints on the same DaemonSet Pod.
+	t.portForward(controllerDs, t.nodeAddressPort+":10000", t.controllerAddressPort+":10002")
 }
 
 // portForward starts port-forwarding for a resource and registers a cleanup function.
-func (t *testConfig) portForward(resource string, hostPort string, containerPort string) {
+func (t *testConfig) portForward(resource string, ports ...string) {
 	By("Starting port-forwarding for " + resource)
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
@@ -91,7 +80,8 @@ func (t *testConfig) portForward(resource string, hostPort string, containerPort
 				_, _ = fmt.Fprintf(GinkgoWriter, "Context is done, stopping port-forwarding for %s\n", resource)
 				return
 			default:
-				cmd := exec.CommandContext(ctx, "kubectl", "port-forward", "-n", namespace, resource, hostPort+":"+containerPort)
+				args := append([]string{"port-forward", "-n", namespace, resource}, ports...)
+				cmd := exec.CommandContext(ctx, "kubectl", args...)
 				if _, err := utils.Run(cmd); err != nil {
 					_, _ = fmt.Fprintf(GinkgoWriter, "Failed to start port-forwarding for %s: %v\n", resource, err)
 				}
@@ -116,7 +106,8 @@ func (t *testConfig) RegisterTests() {
 			t.SkipUnsupportedTest()
 		})
 		sanityConfig := sanity.NewTestConfig()
-		sanityConfig.Address = "localhost:" + t.controllerAddressPort
+		sanityConfig.Address = "localhost:" + t.nodeAddressPort
+		sanityConfig.ControllerAddress = "localhost:" + t.controllerAddressPort
 		sanityConfig.TargetPath = targetPath
 		sanityConfig.StagingPath = stagingPath
 		sanityConfig.CreateStagingDir = mkdirInPod

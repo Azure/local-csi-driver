@@ -25,8 +25,8 @@ The Helm chart deploys two binaries:
   their serving certificates, and runs cluster-scoped PV cleanup.
 
 The driver Pod also contains the standard CSI provisioner, resizer, and node
-driver registrar sidecars. The sidecars and kubelet call the driver over a Unix
-domain socket. The manager does not serve CSI requests.
+driver registrar sidecars. The sidecars and kubelet call the driver over Unix
+domain sockets. The manager does not serve CSI requests.
 
 ```mermaid
 flowchart TB
@@ -52,13 +52,15 @@ flowchart TB
         registrar["node-driver-registrar"]
         driver["local-csi-driver<br/>Identity + Controller + Node"]
         gc["LV garbage collection"]
-        csiSocket[["/csi/csi.sock"]]
+        csiSocket[["/csi-node/csi.sock"]]
+        controllerSocket[["/csi-controller/csi.sock"]]
         registrationSocket[["kubelet plugin registration socket"]]
 
-        provisioner --> csiSocket
-        resizer --> csiSocket
+        provisioner --> controllerSocket
+        resizer --> controllerSocket
         registrar --> csiSocket
         csiSocket --> driver
+        controllerSocket --> driver
         driver --> gc
         registrar --> registrationSocket
     end
@@ -98,18 +100,31 @@ Each driver Pod is node-scoped and contains four primary containers:
 | `csi-resizer` | Watches PVC expansion and coordinates node expansion | Identity calls, capability discovery, and expansion coordination |
 | `csi-registrar` | Registers the CSI driver with kubelet | `GetPluginInfo` |
 
-The driver runs all three CSI services in one gRPC server:
+The driver serves CSI over separate Node and Controller gRPC endpoints:
 
 - **IdentityServer** reports plugin identity, capabilities, and readiness.
 - **ControllerServer** provisions and deletes node-local logical volumes.
 - **NodeServer** stages, publishes, measures, and expands volumes on the node.
 
-All three services share `/csi/csi.sock` inside the Pod. The socket is backed by
-the host directory:
+The Node socket, `/csi-node/csi.sock`, is mounted into the driver and registrar.
+Its host socket path and registrar `--kubelet-registration-path` remain unchanged:
 
 ```text
-/var/lib/kubelet/plugins/localdisk.csi.acstor.io/
+/var/lib/kubelet/plugins/localdisk.csi.acstor.io/csi.sock
 ```
+
+The Controller socket, `/csi-controller/csi.sock`, uses a Pod-local `emptyDir`
+mounted into the driver, provisioner, and resizer. Both endpoints serve Identity;
+the Controller endpoint also exposes read-only `NodeGetInfo` and
+`NodeGetCapabilities`, but no Node volume operations.
+
+The CLI flag `--csi-bind-address` is replaced by `--csi-node-bind-address`;
+the old flag is no longer accepted. `--csi-controller-bind-address` configures
+the Controller endpoint. Custom manifests must rename the Node flag and update
+the provisioner/resizer addresses and shared mounts for the Controller socket.
+The updated Helm chart handles these changes. Upgrade or roll back the image,
+flags, sidecar addresses, and mounts together; older images do not recognize
+the new flags.
 
 Kubelet plugin registration uses a different socket under
 `/var/lib/kubelet/plugins_registry/`. The registrar serves kubelet registration
