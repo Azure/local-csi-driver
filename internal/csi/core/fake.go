@@ -17,6 +17,9 @@ type Fake struct {
 	DiskPoolCapacity int64
 	Err              error
 	BaseDir          string
+	// Ensure counters verify which recovery policy the node service selected.
+	EnsureCalls         int
+	EnsureExistingCalls int
 }
 
 func NewFake() *Fake {
@@ -86,6 +89,15 @@ func (f *Fake) NodeExpandVolume(ctx context.Context, req *csi.NodeExpandVolumeRe
 }
 
 func (f *Fake) NodeEnsureVolume(ctx context.Context, volumeId string, capacity int64, limit int64) error {
+	f.EnsureCalls++
+	if f.Err != nil {
+		return f.Err
+	}
+	return nil
+}
+
+func (f *Fake) NodeEnsureExistingVolume(ctx context.Context, volumeId string, capacity int64, limit int64) error {
+	f.EnsureExistingCalls++
 	if f.Err != nil {
 		return f.Err
 	}

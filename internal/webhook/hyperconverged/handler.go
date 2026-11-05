@@ -24,6 +24,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
 
 	"local-csi-driver/internal/csi"
+	"local-csi-driver/internal/csi/core"
 	"local-csi-driver/internal/csi/core/lvm"
 )
 
@@ -41,9 +42,9 @@ const (
 	KubernetesNodeHostNameLabel = "kubernetes.io/hostname"
 
 	// Failover mode parameter values.
-	FailoverModeAvailability = "availability"
-	FailoverModeDurability   = "durability"
-	FailoverModeParam        = "localdisk.csi.acstor.io/failover-mode"
+	FailoverModeAvailability = core.FailoverModeAvailability
+	FailoverModeDurability   = core.FailoverModeDurability
+	FailoverModeParam        = core.FailoverModeParam
 )
 
 // handler implements admission.Handler.
@@ -396,7 +397,31 @@ func (h *handler) getPvNodesAndFailoverMode(ctx context.Context, pvName string) 
 				return nil, failoverMode, hasTopology, nil
 			}
 		}
-		nodeNamesList = append(nodeNamesList, nodeName)
+		node := &corev1.Node{}
+		if err := h.client.Get(ctx, client.ObjectKey{Name: nodeName}, node); err != nil {
+			log.Error(err, "failed to resolve storage node hostname", "pv", pvName, "node", nodeName)
+			if apierrors.IsNotFound(err) {
+				if failoverMode == FailoverModeDurability {
+					response = admission.Denied(fmt.Sprintf("durability storage node %s does not exist", nodeName))
+					return nil, failoverMode, false, &response
+				}
+				// Availability volumes may recover elsewhere after their owner is deleted.
+				return nil, failoverMode, false, nil
+			}
+			response = admission.Errored(http.StatusInternalServerError, err)
+			return nil, failoverMode, false, &response
+		}
+		hostname := node.Labels[KubernetesNodeHostNameLabel]
+		if hostname == "" {
+			err := fmt.Errorf("storage node %s has no hostname label", nodeName)
+			log.Error(err, "failed to resolve storage node hostname", "pv", pvName)
+			if failoverMode == FailoverModeAvailability {
+				return nil, failoverMode, false, nil
+			}
+			response = admission.Errored(http.StatusInternalServerError, err)
+			return nil, failoverMode, false, &response
+		}
+		nodeNamesList = append(nodeNamesList, hostname)
 	}
 
 	return nodeNamesList, failoverMode, false, nil
