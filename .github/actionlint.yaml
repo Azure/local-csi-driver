@@ -3,3 +3,9 @@ paths:
     ignore:
       # actionlint v1.7.12 predates GitHub's self-repository workflow syntax.
       - 'reusable workflow call "\$/\.github/workflows/[^"]+" at "uses" is not following the format'
+  .github/workflows/maintain-agent-guidance.lock.yml:
+    ignore:
+      # gh-aw emits newer Actions fields not recognized by actionlint v1.7.12.
+      - 'unexpected key "queue" for "concurrency" section'
+      - 'property "workflow_ref" is not defined in object type'
+      - 'unknown permission scope "copilot-requests"'

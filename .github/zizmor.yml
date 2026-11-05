@@ -1,0 +1,15 @@
+rules:
+  artipacked:
+    ignore:
+      # gh-aw's isolated safe-output job needs authenticated Git to publish PRs.
+      # The agent checkout uses persist-credentials: false.
+      - maintain-agent-guidance.lock.yml
+  secrets-outside-env:
+    ignore:
+      # gh-aw emits optional credentials without a protected environment.
+      # The authored workflow uses GITHUB_TOKEN, not custom secrets.
+      - maintain-agent-guidance.lock.yml
+  undocumented-permissions:
+    ignore:
+      # Job permission comments are emitted by the compiler.
+      - maintain-agent-guidance.lock.yml
