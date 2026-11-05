@@ -224,7 +224,7 @@ manager:
               - key: app.kubernetes.io/component
                 operator: In
                 values:
-                - webhook
+                - manager
             topologyKey: kubernetes.io/hostname
     # Extra environment variables
     env: []
