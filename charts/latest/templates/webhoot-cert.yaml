@@ -6,8 +6,4 @@ metadata:
   labels:
     app.kubernetes.io/component: webhook
   {{- include "chart.labels" . | nindent 4 }}
-data:
-   tls.key: ""
-   tls.crt: ""
-   ca-cert.pem: ""
 {{- end }}
