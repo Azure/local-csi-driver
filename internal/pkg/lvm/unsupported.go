@@ -109,6 +109,11 @@ func (l *Noop) ExtendLogicalVolume(ctx context.Context, opts ExtendLVOptions) er
 	return ErrUnsupported
 }
 
+// ResizeLogicalVolumeFilesystem implements Manager.
+func (l *Noop) ResizeLogicalVolumeFilesystem(ctx context.Context, name, volumePath string) error {
+	return ErrUnsupported
+}
+
 // IsLogicalVolumeCorrupted implements Manager.
 func (l *Noop) IsLogicalVolumeCorrupted(ctx context.Context, vgName string, lvName string) (bool, error) {
 	return false, ErrUnsupported

@@ -84,19 +84,17 @@ func (l *LVM) NodeExpandVolume(ctx context.Context, req *csi.NodeExpandVolumeReq
 	// Expand the volume on the node.
 	// TODO: use default volume group name for now
 	extendOps := lvm.ExtendLVOptions{
-		Name: fmt.Sprintf("%s/%s", id.VolumeGroup, id.LogicalVolume),
-		Size: capacityRequest.String(),
-	}
-
-	if req.GetVolumeCapability() != nil {
-		if _, ok := req.GetVolumeCapability().GetAccessType().(*csi.VolumeCapability_Mount); ok {
-			// only pass ResizeFS config if the volume mode is Filesystem, otherwise
-			// the resize operation will fail.
-			extendOps.ResizeFS = true
-		}
+		Name:     fmt.Sprintf("%s/%s", id.VolumeGroup, id.LogicalVolume),
+		Size:     capacityRequest.String(),
+		ResizeFS: req.GetVolumeCapability().GetMount() != nil,
 	}
 
 	if capacityRequest.CmpInt64(int64(lv.Size)) <= 0 {
+		if extendOps.ResizeFS {
+			if err := l.lvm.ResizeLogicalVolumeFilesystem(ctx, extendOps.Name, req.GetVolumePath()); err != nil {
+				return nil, fmt.Errorf("failed to resize filesystem: %w", err)
+			}
+		}
 		span.SetStatus(codes.Ok, "volume is already at or above the requested size")
 		return &csi.NodeExpandVolumeResponse{
 			CapacityBytes: int64(lv.Size),
