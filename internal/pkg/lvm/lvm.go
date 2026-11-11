@@ -35,6 +35,8 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
+	"k8s.io/mount-utils"
+	utilexec "k8s.io/utils/exec"
 
 	"local-csi-driver/internal/pkg/block"
 	"local-csi-driver/internal/pkg/telemetry"
@@ -829,6 +831,22 @@ func (c *Client) ExtendLogicalVolume(ctx context.Context, opts ExtendLVOptions) 
 		return getErrorType(err)
 	}
 	return nil
+}
+
+// ResizeLogicalVolumeFilesystem retries filesystem growth after LV growth has completed.
+func (c *Client) ResizeLogicalVolumeFilesystem(ctx context.Context, name, volumePath string) error {
+	resizer := mount.NewResizeFs(contextExec{Interface: utilexec.New(), ctx: ctx})
+	_, err := resizer.Resize("/dev/"+name, volumePath)
+	return err
+}
+
+type contextExec struct {
+	utilexec.Interface
+	ctx context.Context
+}
+
+func (e contextExec) Command(cmd string, args ...string) utilexec.Cmd {
+	return e.CommandContext(e.ctx, cmd, args...)
 }
 
 // Reduce the size of a logical volume.

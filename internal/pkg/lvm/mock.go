@@ -304,6 +304,20 @@ func (mr *MockManagerMockRecorder) RenameLogicalVolume(ctx, opts any) *gomock.Ca
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "RenameLogicalVolume", reflect.TypeOf((*MockManager)(nil).RenameLogicalVolume), ctx, opts)
 }
 
+// ResizeLogicalVolumeFilesystem mocks base method.
+func (m *MockManager) ResizeLogicalVolumeFilesystem(ctx context.Context, name, volumePath string) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "ResizeLogicalVolumeFilesystem", ctx, name, volumePath)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// ResizeLogicalVolumeFilesystem indicates an expected call of ResizeLogicalVolumeFilesystem.
+func (mr *MockManagerMockRecorder) ResizeLogicalVolumeFilesystem(ctx, name, volumePath any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ResizeLogicalVolumeFilesystem", reflect.TypeOf((*MockManager)(nil).ResizeLogicalVolumeFilesystem), ctx, name, volumePath)
+}
+
 // SanitizeLogicalVolume mocks base method.
 func (m *MockManager) SanitizeLogicalVolume(ctx context.Context, vgName, lvName string) error {
 	m.ctrl.T.Helper()
