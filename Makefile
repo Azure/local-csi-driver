@@ -43,6 +43,10 @@ FOCUS ?=
 LABEL_FILTER ?=
 SUPPORT_BUNDLE_OUTPUT ?= $(SUPPORT_BUNDLE_OUTPUT_DIR)/support-bundle-$(shell date -u +"%Y-%m-%dT%H:%M:%SZ").tar.gz
 TEST_TIMEOUT ?= 50m
+MUTATION_PATH ?= $(shell pwd)/internal
+MUTATION_OUTPUT ?= $(shell pwd)/bin/mutation-report.json
+MUTATION_WORKERS ?= 2
+MUTATION_ARGS ?=
 SCALE ?= 150
 # Flag determines how many times to repeat aks integration test
 REPEAT ?= 1
@@ -110,6 +114,19 @@ test: envtest go-junit-report  ## Run tests and generate coverage report
 		go test -race -v -p 8 $$(go list ./... | grep -v -e /test/) -coverprofile $(TMP)/cover.out 2>&1 | \
 		$(GO_JUNIT_REPORT) -set-exit-code -iocopy -out $(TEST_OUTPUT)
 	@cat $(TMP)/cover.out | grep -v -E -f .covignore > $(TEST_COVER)
+
+.PHONY: test-mutation
+test-mutation: envtest gremlins ## Run mutation tests for internal packages (non-root only).
+	@if [ "$$(id -u)" -eq 0 ]; then \
+		echo "Run mutation tests as a non-root user so privileged LVM tests remain skipped."; \
+		exit 1; \
+	fi
+	@mkdir -p "$(dir $(MUTATION_OUTPUT))"
+	assets="$$($(ENVTEST) use $(ENVTEST_K8S_VERSION) --bin-dir $(LOCALBIN) -p path)" || exit $$?; \
+	KUBEBUILDER_ASSETS="$$assets" $(GREMLINS) unleash "$(MUTATION_PATH)" \
+		--workers $(MUTATION_WORKERS) \
+		--exclude-files '(^|/)(mock[^/]*|fake[^/]*|[^/]*_mock)\.go$$' \
+		--output "$(MUTATION_OUTPUT)" $(MUTATION_ARGS)
 
 
 # The default setup assumes Kind is pre-installed and builds/loads the Docker
@@ -497,6 +514,7 @@ KIND ?= $(LOCALBIN)/kind
 GOLANGCI_LINT = $(LOCALBIN)/golangci-lint
 GO_JUNIT_REPORT ?= $(LOCALBIN)/go-junit-report
 GINKGO ?= $(LOCALBIN)/ginkgo
+GREMLINS ?= $(LOCALBIN)/gremlins
 HADOLINT ?= $(LOCALBIN)/hadolint
 CONTAINER_STRUCTURE_TEST ?= $(LOCALBIN)/container-structure-test
 SUPPORT_BUNDLE ?= $(LOCALBIN)/support-bundle
@@ -512,6 +530,7 @@ GO_JUNIT_REPORT_VERSION ?= v2.1.0
 PROMETHEUS_VERSION ?= v0.77.1
 JAEGER_VERSION ?= v1.62.0
 GINKGO_VERSION ?= $(shell go list -m -f '{{.Version}}' github.com/onsi/ginkgo/v2)
+GREMLINS_VERSION ?= v0.6.0
 HADOLINT_VERSION ?= v2.12.0
 CONTAINER_STRUCTURE_TEST_VERSION ?= v1.19.3
 GIT_SEMVER_VERSION ?= v6.11.0
@@ -547,6 +566,11 @@ $(GOLANGCI_LINT): $(LOCALBIN)
 go-junit-report: $(GO_JUNIT_REPORT) ## Download go-junit-report locally if necessary.
 $(GO_JUNIT_REPORT): $(LOCALBIN)
 	$(call go-install-tool,$(GO_JUNIT_REPORT),github.com/jstemmer/go-junit-report/v2,$(GO_JUNIT_REPORT_VERSION))
+
+.PHONY: gremlins
+gremlins: $(GREMLINS) ## Install Gremlins locally if necessary.
+$(GREMLINS): $(LOCALBIN)
+	$(call go-install-tool,$(GREMLINS),github.com/go-gremlins/gremlins/cmd/gremlins,$(GREMLINS_VERSION))
 
 ##@ Utilities
 
