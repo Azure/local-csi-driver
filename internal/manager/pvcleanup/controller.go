@@ -40,11 +40,7 @@ func (r *PVCleanupReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	// Fetch the PV
 	var pv corev1.PersistentVolume
 	if err := r.Get(ctx, req.NamespacedName, &pv); err != nil {
-		if apierrors.IsNotFound(err) {
-			// PV was deleted, nothing to do
-			return ctrl.Result{}, nil
-		}
-		return ctrl.Result{}, err
+		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
 
 	// Only process PVs from our CSI driver
@@ -95,6 +91,8 @@ func (r *PVCleanupReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 				logger.V(2).Info("Found available node for PV", "pv", pv.Name, "node", hostname)
 				break
 			}
+		} else if !apierrors.IsNotFound(err) {
+			return ctrl.Result{}, err
 		}
 	}
 
@@ -125,17 +123,8 @@ func (r *PVCleanupReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 
 	// Remove the finalizers
 	patch := client.MergeFrom(pv.DeepCopy())
-	finalizersToRemove := []string{}
-	if hasPVProtection {
-		finalizersToRemove = append(finalizersToRemove, PVProtectionFinalizer)
-	}
-	if hasExternalProvisioner {
-		finalizersToRemove = append(finalizersToRemove, ExternalProvisionerFinalizer)
-	}
-
-	for _, finalizer := range finalizersToRemove {
-		_ = ctrlutil.RemoveFinalizer(&pv, finalizer)
-	}
+	removedPVProtection := ctrlutil.RemoveFinalizer(&pv, PVProtectionFinalizer)
+	removedExternalProvisioner := ctrlutil.RemoveFinalizer(&pv, ExternalProvisionerFinalizer)
 
 	if err := r.Patch(ctx, &pv, patch); err != nil {
 		// Treat NotFound as success - PV was already deleted
@@ -148,7 +137,8 @@ func (r *PVCleanupReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		return ctrl.Result{}, err
 	}
 
-	logger.Info("Successfully removed PV finalizers", "pv", pv.Name, "finalizers", finalizersToRemove)
+	logger.Info("Successfully removed PV finalizers", "pv", pv.Name,
+		"pvProtectionRemoved", removedPVProtection, "externalProvisionerRemoved", removedExternalProvisioner)
 	r.Recorder.Eventf(&pv, nil, corev1.EventTypeNormal, "FinalizersRemoved", "FinalizersRemoved",
 		"Removed PV finalizers because no hostname nodes are available")
 
