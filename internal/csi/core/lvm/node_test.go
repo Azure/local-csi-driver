@@ -73,6 +73,32 @@ func TestNodeExpandVolume(t *testing.T) {
 			expectErrIs: core.ErrOutOfRange,
 		},
 		{
+			name: "zero required capacity",
+			req: &csi.NodeExpandVolumeRequest{
+				VolumeId:      testVolumeID,
+				CapacityRange: &csi.CapacityRange{},
+			},
+			expectLvm: func(m *lvmMgr.MockManager) {
+				m.EXPECT().GetLogicalVolume(gomock.Any(), testVG, testLV).
+					Return(&lvmMgr.LogicalVolume{Name: testLV, Size: lvmMgr.Int64String(currentSize)}, nil)
+			},
+			expectErr:   true,
+			expectErrIs: core.ErrOutOfRange,
+		},
+		{
+			name: "negative upper limit is rejected before expansion",
+			req: &csi.NodeExpandVolumeRequest{
+				VolumeId:      testVolumeID,
+				CapacityRange: &csi.CapacityRange{RequiredBytes: expandedSize, LimitBytes: -1},
+			},
+			expectLvm: func(m *lvmMgr.MockManager) {
+				m.EXPECT().GetLogicalVolume(gomock.Any(), testVG, testLV).
+					Return(&lvmMgr.LogicalVolume{Name: testLV, Size: lvmMgr.Int64String(currentSize)}, nil)
+			},
+			expectErr:   true,
+			expectErrIs: core.ErrOutOfRange,
+		},
+		{
 			name: "volume not found",
 			req: &csi.NodeExpandVolumeRequest{
 				VolumeId:      testVolumeID,
@@ -115,6 +141,96 @@ func TestNodeExpandVolume(t *testing.T) {
 			},
 			expectResp:     true,
 			expectCapacity: currentSize,
+		},
+		{
+			// A 65MiB request would grow a 64MiB LV to 68MiB.
+			// Reject the exact limit before changing the LV.
+			name: "rounded expansion exceeds exact capacity limit",
+			req: &csi.NodeExpandVolumeRequest{
+				VolumeId:      testVolumeID,
+				CapacityRange: &csi.CapacityRange{RequiredBytes: 65 << 20, LimitBytes: 65 << 20},
+			},
+			expectLvm: func(m *lvmMgr.MockManager) {
+				gomock.InOrder(
+					m.EXPECT().GetLogicalVolume(gomock.Any(), testVG, testLV).
+						Return(&lvmMgr.LogicalVolume{Name: testLV, Size: 64 << 20}, nil),
+					m.EXPECT().GetVolumeGroup(gomock.Any(), testVG).
+						Return(&lvmMgr.VolumeGroup{Name: testVG, ExtentSize: 4 << 20}, nil),
+				)
+			},
+			expectErr:   true,
+			expectErrIs: core.ErrOutOfRange,
+		},
+		{
+			name: "rounded expansion equals capacity limit",
+			req: &csi.NodeExpandVolumeRequest{
+				VolumeId:      testVolumeID,
+				CapacityRange: &csi.CapacityRange{RequiredBytes: 65 << 20, LimitBytes: 68 << 20},
+			},
+			expectLvm: func(m *lvmMgr.MockManager) {
+				gomock.InOrder(
+					m.EXPECT().GetLogicalVolume(gomock.Any(), testVG, testLV).
+						Return(&lvmMgr.LogicalVolume{Name: testLV, Size: 64 << 20}, nil),
+					m.EXPECT().GetVolumeGroup(gomock.Any(), testVG).
+						Return(&lvmMgr.VolumeGroup{Name: testVG, ExtentSize: 4 << 20}, nil),
+					m.EXPECT().ExtendLogicalVolume(gomock.Any(), gomock.Any()).Return(nil),
+					m.EXPECT().GetLogicalVolume(gomock.Any(), testVG, testLV).
+						Return(&lvmMgr.LogicalVolume{Name: testLV, Size: 68 << 20}, nil),
+				)
+			},
+			expectResp:     true,
+			expectCapacity: 68 << 20,
+		},
+		{
+			name: "actual expansion exceeds limit despite preflight",
+			req: &csi.NodeExpandVolumeRequest{
+				VolumeId:      testVolumeID,
+				CapacityRange: &csi.CapacityRange{RequiredBytes: 65 << 20, LimitBytes: 68 << 20},
+			},
+			expectLvm: func(m *lvmMgr.MockManager) {
+				gomock.InOrder(
+					m.EXPECT().GetLogicalVolume(gomock.Any(), testVG, testLV).
+						Return(&lvmMgr.LogicalVolume{Name: testLV, Size: 64 << 20}, nil),
+					m.EXPECT().GetVolumeGroup(gomock.Any(), testVG).
+						Return(&lvmMgr.VolumeGroup{Name: testVG, ExtentSize: 4 << 20}, nil),
+					m.EXPECT().ExtendLogicalVolume(gomock.Any(), gomock.Any()).Return(nil),
+					m.EXPECT().GetLogicalVolume(gomock.Any(), testVG, testLV).
+						Return(&lvmMgr.LogicalVolume{Name: testLV, Size: 72 << 20}, nil),
+				)
+			},
+			expectErr:   true,
+			expectErrIs: core.ErrOutOfRange,
+		},
+		{
+			name: "existing LV exceeds limit without further expansion",
+			req: &csi.NodeExpandVolumeRequest{
+				VolumeId:      testVolumeID,
+				CapacityRange: &csi.CapacityRange{RequiredBytes: 64 << 20, LimitBytes: 64 << 20},
+			},
+			expectLvm: func(m *lvmMgr.MockManager) {
+				m.EXPECT().GetLogicalVolume(gomock.Any(), testVG, testLV).
+					Return(&lvmMgr.LogicalVolume{Name: testLV, Size: 68 << 20}, nil)
+			},
+			expectErr:   true,
+			expectErrIs: core.ErrOutOfRange,
+		},
+		{
+			name: "rounded expansion without upper limit",
+			req: &csi.NodeExpandVolumeRequest{
+				VolumeId:      testVolumeID,
+				CapacityRange: &csi.CapacityRange{RequiredBytes: 65 << 20},
+			},
+			expectLvm: func(m *lvmMgr.MockManager) {
+				gomock.InOrder(
+					m.EXPECT().GetLogicalVolume(gomock.Any(), testVG, testLV).
+						Return(&lvmMgr.LogicalVolume{Name: testLV, Size: 64 << 20}, nil),
+					m.EXPECT().ExtendLogicalVolume(gomock.Any(), gomock.Any()).Return(nil),
+					m.EXPECT().GetLogicalVolume(gomock.Any(), testVG, testLV).
+						Return(&lvmMgr.LogicalVolume{Name: testLV, Size: 68 << 20}, nil),
+				)
+			},
+			expectResp:     true,
+			expectCapacity: 68 << 20,
 		},
 		{
 			name: "requested greater than current invokes ExtendLogicalVolume exactly once",
