@@ -84,10 +84,10 @@ func (l *LVM) NodeExpandVolume(ctx context.Context, req *csi.NodeExpandVolumeReq
 	// Expand the volume on the node.
 	// TODO: use default volume group name for now
 	extendOps := lvm.ExtendLVOptions{
-		Name:     fmt.Sprintf("%s/%s", id.VolumeGroup, id.LogicalVolume),
-		Size:     capacityRequest.String(),
-		ResizeFS: req.GetVolumeCapability().GetMount() != nil,
+		Name: fmt.Sprintf("%s/%s", id.VolumeGroup, id.LogicalVolume),
+		Size: capacityRequest.String(),
 	}
+	extendOps.ResizeFS = req.GetVolumeCapability().GetMount() != nil
 
 	if capacityRequest.CmpInt64(int64(lv.Size)) <= 0 {
 		if extendOps.ResizeFS {

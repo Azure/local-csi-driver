@@ -141,6 +141,24 @@ func TestNodeExpandVolume(t *testing.T) {
 			expectErrIs: core.ErrVolumeNotFound,
 		},
 		{
+			name: "smaller mount request still completes filesystem growth without shrinking LV",
+			req: &csi.NodeExpandVolumeRequest{
+				VolumeId:      testVolumeID,
+				VolumePath:    "/staging/pv-test",
+				CapacityRange: &csi.CapacityRange{RequiredBytes: smallerSize},
+				VolumeCapability: &csi.VolumeCapability{
+					AccessType: &csi.VolumeCapability_Mount{Mount: &csi.VolumeCapability_MountVolume{}},
+				},
+			},
+			expectLvm: func(m *lvmMgr.MockManager) {
+				m.EXPECT().GetLogicalVolume(gomock.Any(), testVG, testLV).
+					Return(&lvmMgr.LogicalVolume{Name: testLV, Size: lvmMgr.Int64String(currentSize)}, nil)
+				m.EXPECT().ResizeLogicalVolumeFilesystem(gomock.Any(), expandLVName, "/staging/pv-test").Return(nil)
+			},
+			expectResp:     true,
+			expectCapacity: currentSize,
+		},
+		{
 			name: "requested less than current returns OK with actual size",
 			req: &csi.NodeExpandVolumeRequest{
 				VolumeId:      testVolumeID,
@@ -166,24 +184,6 @@ func TestNodeExpandVolume(t *testing.T) {
 					Return(&lvmMgr.LogicalVolume{Name: testLV, Size: lvmMgr.Int64String(currentSize)}, nil).
 					Times(1)
 				// ExtendLogicalVolume must NOT be called.
-			},
-			expectResp:     true,
-			expectCapacity: currentSize,
-		},
-		{
-			name: "smaller mount request still completes filesystem growth without shrinking LV",
-			req: &csi.NodeExpandVolumeRequest{
-				VolumeId:      testVolumeID,
-				VolumePath:    "/staging/pv-test",
-				CapacityRange: &csi.CapacityRange{RequiredBytes: smallerSize},
-				VolumeCapability: &csi.VolumeCapability{
-					AccessType: &csi.VolumeCapability_Mount{Mount: &csi.VolumeCapability_MountVolume{}},
-				},
-			},
-			expectLvm: func(m *lvmMgr.MockManager) {
-				m.EXPECT().GetLogicalVolume(gomock.Any(), testVG, testLV).
-					Return(&lvmMgr.LogicalVolume{Name: testLV, Size: lvmMgr.Int64String(currentSize)}, nil)
-				m.EXPECT().ResizeLogicalVolumeFilesystem(gomock.Any(), expandLVName, "/staging/pv-test").Return(nil)
 			},
 			expectResp:     true,
 			expectCapacity: currentSize,
