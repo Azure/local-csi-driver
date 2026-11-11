@@ -1427,6 +1427,36 @@ func Test_getCapacityAndLimit(t *testing.T) {
 			wantErr:      false,
 		},
 		{
+			// A 64MiB volume was expanded to 128MiB, but its immutable limit is still 64MiB.
+			// Reusing that limit makes NodeStageVolume fail on pod restart; discard it.
+			name:         "expanded recovery discards a stale create-time limit",
+			attrs:        map[string]string{lvm.CapacityParam: "64Mi", lvm.LimitParam: "64Mi"},
+			annotations:  map[string]string{lvm.ExpandedCapacityParam: "128Mi"},
+			wantCapacity: 128 << 20,
+			wantLimit:    0,
+		},
+		{
+			name:         "equal capacity annotation preserves an invalid limit for downstream rejection",
+			attrs:        map[string]string{lvm.CapacityParam: "64Mi", lvm.LimitParam: "32Mi"},
+			annotations:  map[string]string{lvm.ExpandedCapacityParam: "64Mi"},
+			wantCapacity: 64 << 20,
+			wantLimit:    32 << 20,
+		},
+		{
+			name:         "expanded recovery preserves a limit equal to expanded capacity",
+			attrs:        map[string]string{lvm.CapacityParam: "64Mi", lvm.LimitParam: "128Mi"},
+			annotations:  map[string]string{lvm.ExpandedCapacityParam: "128Mi"},
+			wantCapacity: 128 << 20,
+			wantLimit:    128 << 20,
+		},
+		{
+			name:         "expanded recovery preserves a sufficient create-time limit",
+			attrs:        map[string]string{lvm.CapacityParam: "64Mi", lvm.LimitParam: "256Mi"},
+			annotations:  map[string]string{lvm.ExpandedCapacityParam: "128Mi"},
+			wantCapacity: 128 << 20,
+			wantLimit:    256 << 20,
+		},
+		{
 			name:         "expanded capacity annotation smaller than attrs is ignored",
 			attrs:        map[string]string{lvm.CapacityParam: "10737418240"},
 			annotations:  map[string]string{lvm.ExpandedCapacityParam: "5368709120"},

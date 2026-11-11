@@ -503,7 +503,7 @@ func getCapacityAndLimit(attrs map[string]string, annotations map[string]string)
 		capacityBytes = capacity.Value()
 	}
 
-	if l, ok := attrs[lvm.LimitParam]; ok && len(l) > 0 {
+	if l := attrs[lvm.LimitParam]; len(l) > 0 {
 		limit, err := resource.ParseQuantity(l)
 		if err != nil {
 			return 0, 0, fmt.Errorf("failed to parse volume limit size from pv attribute %s=%s: %w", lvm.LimitParam, attrs[lvm.LimitParam], err)
@@ -514,12 +514,10 @@ func getCapacityAndLimit(attrs map[string]string, annotations map[string]string)
 	// If the PV has been expanded, the expanded-capacity annotation holds the
 	// actual post-expansion LV size. Use it instead of the immutable
 	// create-time CapacityParam.
-	if ec, ok := annotations[lvm.ExpandedCapacityParam]; ok && len(ec) > 0 {
-		expanded, err := resource.ParseQuantity(ec)
-		if err == nil {
-			if expandedBytes := expanded.Value(); expandedBytes > capacityBytes {
-				capacityBytes = expandedBytes
-			}
+	if expanded, err := resource.ParseQuantity(annotations[lvm.ExpandedCapacityParam]); err == nil && expanded.Value() > capacityBytes {
+		capacityBytes = expanded.Value()
+		if limitBytes > 0 && limitBytes < capacityBytes {
+			limitBytes = 0
 		}
 	}
 
