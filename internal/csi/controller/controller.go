@@ -399,6 +399,8 @@ func fromCoreError(err error) error {
 	switch {
 	case errors.Is(err, core.ErrResourceExhausted):
 		return status.Error(codes.ResourceExhausted, err.Error())
+	case errors.Is(err, core.ErrOutOfRange):
+		return status.Error(codes.OutOfRange, err.Error())
 	case errors.Is(err, core.ErrVolumeSizeMismatch):
 		return status.Error(codes.AlreadyExists, err.Error())
 	default:
