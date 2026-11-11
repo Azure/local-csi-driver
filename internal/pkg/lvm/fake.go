@@ -72,7 +72,8 @@ func (f *Fake) GetPhysicalVolume(ctx context.Context, pvName string) (*PhysicalV
 // CreateVolumeGroup Creates a VG on the PVs.
 func (f *Fake) CreateVolumeGroup(ctx context.Context, opts CreateVGOptions) error {
 	vg := VolumeGroup{
-		Name: opts.Name,
+		Name:       opts.Name,
+		ExtentSize: 4 << 20,
 	}
 	f.VGs[opts.Name] = vg
 	return nil
@@ -129,7 +130,7 @@ func (f *Fake) CreateLogicalVolume(ctx context.Context, opts CreateLVOptions) (i
 
 // RemoveLogicalVolume removes a LV from a VG.
 func (f *Fake) RemoveLogicalVolume(ctx context.Context, opts RemoveLVOptions) error {
-	delete(f.LVs, opts.Name)
+	delete(f.LVs, fakeLVKey(opts.Name))
 	return nil
 }
 
@@ -197,7 +198,7 @@ func fakeLVKey(name string) string {
 // splitTags parses the comma-separated tag list that LVM reports.
 func splitTags(tags string) map[string]struct{} {
 	set := make(map[string]struct{})
-	for _, tag := range strings.Split(tags, ",") {
+	for tag := range strings.SplitSeq(tags, ",") {
 		if tag = strings.TrimSpace(tag); tag != "" {
 			set[tag] = struct{}{}
 		}
@@ -246,6 +247,10 @@ func (f *Fake) ExtendLogicalVolume(ctx context.Context, opts ExtendLVOptions) er
 	lv.Size = Int64String(size)
 	f.LVs[opts.Name] = lv
 	return nil
+}
+
+func (f *Fake) ResizeLogicalVolumeFilesystem(ctx context.Context, name, volumePath string) error {
+	return f.Err
 }
 
 // IsLogicalVolumeCorrupted always returns false for the fake implementation.

@@ -4,13 +4,108 @@ package pvcleanup
 // Licensed under the MIT License.
 
 import (
+	"context"
+	"errors"
 	"testing"
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
+	kevents "k8s.io/client-go/tools/events"
+	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 
 	"local-csi-driver/internal/csi/core/lvm"
 )
+
+// TestRegressionNodeReadErrorPreservesPV reconciles a released PV while a fake
+// client returns a temporary Node lookup error, not NotFound.
+// Bug: cleanup treats the failed read as a missing node and deletes the PV or
+// removes its finalizers. Expected: return the read error and leave the PV alone.
+func TestRegressionNodeReadErrorPreservesPV(t *testing.T) {
+	t.Parallel()
+
+	scheme := runtime.NewScheme()
+	if err := corev1.AddToScheme(scheme); err != nil {
+		t.Fatal(err)
+	}
+	for _, deleting := range []bool{false, true} {
+		name := "before deletion"
+		if deleting {
+			name = "during finalizer removal"
+		}
+		t.Run(name, func(t *testing.T) {
+			pv := corev1.PersistentVolume{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:       "node-read-error",
+					Finalizers: []string{PVProtectionFinalizer, ExternalProvisionerFinalizer},
+				},
+				Spec: corev1.PersistentVolumeSpec{
+					PersistentVolumeReclaimPolicy: corev1.PersistentVolumeReclaimDelete,
+					PersistentVolumeSource: corev1.PersistentVolumeSource{
+						CSI: &corev1.CSIPersistentVolumeSource{
+							Driver:       lvm.DriverName,
+							VolumeHandle: "containerstorage#node-read-error",
+						},
+					},
+					NodeAffinity: &corev1.VolumeNodeAffinity{
+						Required: &corev1.NodeSelector{
+							NodeSelectorTerms: []corev1.NodeSelectorTerm{{
+								MatchExpressions: []corev1.NodeSelectorRequirement{{
+									Key:      lvm.TopologyKey,
+									Operator: corev1.NodeSelectorOpIn,
+									Values:   []string{"unknown-node"},
+								}},
+							}},
+						},
+					},
+				},
+				Status: corev1.PersistentVolumeStatus{Phase: corev1.VolumeReleased},
+			}
+			if deleting {
+				now := metav1.Now()
+				pv.DeletionTimestamp = &now
+			}
+			readErr := errors.New("temporary node read failure")
+			deleted, patched := false, false
+			kubeClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(&pv).
+				WithInterceptorFuncs(interceptor.Funcs{
+					Get: func(ctx context.Context, c client.WithWatch, key client.ObjectKey, obj client.Object, opts ...client.GetOption) error {
+						if _, ok := obj.(*corev1.Node); ok {
+							return readErr
+						}
+						return c.Get(ctx, key, obj, opts...)
+					},
+					Delete: func(context.Context, client.WithWatch, client.Object, ...client.DeleteOption) error {
+						deleted = true
+						return nil
+					},
+					Patch: func(context.Context, client.WithWatch, client.Object, client.Patch, ...client.PatchOption) error {
+						patched = true
+						return nil
+					},
+				}).Build()
+			reconciler := &PVCleanupReconciler{
+				Client:   kubeClient,
+				Recorder: kevents.NewFakeRecorder(10),
+			}
+			_, err := reconciler.Reconcile(t.Context(), ctrl.Request{
+				NamespacedName: client.ObjectKey{Name: pv.Name},
+			})
+			if !errors.Is(err, readErr) {
+				t.Errorf("Reconcile() error = %v, want node lookup error %v", err, readErr)
+			}
+			if deleted {
+				t.Error("Reconcile() deleted the PV without establishing that its node is unavailable")
+			}
+			if patched {
+				t.Error("Reconcile() patched PV finalizers without establishing that its node is unavailable")
+			}
+		})
+	}
+}
 
 // Unit tests for helper functions
 

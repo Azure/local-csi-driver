@@ -15,6 +15,60 @@ import (
 	lvmMgr "local-csi-driver/internal/pkg/lvm"
 )
 
+// TestRegressionExpandFilesystemRetry requests 64MiB -> 128MiB. The LV grows,
+// but filesystem growth fails; an identical retry now finds a 128MiB LV.
+// Bug: the retry returns success without retrying the unfinished filesystem growth.
+// Expected: finish growing the filesystem before reporting success.
+func TestRegressionExpandFilesystemRetry(t *testing.T) {
+	t.Parallel()
+
+	volumeManager, _, manager, err := initTestLVM(gomock.NewController(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	resizeErr := errors.New("filesystem growth failed after LV growth")
+	initialRead := manager.EXPECT().GetLogicalVolume(gomock.Any(), "containerstorage", "filesystem-retry").
+		Return(&lvmMgr.LogicalVolume{Name: "filesystem-retry", Size: 64 << 20}, nil)
+	failedExpansion := manager.EXPECT().ExtendLogicalVolume(gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, opts lvmMgr.ExtendLVOptions) error {
+			if !opts.ResizeFS {
+				t.Error("initial expansion must request filesystem growth")
+			}
+			return resizeErr
+		}).After(initialRead)
+	manager.EXPECT().GetLogicalVolume(gomock.Any(), "containerstorage", "filesystem-retry").
+		Return(&lvmMgr.LogicalVolume{Name: "filesystem-retry", Size: 128 << 20}, nil).
+		AnyTimes().After(failedExpansion)
+	failedRetry := manager.EXPECT().
+		ResizeLogicalVolumeFilesystem(gomock.Any(), "containerstorage/filesystem-retry", "/staging/filesystem-retry").
+		Return(resizeErr).After(failedExpansion)
+	manager.EXPECT().
+		ResizeLogicalVolumeFilesystem(gomock.Any(), "containerstorage/filesystem-retry", "/staging/filesystem-retry").
+		Return(nil).After(failedRetry)
+	request := &csi.NodeExpandVolumeRequest{
+		VolumeId:      "containerstorage#filesystem-retry",
+		VolumePath:    "/staging/filesystem-retry",
+		CapacityRange: &csi.CapacityRange{RequiredBytes: 128 << 20},
+		VolumeCapability: &csi.VolumeCapability{
+			AccessType: &csi.VolumeCapability_Mount{
+				Mount: &csi.VolumeCapability_MountVolume{FsType: "ext4"},
+			},
+			AccessMode: &csi.VolumeCapability_AccessMode{
+				Mode: csi.VolumeCapability_AccessMode_SINGLE_NODE_WRITER,
+			},
+		},
+	}
+	if _, err := volumeManager.NodeExpandVolume(t.Context(), request); !errors.Is(err, resizeErr) {
+		t.Fatalf("first expansion error = %v, want filesystem resize failure %v", err, resizeErr)
+	}
+	if _, err := volumeManager.NodeExpandVolume(t.Context(), request); !errors.Is(err, resizeErr) {
+		t.Fatalf("retry error = %v, want filesystem resize failure %v", err, resizeErr)
+	}
+	if _, err := volumeManager.NodeExpandVolume(t.Context(), request); err != nil {
+		t.Fatalf("retry with a healthy filesystem resizer failed: %v", err)
+	}
+}
+
 // TestNodeExpandVolume covers the size-comparison branches of
 // NodeExpandVolume. It exists primarily to catch the regression where the
 // `requested > current` case was unreachable (`>=` vs `==` typo) and
@@ -30,7 +84,7 @@ func TestNodeExpandVolume(t *testing.T) {
 		expandedSize  = int64(1700 * 1024 * 1024 * 1024) // 1700 GiB
 		smallerSize   = int64(10 * 1024 * 1024 * 1024)   // 10 GiB
 		expandLVName  = testVG + "/" + testLV
-		expandLVSizeS = "1700Gi"
+		expandLVSizeS = "1825361100800B"
 	)
 
 	tests := []struct {
@@ -68,6 +122,32 @@ func TestNodeExpandVolume(t *testing.T) {
 				m.EXPECT().GetLogicalVolume(gomock.Any(), testVG, testLV).
 					Return(&lvmMgr.LogicalVolume{Name: testLV, Size: lvmMgr.Int64String(currentSize)}, nil).
 					Times(1)
+			},
+			expectErr:   true,
+			expectErrIs: core.ErrOutOfRange,
+		},
+		{
+			name: "zero required capacity",
+			req: &csi.NodeExpandVolumeRequest{
+				VolumeId:      testVolumeID,
+				CapacityRange: &csi.CapacityRange{},
+			},
+			expectLvm: func(m *lvmMgr.MockManager) {
+				m.EXPECT().GetLogicalVolume(gomock.Any(), testVG, testLV).
+					Return(&lvmMgr.LogicalVolume{Name: testLV, Size: lvmMgr.Int64String(currentSize)}, nil)
+			},
+			expectErr:   true,
+			expectErrIs: core.ErrOutOfRange,
+		},
+		{
+			name: "negative upper limit is rejected before expansion",
+			req: &csi.NodeExpandVolumeRequest{
+				VolumeId:      testVolumeID,
+				CapacityRange: &csi.CapacityRange{RequiredBytes: expandedSize, LimitBytes: -1},
+			},
+			expectLvm: func(m *lvmMgr.MockManager) {
+				m.EXPECT().GetLogicalVolume(gomock.Any(), testVG, testLV).
+					Return(&lvmMgr.LogicalVolume{Name: testLV, Size: lvmMgr.Int64String(currentSize)}, nil)
 			},
 			expectErr:   true,
 			expectErrIs: core.ErrOutOfRange,
@@ -115,6 +195,138 @@ func TestNodeExpandVolume(t *testing.T) {
 			},
 			expectResp:     true,
 			expectCapacity: currentSize,
+		},
+		{
+			// A 65MiB request would grow a 64MiB LV to 68MiB.
+			// Reject the exact limit before changing the LV.
+			name: "rounded expansion exceeds exact capacity limit",
+			req: &csi.NodeExpandVolumeRequest{
+				VolumeId:      testVolumeID,
+				CapacityRange: &csi.CapacityRange{RequiredBytes: 65 << 20, LimitBytes: 65 << 20},
+			},
+			expectLvm: func(m *lvmMgr.MockManager) {
+				gomock.InOrder(
+					m.EXPECT().GetLogicalVolume(gomock.Any(), testVG, testLV).
+						Return(&lvmMgr.LogicalVolume{Name: testLV, Size: 64 << 20}, nil),
+					m.EXPECT().GetVolumeGroup(gomock.Any(), testVG).
+						Return(&lvmMgr.VolumeGroup{Name: testVG, ExtentSize: 4 << 20}, nil),
+				)
+			},
+			expectErr:   true,
+			expectErrIs: core.ErrOutOfRange,
+		},
+		{
+			name: "rounded expansion equals capacity limit",
+			req: &csi.NodeExpandVolumeRequest{
+				VolumeId:      testVolumeID,
+				CapacityRange: &csi.CapacityRange{RequiredBytes: 65 << 20, LimitBytes: 68 << 20},
+			},
+			expectLvm: func(m *lvmMgr.MockManager) {
+				gomock.InOrder(
+					m.EXPECT().GetLogicalVolume(gomock.Any(), testVG, testLV).
+						Return(&lvmMgr.LogicalVolume{Name: testLV, Size: 64 << 20}, nil),
+					m.EXPECT().GetVolumeGroup(gomock.Any(), testVG).
+						Return(&lvmMgr.VolumeGroup{Name: testVG, ExtentSize: 4 << 20}, nil),
+					m.EXPECT().ExtendLogicalVolume(gomock.Any(), gomock.Any()).Return(nil),
+					m.EXPECT().GetLogicalVolume(gomock.Any(), testVG, testLV).
+						Return(&lvmMgr.LogicalVolume{Name: testLV, Size: 68 << 20}, nil),
+				)
+			},
+			expectResp:     true,
+			expectCapacity: 68 << 20,
+		},
+		{
+			name: "actual expansion exceeds limit despite preflight",
+			req: &csi.NodeExpandVolumeRequest{
+				VolumeId:      testVolumeID,
+				CapacityRange: &csi.CapacityRange{RequiredBytes: 65 << 20, LimitBytes: 68 << 20},
+			},
+			expectLvm: func(m *lvmMgr.MockManager) {
+				gomock.InOrder(
+					m.EXPECT().GetLogicalVolume(gomock.Any(), testVG, testLV).
+						Return(&lvmMgr.LogicalVolume{Name: testLV, Size: 64 << 20}, nil),
+					m.EXPECT().GetVolumeGroup(gomock.Any(), testVG).
+						Return(&lvmMgr.VolumeGroup{Name: testVG, ExtentSize: 4 << 20}, nil),
+					m.EXPECT().ExtendLogicalVolume(gomock.Any(), gomock.Any()).Return(nil),
+					m.EXPECT().GetLogicalVolume(gomock.Any(), testVG, testLV).
+						Return(&lvmMgr.LogicalVolume{Name: testLV, Size: 72 << 20}, nil),
+				)
+			},
+			expectErr:   true,
+			expectErrIs: core.ErrOutOfRange,
+		},
+		{
+			name: "existing LV exceeds limit without further expansion",
+			req: &csi.NodeExpandVolumeRequest{
+				VolumeId:      testVolumeID,
+				CapacityRange: &csi.CapacityRange{RequiredBytes: 64 << 20, LimitBytes: 64 << 20},
+			},
+			expectLvm: func(m *lvmMgr.MockManager) {
+				m.EXPECT().GetLogicalVolume(gomock.Any(), testVG, testLV).
+					Return(&lvmMgr.LogicalVolume{Name: testLV, Size: 68 << 20}, nil)
+			},
+			expectErr:   true,
+			expectErrIs: core.ErrOutOfRange,
+		},
+		{
+			name: "smaller mount request still completes filesystem growth without shrinking LV",
+			req: &csi.NodeExpandVolumeRequest{
+				VolumeId:      testVolumeID,
+				VolumePath:    "/staging/pv-test",
+				CapacityRange: &csi.CapacityRange{RequiredBytes: smallerSize},
+				VolumeCapability: &csi.VolumeCapability{
+					AccessType: &csi.VolumeCapability_Mount{Mount: &csi.VolumeCapability_MountVolume{}},
+				},
+			},
+			expectLvm: func(m *lvmMgr.MockManager) {
+				m.EXPECT().GetLogicalVolume(gomock.Any(), testVG, testLV).
+					Return(&lvmMgr.LogicalVolume{Name: testLV, Size: lvmMgr.Int64String(currentSize)}, nil)
+				m.EXPECT().ResizeLogicalVolumeFilesystem(gomock.Any(), expandLVName, "/staging/pv-test").Return(nil)
+			},
+			expectResp:     true,
+			expectCapacity: currentSize,
+		},
+		{
+			// BinarySI quantities without a suffix are interpreted by LVM as MiB.
+			// A sector-aligned request must stay in bytes, even below KiB alignment.
+			name: "sector-aligned expansion uses explicit bytes instead of implicit MiB",
+			req: &csi.NodeExpandVolumeRequest{
+				VolumeId:      testVolumeID,
+				CapacityRange: &csi.CapacityRange{RequiredBytes: (64 << 20) + 512, LimitBytes: 68 << 20},
+			},
+			expectLvm: func(m *lvmMgr.MockManager) {
+				gomock.InOrder(
+					m.EXPECT().GetLogicalVolume(gomock.Any(), testVG, testLV).
+						Return(&lvmMgr.LogicalVolume{Name: testLV, Size: 64 << 20}, nil),
+					m.EXPECT().GetVolumeGroup(gomock.Any(), testVG).
+						Return(&lvmMgr.VolumeGroup{Name: testVG, ExtentSize: 4 << 20}, nil),
+					m.EXPECT().ExtendLogicalVolume(gomock.Any(), lvmMgr.ExtendLVOptions{
+						Name: expandLVName, Size: "67109376B",
+					}).Return(nil),
+					m.EXPECT().GetLogicalVolume(gomock.Any(), testVG, testLV).
+						Return(&lvmMgr.LogicalVolume{Name: testLV, Size: 68 << 20}, nil),
+				)
+			},
+			expectResp:     true,
+			expectCapacity: 68 << 20,
+		},
+		{
+			name: "rounded expansion without upper limit",
+			req: &csi.NodeExpandVolumeRequest{
+				VolumeId:      testVolumeID,
+				CapacityRange: &csi.CapacityRange{RequiredBytes: 65 << 20},
+			},
+			expectLvm: func(m *lvmMgr.MockManager) {
+				gomock.InOrder(
+					m.EXPECT().GetLogicalVolume(gomock.Any(), testVG, testLV).
+						Return(&lvmMgr.LogicalVolume{Name: testLV, Size: 64 << 20}, nil),
+					m.EXPECT().ExtendLogicalVolume(gomock.Any(), gomock.Any()).Return(nil),
+					m.EXPECT().GetLogicalVolume(gomock.Any(), testVG, testLV).
+						Return(&lvmMgr.LogicalVolume{Name: testLV, Size: 68 << 20}, nil),
+				)
+			},
+			expectResp:     true,
+			expectCapacity: 68 << 20,
 		},
 		{
 			name: "requested greater than current invokes ExtendLogicalVolume exactly once",
