@@ -59,11 +59,9 @@ func (l *LVM) NodeExpandVolume(ctx context.Context, req *csi.NodeExpandVolumeReq
 	}
 
 	lv, err := l.lvm.GetLogicalVolume(ctx, id.VolumeGroup, id.LogicalVolume)
-	if err != nil {
-		if lvm.IgnoreNotFound(err) != nil {
-			span.SetStatus(codes.Error, "failed to find volume")
-			return nil, fmt.Errorf("failed to find volume %s: %w", req.GetVolumeId(), err)
-		}
+	if lvm.IgnoreNotFound(err) != nil {
+		span.SetStatus(codes.Error, "failed to find volume")
+		return nil, fmt.Errorf("failed to find volume %s: %w", req.GetVolumeId(), err)
 	}
 
 	if err != nil || lv == nil {
@@ -71,16 +69,16 @@ func (l *LVM) NodeExpandVolume(ctx context.Context, req *csi.NodeExpandVolumeReq
 		return nil, fmt.Errorf("%w: volume %s not found", core.ErrVolumeNotFound, req.GetVolumeId())
 	}
 
-	if req.GetCapacityRange() == nil || req.GetCapacityRange().GetRequiredBytes() == 0 {
+	if req.GetCapacityRange().GetRequiredBytes() <= 0 {
 		return nil, fmt.Errorf("%w: capacity range is required", core.ErrOutOfRange)
 	}
 
-	capacityRequest := resource.NewQuantity(req.GetCapacityRange().GetRequiredBytes(), resource.BinarySI)
-	if capacityRequest == nil {
-		span.SetStatus(codes.Error, "invalid capacity range")
-		return nil, fmt.Errorf("%w: invalid capacity range", core.ErrOutOfRange)
+	limit := req.GetCapacityRange().GetLimitBytes()
+	if limit != 0 && max(req.GetCapacityRange().GetRequiredBytes(), int64(lv.Size)) > limit {
+		return nil, fmt.Errorf("%w: requested or current size exceeds capacity limit %d", core.ErrOutOfRange, limit)
 	}
 
+	capacityRequest := resource.NewQuantity(req.GetCapacityRange().GetRequiredBytes(), resource.BinarySI)
 	// Expand the volume on the node.
 	// TODO: use default volume group name for now
 	extendOps := lvm.ExtendLVOptions{
@@ -103,6 +101,16 @@ func (l *LVM) NodeExpandVolume(ctx context.Context, req *csi.NodeExpandVolumeReq
 		}, nil
 	}
 
+	if limit > 0 {
+		vg, err := l.lvm.GetVolumeGroup(ctx, id.VolumeGroup)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get volume group for capacity limit: %w", err)
+		}
+		if err := checkCapacityLimit(capacityRequest.Value(), limit, vg, 1); err != nil {
+			return nil, err
+		}
+	}
+
 	recorder := events.FromContext(ctx)
 	recorder.Eventf(corev1.EventTypeNormal, expandingLogicalVolume, "Expanding volume %s/%s to %d", id.VolumeGroup, id.LogicalVolume, capacityRequest.Value())
 	if err := l.lvm.ExtendLogicalVolume(ctx, extendOps); err != nil {
@@ -121,6 +129,9 @@ func (l *LVM) NodeExpandVolume(ctx context.Context, req *csi.NodeExpandVolumeReq
 		return nil, fmt.Errorf("failed to get volume after expand: %w", err)
 	}
 	actualSize := int64(expandedLV.Size)
+	if limit > 0 && actualSize > limit {
+		return nil, fmt.Errorf("%w: expanded size %d exceeds capacity limit %d", core.ErrOutOfRange, actualSize, limit)
+	}
 
 	recorder.Eventf(corev1.EventTypeNormal, expandedLogicalVolume, "Expanded volume %s/%s to %d", id.VolumeGroup, id.LogicalVolume, actualSize)
 	return &csi.NodeExpandVolumeResponse{
