@@ -85,7 +85,7 @@ func (l *LVM) NodeExpandVolume(ctx context.Context, req *csi.NodeExpandVolumeReq
 	// TODO: use default volume group name for now
 	extendOps := lvm.ExtendLVOptions{
 		Name: fmt.Sprintf("%s/%s", id.VolumeGroup, id.LogicalVolume),
-		Size: capacityRequest.String(),
+		Size: fmt.Sprintf("%dB", capacityRequest.Value()),
 	}
 
 	if req.GetVolumeCapability() != nil {
