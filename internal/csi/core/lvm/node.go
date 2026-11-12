@@ -131,6 +131,12 @@ func (l *LVM) NodeExpandVolume(ctx context.Context, req *csi.NodeExpandVolumeReq
 // NodeEnsureVolume ensures that the volume exists on the node.
 // It will create the volume if it does not exist.
 func (l *LVM) NodeEnsureVolume(ctx context.Context, volumeId string, capacity int64, limit int64) error {
-	_, err := l.EnsureVolume(ctx, volumeId, capacity, limit, true)
+	_, err := l.ensureVolume(ctx, volumeId, capacity, limit, true, true, true)
+	return err
+}
+
+// NodeEnsureExistingVolume prepares an existing volume without creating a replacement.
+func (l *LVM) NodeEnsureExistingVolume(ctx context.Context, volumeId string, capacity int64, limit int64) error {
+	_, err := l.ensureVolume(ctx, volumeId, capacity, limit, true, false, true)
 	return err
 }

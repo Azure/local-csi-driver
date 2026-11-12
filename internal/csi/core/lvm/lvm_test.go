@@ -661,6 +661,7 @@ func TestEnsureVolume(t *testing.T) {
 					Name:    "vg",
 					PVCount: 4,
 				}
+
 				createArgs := lvmMgr.CreateLVOptions{
 					Name:    "lv",
 					VGName:  "vg",
@@ -861,6 +862,91 @@ func TestEnsureVolume(t *testing.T) {
 		})
 	}
 
+}
+
+func TestNodeEnsureExistingVolume(t *testing.T) {
+	t.Parallel()
+	const capacity = int64(1024 * 1024 * 1024)
+
+	t.Run("missing volume fails without allocation", func(t *testing.T) {
+		t.Parallel()
+		l, _, manager, err := initTestLVM(gomock.NewController(t))
+		if err != nil {
+			t.Fatalf("failed to initialize LVM: %v", err)
+		}
+		manager.EXPECT().
+			GetLogicalVolume(gomock.Any(), "vg", "lv").
+			Return(nil, nil)
+
+		err = l.NodeEnsureExistingVolume(context.Background(), "vg#lv", capacity, 0)
+		if !errors.Is(err, core.ErrVolumeNotFound) {
+			t.Fatalf("NodeEnsureExistingVolume() error = %v, want %v", err, core.ErrVolumeNotFound)
+		}
+	})
+
+	t.Run("existing volume is prepared and reused", func(t *testing.T) {
+		t.Parallel()
+		l, _, manager, err := initTestLVM(gomock.NewController(t))
+		if err != nil {
+			t.Fatalf("failed to initialize LVM: %v", err)
+		}
+		logicalVolume := &lvmMgr.LogicalVolume{
+			Name: "lv",
+			Size: lvmMgr.Int64String(capacity),
+		}
+		manager.EXPECT().
+			GetLogicalVolume(gomock.Any(), "vg", "lv").
+			Return(logicalVolume, nil)
+		manager.EXPECT().
+			IsLogicalVolumeCorrupted(gomock.Any(), "vg", "lv").
+			Return(false, nil)
+
+		if err := l.NodeEnsureExistingVolume(context.Background(), "vg#lv", capacity, 0); err != nil {
+			t.Fatalf("NodeEnsureExistingVolume() error = %v, want nil", err)
+		}
+	})
+}
+
+func TestNodeEnsureExistingVolume_PendingResize(t *testing.T) {
+	t.Parallel()
+	const gib = int64(1 << 30)
+	for _, tc := range []struct {
+		name         string
+		size         int64
+		limit        int64
+		missing      bool
+		availability bool
+		wantErr      error
+	}{
+		{name: "1Gi LV stages before expansion to 2Gi", size: gib},
+		{name: "availability 1Gi LV stages before expansion to 2Gi", size: gib, availability: true},
+		{name: "upper limit remains enforced", size: 4 * gib, limit: 3 * gib, wantErr: core.ErrVolumeSizeMismatch},
+		{name: "missing LV is never allocated", missing: true, wantErr: core.ErrVolumeNotFound},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			l, _, manager, err := initTestLVM(gomock.NewController(t))
+			if err != nil {
+				t.Fatal(err)
+			}
+			var lv *lvmMgr.LogicalVolume
+			if !tc.missing {
+				lv = &lvmMgr.LogicalVolume{Name: "lv", Size: lvmMgr.Int64String(tc.size)}
+				manager.EXPECT().IsLogicalVolumeCorrupted(gomock.Any(), "vg", "lv").Return(false, nil).Times(2)
+			}
+			manager.EXPECT().GetLogicalVolume(gomock.Any(), "vg", "lv").Return(lv, nil).Times(2)
+			for range 2 {
+				var err error
+				if tc.availability {
+					err = l.NodeEnsureVolume(context.Background(), "vg#lv", 2*gib, tc.limit)
+				} else {
+					err = l.NodeEnsureExistingVolume(context.Background(), "vg#lv", 2*gib, tc.limit)
+				}
+				if !errors.Is(err, tc.wantErr) {
+					t.Fatalf("staging error = %v, want %v", err, tc.wantErr)
+				}
+			}
+		})
+	}
 }
 
 func TestCleanup(t *testing.T) {

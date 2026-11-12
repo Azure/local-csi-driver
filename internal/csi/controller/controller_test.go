@@ -246,7 +246,52 @@ func TestServer_CreateVolume(t *testing.T) {
 					VolumeId: "vg#test-volume",
 					VolumeContext: map[string]string{
 						selectedInitialNodeAnnotation: "test-node",
+						core.FailoverModeParam:        core.FailoverModeAvailability,
 					},
+				},
+			},
+			wantErr: false,
+		},
+		{
+			name: "durability retains accessible topology",
+			pre: func() {
+				server.volume.(*core.Fake).Volume = &csi.Volume{
+					VolumeId: "vg#durability-volume",
+					AccessibleTopology: []*csi.Topology{{
+						Segments: map[string]string{
+							"test-topology": "test-node",
+						},
+					}},
+				}
+			},
+			req: &csi.CreateVolumeRequest{
+				Name: "durability-volume",
+				VolumeCapabilities: []*csi.VolumeCapability{{
+					AccessMode: &csi.VolumeCapability_AccessMode{
+						Mode: csi.VolumeCapability_AccessMode_SINGLE_NODE_WRITER,
+					},
+					AccessType: &csi.VolumeCapability_Mount{
+						Mount: &csi.VolumeCapability_MountVolume{},
+					},
+				}},
+				Parameters: map[string]string{
+					core.PVCNameParam:      "test-pvc",
+					core.PVCNamespaceParam: "test-namespace",
+					core.FailoverModeParam: core.FailoverModeDurability,
+				},
+			},
+			want: &csi.CreateVolumeResponse{
+				Volume: &csi.Volume{
+					VolumeId: "vg#durability-volume",
+					VolumeContext: map[string]string{
+						selectedInitialNodeAnnotation: "test-node",
+						core.FailoverModeParam:        core.FailoverModeDurability,
+					},
+					AccessibleTopology: []*csi.Topology{{
+						Segments: map[string]string{
+							"test-topology": "test-node",
+						},
+					}},
 				},
 			},
 			wantErr: false,
@@ -443,6 +488,44 @@ func TestServer_CreateVolume(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestServer_CreateVolume_DurabilityRetainsTopologyWithoutWebhook(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	server := initTestControllerServer(ctrl)
+	server.removePvNodeAffinity = false
+	server.volume.(*core.Fake).Volume = &csi.Volume{
+		VolumeId: "vg#durability-volume",
+		AccessibleTopology: []*csi.Topology{{
+			Segments: map[string]string{
+				"test-topology": "test-node",
+			},
+		}},
+	}
+
+	response, err := server.CreateVolume(context.Background(), &csi.CreateVolumeRequest{
+		Name: "durability-volume",
+		VolumeCapabilities: []*csi.VolumeCapability{{
+			AccessMode: &csi.VolumeCapability_AccessMode{
+				Mode: csi.VolumeCapability_AccessMode_SINGLE_NODE_WRITER,
+			},
+			AccessType: &csi.VolumeCapability_Mount{
+				Mount: &csi.VolumeCapability_MountVolume{},
+			},
+		}},
+		Parameters: map[string]string{
+			core.FailoverModeParam: core.FailoverModeDurability,
+		},
+	})
+	if err != nil {
+		t.Fatalf("CreateVolume() error = %v", err)
+	}
+	if len(response.Volume.AccessibleTopology) != 1 {
+		t.Fatalf("accessible topology = %#v, want one entry", response.Volume.AccessibleTopology)
+	}
+	if got := response.Volume.VolumeContext[selectedInitialNodeAnnotation]; got != "test-node" {
+		t.Fatalf("selected initial node = %q, want test-node", got)
 	}
 }
 

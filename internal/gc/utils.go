@@ -12,21 +12,12 @@ import (
 
 // hasNodeAnnotationMismatch checks if the PV's node annotations don't match the current node.
 func hasNodeAnnotationMismatch(pv *corev1.PersistentVolume, nodeID, selectedNodeAnnotation, selectedInitialNodeParam string) bool {
-	// Check selected-node annotation
-	selectedNode, exists := pv.Annotations[selectedNodeAnnotation]
-	if exists {
-		if !strings.EqualFold(selectedNode, nodeID) {
-			return true
-		}
-	} else {
-		// Check initial node parameter in CSI volume attributes
-		if pv.Spec.CSI != nil && pv.Spec.CSI.VolumeAttributes != nil {
-			if initialNode, exists := pv.Spec.CSI.VolumeAttributes[selectedInitialNodeParam]; exists {
-				if !strings.EqualFold(initialNode, nodeID) {
-					return true
-				}
-			}
-		}
+	selectedNode := pv.Annotations[selectedNodeAnnotation]
+	if selectedNode == "" && pv.Spec.CSI != nil {
+		selectedNode = pv.Spec.CSI.VolumeAttributes[selectedInitialNodeParam]
+	}
+	if selectedNode != "" && !strings.EqualFold(selectedNode, nodeID) {
+		return true
 	}
 
 	return false

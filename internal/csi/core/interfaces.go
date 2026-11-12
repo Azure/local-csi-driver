@@ -17,6 +17,11 @@ const (
 	// --extra-create-metadata is set on the CSI external-provisioner.
 	PVCNameParam      = "csi.storage.k8s.io/pvc/name"
 	PVCNamespaceParam = "csi.storage.k8s.io/pvc/namespace"
+
+	// Failover modes are shared by provisioning, admission, and staging.
+	FailoverModeParam        = "localdisk.csi.acstor.io/failover-mode"
+	FailoverModeAvailability = "availability"
+	FailoverModeDurability   = "durability"
 )
 
 var (
@@ -57,6 +62,8 @@ type NodeInterface interface {
 	GetNodeDevicePath(volumeId string) (string, error)
 	NodeExpandVolume(ctx context.Context, req *csi.NodeExpandVolumeRequest) (*csi.NodeExpandVolumeResponse, error)
 	NodeEnsureVolume(ctx context.Context, volumeId string, capacity int64, limit int64) error
+	// NodeEnsureExistingVolume must not allocate a replacement when the volume is missing.
+	NodeEnsureExistingVolume(ctx context.Context, volumeId string, capacity int64, limit int64) error
 	GetVolumeName(volumeId string) (string, error)
 	// NodeStage(ctx context.Context, req *csi.NodeStageVolumeRequest) (*csi.NodeStageVolumeResponse, error)
 	// NodeUnstage(ctx context.Context, req *csi.NodeUnstageVolumeRequest) (*csi.NodeUnstageVolumeResponse, error)
