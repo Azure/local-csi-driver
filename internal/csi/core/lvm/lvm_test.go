@@ -609,7 +609,7 @@ func TestEnsureVolume(t *testing.T) {
 			expectedErr: core.ErrOutOfRange,
 		},
 		{
-			name:     "unexpected oversized allocation is removed",
+			name:     "unexpected oversized allocation is preserved",
 			volumeId: "vg#lv",
 			request:  4 << 20,
 			limit:    4 << 20,
@@ -618,25 +618,9 @@ func TestEnsureVolume(t *testing.T) {
 					m.EXPECT().GetLogicalVolume(gomock.Any(), "vg", "lv").Return(nil, lvmMgr.ErrNotFound),
 					m.EXPECT().GetVolumeGroup(gomock.Any(), "vg").Return(testVg, nil),
 					m.EXPECT().CreateLogicalVolume(gomock.Any(), gomock.Any()).Return(int64(8<<20), nil),
-					m.EXPECT().RemoveLogicalVolume(gomock.Any(), lvmMgr.RemoveLVOptions{Name: "vg/lv"}).Return(nil),
 				)
 			},
 			expectedErr: core.ErrOutOfRange,
-		},
-		{
-			name:     "oversized allocation cleanup error is preserved",
-			volumeId: "vg#lv",
-			request:  4 << 20,
-			limit:    4 << 20,
-			expectLvm: func(m *lvmMgr.MockManager) {
-				gomock.InOrder(
-					m.EXPECT().GetLogicalVolume(gomock.Any(), "vg", "lv").Return(nil, lvmMgr.ErrNotFound),
-					m.EXPECT().GetVolumeGroup(gomock.Any(), "vg").Return(testVg, nil),
-					m.EXPECT().CreateLogicalVolume(gomock.Any(), gomock.Any()).Return(int64(8<<20), nil),
-					m.EXPECT().RemoveLogicalVolume(gomock.Any(), lvmMgr.RemoveLVOptions{Name: "vg/lv"}).Return(errTestInternal),
-				)
-			},
-			expectedErr: errTestInternal,
 		},
 		{
 			name:        "empty vg name",

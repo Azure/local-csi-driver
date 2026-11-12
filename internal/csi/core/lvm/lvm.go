@@ -618,11 +618,7 @@ func (l *LVM) EnsureVolume(ctx context.Context, volumeId string, capacity int64,
 	}
 
 	if limit > 0 && allocatedSize > limit {
-		rangeErr := fmt.Errorf("%w: allocated size %d exceeds capacity limit %d", core.ErrOutOfRange, allocatedSize, limit)
-		cleanupErr := l.lvm.RemoveLogicalVolume(ctx, lvm.RemoveLVOptions{
-			Name: id.VolumeGroup + "/" + id.LogicalVolume,
-		})
-		return 0, errors.Join(rangeErr, cleanupErr)
+		return 0, fmt.Errorf("%w: allocated size %d exceeds capacity limit %d", core.ErrOutOfRange, allocatedSize, limit)
 	}
 
 	if allocatedSize > capacity {
