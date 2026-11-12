@@ -15,7 +15,7 @@ permissions: {}
 jobs:
   verify:
     name: Verify MCR base image signatures
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
       contents: read
