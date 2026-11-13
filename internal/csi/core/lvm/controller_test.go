@@ -8,6 +8,7 @@ import (
 	"errors"
 	"reflect"
 	"testing"
+	"time"
 
 	"github.com/container-storage-interface/spec/lib/go/csi"
 	"go.uber.org/mock/gomock"
@@ -546,6 +547,34 @@ func TestAvailableCapacity(t *testing.T) {
 				t.Errorf("EnsureVolume() cap = %d, expectCap %d", cap, tt.expectedCap)
 			}
 		})
+	}
+}
+
+// TestAvailableCapacityStuck checks that a stuck lvm call is shared by the
+// retries, so they don't each start a new one.
+func TestAvailableCapacityStuck(t *testing.T) {
+	t.Parallel()
+	l, _, m, err := initTestLVM(gomock.NewController(t))
+	if err != nil {
+		t.Fatalf("failed to initialize LVM: %v", err)
+	}
+
+	// The lvm call doesn't return, like vgs on a disk that stopped answering.
+	stuck := make(chan struct{})
+	t.Cleanup(func() { close(stuck) })
+	m.EXPECT().GetVolumeGroup(gomock.Any(), testVolumeGroup).DoAndReturn(
+		func(context.Context, string) (*lvmMgr.VolumeGroup, error) {
+			<-stuck
+			return nil, errTestInternal
+		}).Times(1)
+
+	for i := range 5 {
+		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+		_, err := l.AvailableCapacity(ctx, testVolumeGroup)
+		cancel()
+		if !errors.Is(err, context.DeadlineExceeded) {
+			t.Errorf("call %d: AvailableCapacity() error = %v, want %v", i, err, context.DeadlineExceeded)
+		}
 	}
 }
 

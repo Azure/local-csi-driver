@@ -176,6 +176,13 @@ type LVM struct {
 	// volume group so that only one goroutine provisions it at a time.
 	vgGroup singleflight.Group
 
+	// capacityGroup runs at most one AvailableCapacity per volume group at a
+	// time. A disk that stops answering leaves lvm stuck in uninterruptible
+	// sleep, where the context can't kill it, so each GetCapacity retry would
+	// otherwise start one more stuck process until the driver runs out of
+	// memory.
+	capacityGroup singleflight.Group
+
 	// wipeSignal wakes the wipe reaper when a volume is quarantined.
 	//
 	// The channel is owned here rather than by the reaper so that the deletion
