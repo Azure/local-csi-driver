@@ -15,6 +15,60 @@ import (
 	lvmMgr "local-csi-driver/internal/pkg/lvm"
 )
 
+// TestRegressionExpandFilesystemRetry requests 64MiB -> 128MiB. The LV grows,
+// but filesystem growth fails; an identical retry now finds a 128MiB LV.
+// Bug: the retry returns success without retrying the unfinished filesystem growth.
+// Expected: finish growing the filesystem before reporting success.
+func TestRegressionExpandFilesystemRetry(t *testing.T) {
+	t.Parallel()
+
+	volumeManager, _, manager, err := initTestLVM(gomock.NewController(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	resizeErr := errors.New("filesystem growth failed after LV growth")
+	initialRead := manager.EXPECT().GetLogicalVolume(gomock.Any(), "containerstorage", "filesystem-retry").
+		Return(&lvmMgr.LogicalVolume{Name: "filesystem-retry", Size: 64 << 20}, nil)
+	failedExpansion := manager.EXPECT().ExtendLogicalVolume(gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, opts lvmMgr.ExtendLVOptions) error {
+			if !opts.ResizeFS {
+				t.Error("initial expansion must request filesystem growth")
+			}
+			return resizeErr
+		}).After(initialRead)
+	manager.EXPECT().GetLogicalVolume(gomock.Any(), "containerstorage", "filesystem-retry").
+		Return(&lvmMgr.LogicalVolume{Name: "filesystem-retry", Size: 128 << 20}, nil).
+		AnyTimes().After(failedExpansion)
+	failedRetry := manager.EXPECT().
+		ResizeLogicalVolumeFilesystem(gomock.Any(), "containerstorage/filesystem-retry", "/staging/filesystem-retry").
+		Return(resizeErr).After(failedExpansion)
+	manager.EXPECT().
+		ResizeLogicalVolumeFilesystem(gomock.Any(), "containerstorage/filesystem-retry", "/staging/filesystem-retry").
+		Return(nil).After(failedRetry)
+	request := &csi.NodeExpandVolumeRequest{
+		VolumeId:      "containerstorage#filesystem-retry",
+		VolumePath:    "/staging/filesystem-retry",
+		CapacityRange: &csi.CapacityRange{RequiredBytes: 128 << 20},
+		VolumeCapability: &csi.VolumeCapability{
+			AccessType: &csi.VolumeCapability_Mount{
+				Mount: &csi.VolumeCapability_MountVolume{FsType: "ext4"},
+			},
+			AccessMode: &csi.VolumeCapability_AccessMode{
+				Mode: csi.VolumeCapability_AccessMode_SINGLE_NODE_WRITER,
+			},
+		},
+	}
+	if _, err := volumeManager.NodeExpandVolume(t.Context(), request); !errors.Is(err, resizeErr) {
+		t.Fatalf("first expansion error = %v, want filesystem resize failure %v", err, resizeErr)
+	}
+	if _, err := volumeManager.NodeExpandVolume(t.Context(), request); !errors.Is(err, resizeErr) {
+		t.Fatalf("retry error = %v, want filesystem resize failure %v", err, resizeErr)
+	}
+	if _, err := volumeManager.NodeExpandVolume(t.Context(), request); err != nil {
+		t.Fatalf("retry with a healthy filesystem resizer failed: %v", err)
+	}
+}
+
 // TestNodeExpandVolume covers the size-comparison branches of
 // NodeExpandVolume. It exists primarily to catch the regression where the
 // `requested > current` case was unreachable (`>=` vs `==` typo) and
@@ -85,6 +139,24 @@ func TestNodeExpandVolume(t *testing.T) {
 			},
 			expectErr:   true,
 			expectErrIs: core.ErrVolumeNotFound,
+		},
+		{
+			name: "smaller mount request still completes filesystem growth without shrinking LV",
+			req: &csi.NodeExpandVolumeRequest{
+				VolumeId:      testVolumeID,
+				VolumePath:    "/staging/pv-test",
+				CapacityRange: &csi.CapacityRange{RequiredBytes: smallerSize},
+				VolumeCapability: &csi.VolumeCapability{
+					AccessType: &csi.VolumeCapability_Mount{Mount: &csi.VolumeCapability_MountVolume{}},
+				},
+			},
+			expectLvm: func(m *lvmMgr.MockManager) {
+				m.EXPECT().GetLogicalVolume(gomock.Any(), testVG, testLV).
+					Return(&lvmMgr.LogicalVolume{Name: testLV, Size: lvmMgr.Int64String(currentSize)}, nil)
+				m.EXPECT().ResizeLogicalVolumeFilesystem(gomock.Any(), expandLVName, "/staging/pv-test").Return(nil)
+			},
+			expectResp:     true,
+			expectCapacity: currentSize,
 		},
 		{
 			name: "requested less than current returns OK with actual size",

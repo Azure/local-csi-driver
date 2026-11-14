@@ -29,6 +29,7 @@ import (
 	"os"
 	"os/exec"
 	"os/user"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -41,6 +42,59 @@ var (
 	GiB = 1 << 30
 	MiB = 1 << 20
 )
+
+func TestResizeLogicalVolumeFilesystem(t *testing.T) {
+	tests := []struct {
+		name        string
+		format      string
+		exitCode    string
+		canceled    bool
+		wantCommand string
+		wantError   bool
+	}{
+		{name: "ext4 grows device", format: "ext4", wantCommand: "resize2fs\n/dev/vg/lv\n"},
+		{name: "xfs grows mounted filesystem", format: "xfs", wantCommand: "xfs_growfs\n-d\n/staging/lv\n"},
+		{name: "unformatted volume needs no filesystem growth"},
+		{name: "filesystem helper fails", format: "ext4", exitCode: "1", wantCommand: "resize2fs\n/dev/vg/lv\n", wantError: true},
+		{name: "unsupported filesystem", format: "unknown", wantError: true},
+		{name: "canceled request never invokes resize", format: "ext4", canceled: true, wantError: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			logPath := filepath.Join(dir, "resize.log")
+			t.Setenv("PATH", dir)
+			t.Setenv("RESIZE_LOG", logPath)
+			t.Setenv("TEST_FS", tt.format)
+			t.Setenv("TEST_EXIT", tt.exitCode)
+			for name, script := range map[string]string{
+				"blkid":      "[ -n \"$TEST_FS\" ] || exit 2\nprintf 'TYPE=%s\\n' \"$TEST_FS\"\n",
+				"resize2fs":  "printf '%s\\n' resize2fs \"$@\" > \"$RESIZE_LOG\"\nexit \"${TEST_EXIT:-0}\"\n",
+				"xfs_growfs": "printf '%s\\n' xfs_growfs \"$@\" > \"$RESIZE_LOG\"\nexit \"${TEST_EXIT:-0}\"\n",
+			} {
+				if err := os.WriteFile(filepath.Join(dir, name), []byte("#!/bin/sh\n"+script), 0o700); err != nil {
+					t.Fatal(err)
+				}
+			}
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			if tt.canceled {
+				cancel()
+			}
+			err := lvm.NewClient().ResizeLogicalVolumeFilesystem(ctx, "vg/lv", "/staging/lv")
+			if (err != nil) != tt.wantError {
+				t.Fatalf("ResizeLogicalVolumeFilesystem() error = %v, wantError %v", err, tt.wantError)
+			}
+			output, readErr := os.ReadFile(logPath)
+			if readErr != nil && !errors.Is(readErr, os.ErrNotExist) {
+				t.Fatal(readErr)
+			}
+			if string(output) != tt.wantCommand {
+				t.Errorf("resize command = %q, want %q", output, tt.wantCommand)
+			}
+		})
+	}
+}
 
 func TestClient(t *testing.T) { //nolint:gocyclo
 
