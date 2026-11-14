@@ -12,6 +12,7 @@ import (
 	"github.com/container-storage-interface/spec/lib/go/csi"
 	"go.uber.org/mock/gomock"
 
+	"local-csi-driver/internal/csi/core"
 	"local-csi-driver/internal/csi/core/lvm"
 	"local-csi-driver/internal/pkg/block"
 	lvmMgr "local-csi-driver/internal/pkg/lvm"
@@ -27,10 +28,11 @@ func TestLVM_Create(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name    string
-		req     *csi.CreateVolumeRequest
-		want    *csi.Volume
-		wantErr bool
+		name      string
+		req       *csi.CreateVolumeRequest
+		want      *csi.Volume
+		wantErr   bool
+		wantErrIs error
 	}{
 		{
 			name: "empty params",
@@ -166,6 +168,41 @@ func TestLVM_Create(t *testing.T) {
 				},
 			},
 			wantErr: false,
+		},
+		{
+			// Request exactly 1MiB; the fake rounds to 4MiB, exceeding the limit.
+			// Creation must reject the range rather than return an oversized volume.
+			name: "rounded allocation exceeds exact capacity limit",
+			req: &csi.CreateVolumeRequest{
+				Name:          "test-volume",
+				CapacityRange: &csi.CapacityRange{RequiredBytes: 1 << 20, LimitBytes: 1 << 20},
+				VolumeCapabilities: []*csi.VolumeCapability{{
+					AccessType: &csi.VolumeCapability_Block{Block: &csi.VolumeCapability_BlockVolume{}},
+				}},
+			},
+			wantErr:   true,
+			wantErrIs: core.ErrOutOfRange,
+		},
+		{
+			name: "rounded allocation equals capacity limit",
+			req: &csi.CreateVolumeRequest{
+				Name:          "test-volume",
+				CapacityRange: &csi.CapacityRange{RequiredBytes: 1 << 20, LimitBytes: 4 << 20},
+				VolumeCapabilities: []*csi.VolumeCapability{{
+					AccessType: &csi.VolumeCapability_Block{Block: &csi.VolumeCapability_BlockVolume{}},
+				}},
+			},
+			want: &csi.Volume{
+				VolumeId:      "containerstorage#test-volume",
+				CapacityBytes: 4 << 20,
+				VolumeContext: map[string]string{
+					lvm.CapacityParam: "4194304",
+					lvm.LimitParam:    "4194304",
+				},
+				AccessibleTopology: []*csi.Topology{{
+					Segments: map[string]string{lvm.TopologyKey: "nodename"},
+				}},
+			},
 		},
 		{
 			name: "with limit",
@@ -342,6 +379,9 @@ func TestLVM_Create(t *testing.T) {
 			if (err != nil) != tt.wantErr {
 				t.Errorf("LVM.Create() error = %v, wantErr %v", err, tt.wantErr)
 				return
+			}
+			if tt.wantErrIs != nil && !errors.Is(err, tt.wantErrIs) {
+				t.Errorf("LVM.Create() error = %v, want error wrapping %v", err, tt.wantErrIs)
 			}
 			if !reflect.DeepEqual(got, tt.want) {
 				t.Errorf("LVM.Create()\ngot:\n%v\nwant:\n%v", got, tt.want)

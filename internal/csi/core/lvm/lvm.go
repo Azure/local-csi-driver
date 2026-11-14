@@ -483,6 +483,22 @@ func (l *LVM) ensurePhysicalVolume(ctx context.Context, device string) (*lvm.Phy
 	return pv, nil
 }
 
+func checkCapacityLimit(capacity, limit int64, vg *lvm.VolumeGroup, stripes int64) error {
+	if limit == 0 {
+		return nil
+	}
+	if vg == nil || vg.ExtentSize <= 0 {
+		return fmt.Errorf("cannot check capacity limit without volume group extent size")
+	}
+	extentSize := int64(vg.ExtentSize)
+	stripes = max(1, stripes)
+	// Compare allocation units without overflowing when rounding up.
+	if (capacity-1)/extentSize/stripes+1 > limit/extentSize/stripes {
+		return fmt.Errorf("%w: allocation rounding exceeds capacity limit %d", core.ErrOutOfRange, limit)
+	}
+	return nil
+}
+
 // EnsureVolume ensures that the volume exists with the given name and size.
 // If the volume already exists, it returns it. Otherwise it creates the
 // volume and returns it.
@@ -507,12 +523,7 @@ func (l *LVM) EnsureVolume(ctx context.Context, volumeId string, capacity int64,
 
 	log = log.WithValues("vg", id.VolumeGroup, "lv", id.LogicalVolume)
 
-	if id.VolumeGroup == "" {
-		log.Error(fmt.Errorf("volume group name is required"), "vg", id.VolumeGroup)
-		span.SetStatus(codes.Error, "volume group name is required")
-		return 0, fmt.Errorf("%w: volume group name is required", core.ErrInvalidArgument)
-	}
-	if capacity <= 0 || limit < 0 || (limit > 0 && limit < capacity) {
+	if capacity <= 0 || (limit != 0 && limit < capacity) {
 		log.Error(fmt.Errorf("invalid capacity or limit"), "capacity", capacity, "limit", limit)
 		span.SetStatus(codes.Error, "invalid capacity or limit")
 		return 0, fmt.Errorf("%w: invalid capacity %d or limit %d", core.ErrInvalidArgument, capacity, limit)
@@ -576,6 +587,10 @@ func (l *LVM) EnsureVolume(ctx context.Context, volumeId string, capacity int64,
 			return 0, err
 		}
 	}
+	if err := checkCapacityLimit(capacity, limit, vg, int64(vg.PVCount)); err != nil {
+		return 0, err
+	}
+
 	// Provision the logical volume on the node.
 	createOps := lvm.CreateLVOptions{
 		Name:   id.LogicalVolume,
@@ -600,6 +615,10 @@ func (l *LVM) EnsureVolume(ctx context.Context, volumeId string, capacity int64,
 			return 0, fmt.Errorf("failed to create logical volume: %w", core.ErrResourceExhausted)
 		}
 		return 0, fmt.Errorf("failed to create logical volume: %w", err)
+	}
+
+	if limit > 0 && allocatedSize > limit {
+		return 0, fmt.Errorf("%w: allocated size %d exceeds capacity limit %d", core.ErrOutOfRange, allocatedSize, limit)
 	}
 
 	if allocatedSize > capacity {
