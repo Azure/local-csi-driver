@@ -34,7 +34,6 @@ LDFLAGS += -X local-csi-driver/internal/pkg/version.gitCommit=$(COMMIT_HASH)
 LDFLAGS += -X local-csi-driver/internal/pkg/version.buildDate=$(BUILD_DATE)
 
 # ENVTEST_K8S_VERSION refers to the version of kubebuilder assets to be downloaded by envtest binary.
-# Use envtest's external asset cache; Gremlins cannot copy its read-only directories.
 ENVTEST_K8S_VERSION = 1.33.0
 
 TEST_OUTPUT ?= $(shell pwd)/test.xml
@@ -111,7 +110,7 @@ vet: ## Run go vet against code.
 .PHONY: test
 test: envtest go-junit-report  ## Run tests and generate coverage report
 	$(eval TMP := $(shell mktemp -d))
-	KUBEBUILDER_ASSETS="$(shell $(ENVTEST) use $(ENVTEST_K8S_VERSION) -p path)" \
+	KUBEBUILDER_ASSETS="$(shell $(ENVTEST) use $(ENVTEST_K8S_VERSION) --bin-dir $(LOCALBIN) -p path)" \
 		go test -race -v -p 8 $$(go list ./... | grep -v -e /test/) -coverprofile $(TMP)/cover.out 2>&1 | \
 		$(GO_JUNIT_REPORT) -set-exit-code -iocopy -out $(TEST_OUTPUT)
 	@cat $(TMP)/cover.out | grep -v -E -f .covignore > $(TEST_COVER)
@@ -122,19 +121,13 @@ test-mutation: envtest gremlins ## Run mutation tests for internal packages (non
 		echo "Run mutation tests as a non-root user so privileged LVM tests remain skipped."; \
 		exit 1; \
 	fi
-	@mkdir -p "$(dir $(MUTATION_OUTPUT))" bin
-	# Stage current sources without ignored build assets; leave existing caches untouched.
-	# Run Git diffs relative to the requested scan directory for Gremlins' path matching.
-	assets="$$($(ENVTEST) use $(ENVTEST_K8S_VERSION) -p path)" || exit $$?; \
-	path="$$(realpath --relative-to="$(shell pwd)" "$(MUTATION_PATH)")" || exit $$?; \
-	case "$$path" in ..|../*) echo "MUTATION_PATH must be inside the repository."; exit 1;; esac; \
-	workdir="$(shell pwd)/bin/mutation-$$$$"; \
-	mkdir -m 700 "$$workdir" || exit $$?; \
-	trap 'rm -rf "$$workdir"' EXIT; \
-	tar --exclude='./bin' --exclude='./.git' --mode=u+rwX -cf - . | tar -xf - -C "$$workdir" || exit $$?; \
-	cd "$(shell pwd)/$$path" || exit $$?; \
+	@mkdir -p "$(dir $(MUTATION_OUTPUT))"
+	# Gremlins copies directory modes before their contents; make the envtest cache writable.
+	assets="$$($(ENVTEST) use $(ENVTEST_K8S_VERSION) --bin-dir "$(LOCALBIN)" -p path)"; \
+	if [ -d "$(LOCALBIN)/k8s" ]; then find "$(LOCALBIN)/k8s" -type d -exec chmod u+w {} +; fi; \
+	cd "$(MUTATION_PATH)"; \
 	GIT_CONFIG_PARAMETERS="$${GIT_CONFIG_PARAMETERS:+$${GIT_CONFIG_PARAMETERS} }'diff.relative=true'" \
-	KUBEBUILDER_ASSETS="$$assets" $(abspath $(GREMLINS)) unleash "$$workdir/$$path" \
+	KUBEBUILDER_ASSETS="$$assets" $(abspath $(GREMLINS)) unleash "$(abspath $(MUTATION_PATH))" \
 		--workers $(MUTATION_WORKERS) \
 		--exclude-files '(^|/)(mock[^/]*|fake[^/]*|[^/]*_mock)\.go$$' \
 		--output "$(abspath $(MUTATION_OUTPUT))" $(MUTATION_ARGS)
