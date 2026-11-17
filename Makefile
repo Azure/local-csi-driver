@@ -122,12 +122,22 @@ test-mutation: envtest gremlins ## Run mutation tests for internal packages (non
 		echo "Run mutation tests as a non-root user so privileged LVM tests remain skipped."; \
 		exit 1; \
 	fi
-	@mkdir -p "$(dir $(MUTATION_OUTPUT))"
+	@mkdir -p "$(dir $(MUTATION_OUTPUT))" bin
+	# Stage current sources without ignored build assets; leave existing caches untouched.
+	# Run Git diffs relative to the requested scan directory for Gremlins' path matching.
 	assets="$$($(ENVTEST) use $(ENVTEST_K8S_VERSION) -p path)" || exit $$?; \
-	KUBEBUILDER_ASSETS="$$assets" $(GREMLINS) unleash "$(MUTATION_PATH)" \
+	path="$$(realpath --relative-to="$(shell pwd)" "$(MUTATION_PATH)")" || exit $$?; \
+	case "$$path" in ..|../*) echo "MUTATION_PATH must be inside the repository."; exit 1;; esac; \
+	workdir="$(shell pwd)/bin/mutation-$$$$"; \
+	mkdir -m 700 "$$workdir" || exit $$?; \
+	trap 'rm -rf "$$workdir"' EXIT; \
+	tar --exclude='./bin' --exclude='./.git' --mode=u+rwX -cf - . | tar -xf - -C "$$workdir" || exit $$?; \
+	cd "$(shell pwd)/$$path" || exit $$?; \
+	GIT_CONFIG_PARAMETERS="$${GIT_CONFIG_PARAMETERS:+$${GIT_CONFIG_PARAMETERS} }'diff.relative=true'" \
+	KUBEBUILDER_ASSETS="$$assets" $(abspath $(GREMLINS)) unleash "$$workdir/$$path" \
 		--workers $(MUTATION_WORKERS) \
 		--exclude-files '(^|/)(mock[^/]*|fake[^/]*|[^/]*_mock)\.go$$' \
-		--output "$(MUTATION_OUTPUT)" $(MUTATION_ARGS)
+		--output "$(abspath $(MUTATION_OUTPUT))" $(MUTATION_ARGS)
 
 
 # The default setup assumes Kind is pre-installed and builds/loads the Docker
