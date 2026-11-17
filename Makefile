@@ -45,7 +45,7 @@ SUPPORT_BUNDLE_OUTPUT ?= $(SUPPORT_BUNDLE_OUTPUT_DIR)/support-bundle-$(shell dat
 TEST_TIMEOUT ?= 50m
 MUTATION_PATH ?= $(shell pwd)/internal
 MUTATION_OUTPUT ?= $(shell pwd)/bin/mutation-report.json
-MUTATION_WORKERS ?= 2
+MUTATION_WORKERS ?= 1
 MUTATION_ARGS ?=
 SCALE ?= 150
 # Flag determines how many times to repeat aks integration test
