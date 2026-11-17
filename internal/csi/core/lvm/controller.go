@@ -69,10 +69,7 @@ func (l *LVM) Create(ctx context.Context, req *csi.CreateVolumeRequest) (*csi.Vo
 	// Validate capacity.
 	capacity := req.GetCapacityRange().GetRequiredBytes()
 	limit := req.GetCapacityRange().GetLimitBytes()
-	if capacity == 0 && limit > 0 {
-		capacity = limit
-	}
-	if capacity == 0 {
+	if capacity == 0 && limit == 0 {
 		log.Info("invalid volume size, defaulting to 1G")
 		capacity = 1024 * 1024 * 1024 // 1 GiB
 	}

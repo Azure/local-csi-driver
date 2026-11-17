@@ -184,6 +184,15 @@ func TestLVM_Create(t *testing.T) {
 			wantErrIs: core.ErrOutOfRange,
 		},
 		{
+			name: "limit-only request cannot fit one extent",
+			req: &csi.CreateVolumeRequest{
+				Name:          "test-volume",
+				CapacityRange: &csi.CapacityRange{LimitBytes: 2 << 20},
+			},
+			wantErr:   true,
+			wantErrIs: core.ErrOutOfRange,
+		},
+		{
 			name: "rounded allocation equals capacity limit",
 			req: &csi.CreateVolumeRequest{
 				Name:          "test-volume",
@@ -385,6 +394,55 @@ func TestLVM_Create(t *testing.T) {
 			}
 			if !reflect.DeepEqual(got, tt.want) {
 				t.Errorf("LVM.Create()\ngot:\n%v\nwant:\n%v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestLVM_CreateLimitOnly(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		pvCount int
+		limit   int64
+		want    int64
+	}{
+		{name: "unaligned linear limit", pvCount: 1, limit: 6 << 20, want: 4 << 20},
+		{name: "unaligned striped limit", pvCount: 2, limit: 10 << 20, want: 8 << 20},
+		{name: "aligned striped limit", pvCount: 2, limit: 16 << 20, want: 16 << 20},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			manager := lvmMgr.NewFake()
+			manager.VGs[lvm.DefaultVolumeGroup] = lvmMgr.VolumeGroup{
+				Name:       lvm.DefaultVolumeGroup,
+				ExtentSize: 4 << 20,
+				PVCount:    lvmMgr.IntString(tt.pvCount),
+			}
+			driver, err := lvm.New("podname", "nodename", "default", true,
+				probe.NewFake(nil, nil), manager, telemetry.NewNoopTracerProvider())
+			if err != nil {
+				t.Fatal(err)
+			}
+			req := &csi.CreateVolumeRequest{
+				Name:          "limit-only",
+				CapacityRange: &csi.CapacityRange{LimitBytes: tt.limit},
+			}
+			first, err := driver.Create(t.Context(), req)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if first.CapacityBytes != tt.want {
+				t.Fatalf("capacity = %d, want %d", first.CapacityBytes, tt.want)
+			}
+			retry, err := driver.Create(t.Context(), req)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !reflect.DeepEqual(retry, first) || len(manager.LVs) != 1 {
+				t.Fatalf("retry changed volume: first %v, retry %v, LVs %v", first, retry, manager.LVs)
 			}
 		})
 	}

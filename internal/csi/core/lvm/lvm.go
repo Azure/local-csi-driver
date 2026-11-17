@@ -523,7 +523,7 @@ func (l *LVM) EnsureVolume(ctx context.Context, volumeId string, capacity int64,
 
 	log = log.WithValues("vg", id.VolumeGroup, "lv", id.LogicalVolume)
 
-	if capacity <= 0 || (limit != 0 && limit < capacity) {
+	if capacity < 0 || (capacity == 0 && limit == 0) || (limit != 0 && limit < capacity) {
 		log.Error(fmt.Errorf("invalid capacity or limit"), "capacity", capacity, "limit", limit)
 		span.SetStatus(codes.Error, "invalid capacity or limit")
 		return 0, fmt.Errorf("%w: invalid capacity %d or limit %d", core.ErrInvalidArgument, capacity, limit)
@@ -587,8 +587,14 @@ func (l *LVM) EnsureVolume(ctx context.Context, volumeId string, capacity int64,
 			return 0, err
 		}
 	}
-	if err := checkCapacityLimit(capacity, limit, vg, int64(vg.PVCount)); err != nil {
+	stripes := max(1, int64(vg.PVCount))
+	if err := checkCapacityLimit(max(1, capacity), limit, vg, stripes); err != nil {
 		return 0, err
+	}
+	if capacity == 0 {
+		// With no lower bound, choose the largest allocation within the limit.
+		extentSize := int64(vg.ExtentSize)
+		capacity = limit / extentSize / stripes * extentSize * stripes
 	}
 
 	// Provision the logical volume on the node.
