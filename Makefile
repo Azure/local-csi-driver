@@ -34,6 +34,7 @@ LDFLAGS += -X local-csi-driver/internal/pkg/version.gitCommit=$(COMMIT_HASH)
 LDFLAGS += -X local-csi-driver/internal/pkg/version.buildDate=$(BUILD_DATE)
 
 # ENVTEST_K8S_VERSION refers to the version of kubebuilder assets to be downloaded by envtest binary.
+# Use envtest's external asset cache; Gremlins cannot copy its read-only directories.
 ENVTEST_K8S_VERSION = 1.33.0
 
 TEST_OUTPUT ?= $(shell pwd)/test.xml
@@ -110,7 +111,7 @@ vet: ## Run go vet against code.
 .PHONY: test
 test: envtest go-junit-report  ## Run tests and generate coverage report
 	$(eval TMP := $(shell mktemp -d))
-	KUBEBUILDER_ASSETS="$(shell $(ENVTEST) use $(ENVTEST_K8S_VERSION) --bin-dir $(LOCALBIN) -p path)" \
+	KUBEBUILDER_ASSETS="$(shell $(ENVTEST) use $(ENVTEST_K8S_VERSION) -p path)" \
 		go test -race -v -p 8 $$(go list ./... | grep -v -e /test/) -coverprofile $(TMP)/cover.out 2>&1 | \
 		$(GO_JUNIT_REPORT) -set-exit-code -iocopy -out $(TEST_OUTPUT)
 	@cat $(TMP)/cover.out | grep -v -E -f .covignore > $(TEST_COVER)
@@ -122,7 +123,7 @@ test-mutation: envtest gremlins ## Run mutation tests for internal packages (non
 		exit 1; \
 	fi
 	@mkdir -p "$(dir $(MUTATION_OUTPUT))"
-	assets="$$($(ENVTEST) use $(ENVTEST_K8S_VERSION) --bin-dir $(LOCALBIN) -p path)" || exit $$?; \
+	assets="$$($(ENVTEST) use $(ENVTEST_K8S_VERSION) -p path)" || exit $$?; \
 	KUBEBUILDER_ASSETS="$$assets" $(GREMLINS) unleash "$(MUTATION_PATH)" \
 		--workers $(MUTATION_WORKERS) \
 		--exclude-files '(^|/)(mock[^/]*|fake[^/]*|[^/]*_mock)\.go$$' \
