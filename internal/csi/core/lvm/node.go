@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 
 	"github.com/container-storage-interface/spec/lib/go/csi"
 	"go.opentelemetry.io/otel/codes"
@@ -87,16 +88,17 @@ func (l *LVM) NodeExpandVolume(ctx context.Context, req *csi.NodeExpandVolumeReq
 		Name: fmt.Sprintf("%s/%s", id.VolumeGroup, id.LogicalVolume),
 		Size: capacityRequest.String(),
 	}
-
-	if req.GetVolumeCapability() != nil {
-		if _, ok := req.GetVolumeCapability().GetAccessType().(*csi.VolumeCapability_Mount); ok {
-			// only pass ResizeFS config if the volume mode is Filesystem, otherwise
-			// the resize operation will fail.
-			extendOps.ResizeFS = true
-		}
+	extendOps.ResizeFS, err = expansionUsesFilesystem(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to determine volume access type: %w", err)
 	}
 
 	if capacityRequest.CmpInt64(int64(lv.Size)) <= 0 {
+		if extendOps.ResizeFS {
+			if err := l.resizeFilesystemForExpansion(ctx, req, extendOps.Name, int64(lv.Size)); err != nil {
+				return nil, err
+			}
+		}
 		span.SetStatus(codes.Ok, "volume is already at or above the requested size")
 		return &csi.NodeExpandVolumeResponse{
 			CapacityBytes: int64(lv.Size),
@@ -126,6 +128,31 @@ func (l *LVM) NodeExpandVolume(ctx context.Context, req *csi.NodeExpandVolumeReq
 	return &csi.NodeExpandVolumeResponse{
 		CapacityBytes: actualSize,
 	}, nil
+}
+
+func expansionUsesFilesystem(req *csi.NodeExpandVolumeRequest) (bool, error) {
+	if capability := req.GetVolumeCapability(); capability != nil {
+		return capability.GetMount() != nil, nil
+	}
+	info, err := os.Stat(req.GetVolumePath())
+	if err != nil {
+		return false, err
+	}
+	return info.IsDir(), nil
+}
+
+func (l *LVM) resizeFilesystemForExpansion(ctx context.Context, req *csi.NodeExpandVolumeRequest, name string, size int64) error {
+	if limit := req.GetCapacityRange().GetLimitBytes(); limit > 0 && size > limit {
+		return fmt.Errorf("%w: logical volume size %d exceeds limit %d", core.ErrOutOfRange, size, limit)
+	}
+	volumePath := req.GetStagingTargetPath()
+	if volumePath == "" {
+		volumePath = req.GetVolumePath()
+	}
+	if err := l.lvm.ResizeLogicalVolumeFilesystem(ctx, name, volumePath); err != nil {
+		return fmt.Errorf("failed to resize filesystem: %w", err)
+	}
+	return nil
 }
 
 // NodeEnsureVolume ensures that the volume exists on the node.

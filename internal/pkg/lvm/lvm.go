@@ -35,6 +35,9 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
+	"golang.org/x/sys/unix"
+	"k8s.io/mount-utils"
+	utilexec "k8s.io/utils/exec"
 
 	"local-csi-driver/internal/pkg/block"
 	"local-csi-driver/internal/pkg/telemetry"
@@ -829,6 +832,52 @@ func (c *Client) ExtendLogicalVolume(ctx context.Context, opts ExtendLVOptions) 
 		return getErrorType(err)
 	}
 	return nil
+}
+
+// ResizeLogicalVolumeFilesystem retries filesystem growth after LV growth has completed.
+func (c *Client) ResizeLogicalVolumeFilesystem(ctx context.Context, name, volumePath string) error {
+	return resizeFilesystem("/dev/"+name, volumePath, contextExec{Interface: utilexec.New(), ctx: ctx}, unix.Stat)
+}
+
+func resizeFilesystem(devicePath, volumePath string, exec utilexec.Interface, stat func(string, *unix.Stat_t) error) error {
+	if err := checkFilesystemDevice(devicePath, volumePath, stat); err != nil {
+		return err
+	}
+	resized, err := mount.NewResizeFs(exec).Resize(devicePath, volumePath)
+	if err != nil {
+		return err
+	}
+	if !resized {
+		return fmt.Errorf("no filesystem identified on mounted device %s", devicePath)
+	}
+	return nil
+}
+
+func checkFilesystemDevice(devicePath, volumePath string, stat func(string, *unix.Stat_t) error) error {
+	var device, mounted unix.Stat_t
+	if err := stat(devicePath, &device); err != nil {
+		return fmt.Errorf("failed to stat device %s: %w", devicePath, err)
+	}
+	if device.Mode&unix.S_IFMT != unix.S_IFBLK {
+		return fmt.Errorf("%s is not a block device", devicePath)
+	}
+	if err := stat(volumePath, &mounted); err != nil {
+		return fmt.Errorf("failed to stat filesystem path %s: %w", volumePath, err)
+	}
+	// st_dev is preserved across bind mounts, unlike the textual mount source.
+	if mounted.Dev != device.Rdev {
+		return fmt.Errorf("filesystem path %s is not backed by %s", volumePath, devicePath)
+	}
+	return nil
+}
+
+type contextExec struct {
+	utilexec.Interface
+	ctx context.Context
+}
+
+func (e contextExec) Command(cmd string, args ...string) utilexec.Cmd {
+	return e.CommandContext(e.ctx, cmd, args...)
 }
 
 // Reduce the size of a logical volume.

@@ -42,6 +42,16 @@ var (
 	MiB = 1 << 20
 )
 
+func TestResizeLogicalVolumeFilesystemMissingDevice(t *testing.T) {
+	t.Parallel()
+
+	name := "missing-volume-" + strings.ReplaceAll(t.Name(), "/", "-")
+	err := lvm.NewClient().ResizeLogicalVolumeFilesystem(t.Context(), name, t.TempDir())
+	if !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("missing device error = %v, want os.ErrNotExist", err)
+	}
+}
+
 func TestClient(t *testing.T) { //nolint:gocyclo
 
 	// Can run only as root

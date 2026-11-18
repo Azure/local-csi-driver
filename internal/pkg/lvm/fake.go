@@ -248,6 +248,10 @@ func (f *Fake) ExtendLogicalVolume(ctx context.Context, opts ExtendLVOptions) er
 	return nil
 }
 
+func (f *Fake) ResizeLogicalVolumeFilesystem(ctx context.Context, name, volumePath string) error {
+	return f.Err
+}
+
 // IsLogicalVolumeCorrupted always returns false for the fake implementation.
 func (f *Fake) IsLogicalVolumeCorrupted(ctx context.Context, vgName string, lvName string) (bool, error) {
 	if f.Err != nil {
