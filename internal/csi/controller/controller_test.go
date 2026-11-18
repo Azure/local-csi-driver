@@ -387,6 +387,29 @@ func TestServer_CreateVolume(t *testing.T) {
 			errCode: codes.ResourceExhausted,
 		},
 		{
+			name: "server allocation exceeds upper capacity limit",
+			pre: func() {
+				server.volume.(*core.Fake).Err = fmt.Errorf("allocation rounding: %w", core.ErrOutOfRange)
+			},
+			req: &csi.CreateVolumeRequest{
+				Name: "test-volume",
+				VolumeCapabilities: []*csi.VolumeCapability{{
+					AccessMode: &csi.VolumeCapability_AccessMode{
+						Mode: csi.VolumeCapability_AccessMode_SINGLE_NODE_WRITER,
+					},
+					AccessType: &csi.VolumeCapability_Mount{
+						Mount: &csi.VolumeCapability_MountVolume{},
+					},
+				}},
+				Parameters: map[string]string{
+					core.PVCNameParam:      "test-pvc",
+					core.PVCNamespaceParam: "test-namespace",
+				},
+			},
+			wantErr: true,
+			errCode: codes.OutOfRange,
+		},
+		{
 			name: "server already exists failed",
 			pre: func() {
 				server.volume.(*core.Fake).Err = core.ErrVolumeSizeMismatch

@@ -72,7 +72,8 @@ func (f *Fake) GetPhysicalVolume(ctx context.Context, pvName string) (*PhysicalV
 // CreateVolumeGroup Creates a VG on the PVs.
 func (f *Fake) CreateVolumeGroup(ctx context.Context, opts CreateVGOptions) error {
 	vg := VolumeGroup{
-		Name: opts.Name,
+		Name:       opts.Name,
+		ExtentSize: 4 << 20,
 	}
 	f.VGs[opts.Name] = vg
 	return nil
@@ -129,7 +130,7 @@ func (f *Fake) CreateLogicalVolume(ctx context.Context, opts CreateLVOptions) (i
 
 // RemoveLogicalVolume removes a LV from a VG.
 func (f *Fake) RemoveLogicalVolume(ctx context.Context, opts RemoveLVOptions) error {
-	delete(f.LVs, opts.Name)
+	delete(f.LVs, fakeLVKey(opts.Name))
 	return nil
 }
 

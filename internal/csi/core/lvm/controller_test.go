@@ -12,6 +12,7 @@ import (
 	"github.com/container-storage-interface/spec/lib/go/csi"
 	"go.uber.org/mock/gomock"
 
+	"local-csi-driver/internal/csi/core"
 	"local-csi-driver/internal/csi/core/lvm"
 	"local-csi-driver/internal/pkg/block"
 	lvmMgr "local-csi-driver/internal/pkg/lvm"
@@ -27,10 +28,11 @@ func TestLVM_Create(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name    string
-		req     *csi.CreateVolumeRequest
-		want    *csi.Volume
-		wantErr bool
+		name      string
+		req       *csi.CreateVolumeRequest
+		want      *csi.Volume
+		wantErr   bool
+		wantErrIs error
 	}{
 		{
 			name: "empty params",
@@ -166,6 +168,50 @@ func TestLVM_Create(t *testing.T) {
 				},
 			},
 			wantErr: false,
+		},
+		{
+			// Request exactly 1MiB; the fake rounds to 4MiB, exceeding the limit.
+			// Creation must reject the range rather than return an oversized volume.
+			name: "rounded allocation exceeds exact capacity limit",
+			req: &csi.CreateVolumeRequest{
+				Name:          "test-volume",
+				CapacityRange: &csi.CapacityRange{RequiredBytes: 1 << 20, LimitBytes: 1 << 20},
+				VolumeCapabilities: []*csi.VolumeCapability{{
+					AccessType: &csi.VolumeCapability_Block{Block: &csi.VolumeCapability_BlockVolume{}},
+				}},
+			},
+			wantErr:   true,
+			wantErrIs: core.ErrOutOfRange,
+		},
+		{
+			name: "limit-only request cannot fit one extent",
+			req: &csi.CreateVolumeRequest{
+				Name:          "test-volume",
+				CapacityRange: &csi.CapacityRange{LimitBytes: 2 << 20},
+			},
+			wantErr:   true,
+			wantErrIs: core.ErrOutOfRange,
+		},
+		{
+			name: "rounded allocation equals capacity limit",
+			req: &csi.CreateVolumeRequest{
+				Name:          "test-volume",
+				CapacityRange: &csi.CapacityRange{RequiredBytes: 1 << 20, LimitBytes: 4 << 20},
+				VolumeCapabilities: []*csi.VolumeCapability{{
+					AccessType: &csi.VolumeCapability_Block{Block: &csi.VolumeCapability_BlockVolume{}},
+				}},
+			},
+			want: &csi.Volume{
+				VolumeId:      "containerstorage#test-volume",
+				CapacityBytes: 4 << 20,
+				VolumeContext: map[string]string{
+					lvm.CapacityParam: "4194304",
+					lvm.LimitParam:    "4194304",
+				},
+				AccessibleTopology: []*csi.Topology{{
+					Segments: map[string]string{lvm.TopologyKey: "nodename"},
+				}},
+			},
 		},
 		{
 			name: "with limit",
@@ -343,8 +389,60 @@ func TestLVM_Create(t *testing.T) {
 				t.Errorf("LVM.Create() error = %v, wantErr %v", err, tt.wantErr)
 				return
 			}
+			if tt.wantErrIs != nil && !errors.Is(err, tt.wantErrIs) {
+				t.Errorf("LVM.Create() error = %v, want error wrapping %v", err, tt.wantErrIs)
+			}
 			if !reflect.DeepEqual(got, tt.want) {
 				t.Errorf("LVM.Create()\ngot:\n%v\nwant:\n%v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestLVM_CreateLimitOnly(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		pvCount int
+		limit   int64
+		want    int64
+	}{
+		{name: "unaligned linear limit", pvCount: 1, limit: 6 << 20, want: 4 << 20},
+		{name: "unaligned striped limit", pvCount: 2, limit: 10 << 20, want: 8 << 20},
+		{name: "aligned striped limit", pvCount: 2, limit: 16 << 20, want: 16 << 20},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			manager := lvmMgr.NewFake()
+			manager.VGs[lvm.DefaultVolumeGroup] = lvmMgr.VolumeGroup{
+				Name:       lvm.DefaultVolumeGroup,
+				ExtentSize: 4 << 20,
+				PVCount:    lvmMgr.IntString(tt.pvCount),
+			}
+			driver, err := lvm.New("podname", "nodename", "default", true,
+				probe.NewFake(nil, nil), manager, telemetry.NewNoopTracerProvider())
+			if err != nil {
+				t.Fatal(err)
+			}
+			req := &csi.CreateVolumeRequest{
+				Name:          "limit-only",
+				CapacityRange: &csi.CapacityRange{LimitBytes: tt.limit},
+			}
+			first, err := driver.Create(t.Context(), req)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if first.CapacityBytes != tt.want {
+				t.Fatalf("capacity = %d, want %d", first.CapacityBytes, tt.want)
+			}
+			retry, err := driver.Create(t.Context(), req)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !reflect.DeepEqual(retry, first) || len(manager.LVs) != 1 {
+				t.Fatalf("retry changed volume: first %v, retry %v, LVs %v", first, retry, manager.LVs)
 			}
 		})
 	}

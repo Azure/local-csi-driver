@@ -548,9 +548,26 @@ func TestEnsureVolumeGroupConcurrent(t *testing.T) {
 	}
 }
 
+func TestEnsureVolumeWithoutExtentSize(t *testing.T) {
+	t.Parallel()
+
+	l, _, manager, err := initTestLVM(gomock.NewController(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	manager.EXPECT().GetLogicalVolume(gomock.Any(), "vg", "lv").Return(nil, lvmMgr.ErrNotFound)
+	manager.EXPECT().GetVolumeGroup(gomock.Any(), "vg").Return(&lvmMgr.VolumeGroup{Name: "vg"}, nil)
+
+	// Missing extent metadata must fail before allocation, not divide by zero.
+	_, err = l.EnsureVolume(t.Context(), "vg#lv", 1<<20, 4<<20, true)
+	if err == nil || err.Error() != "cannot check capacity limit without volume group extent size" {
+		t.Fatalf("EnsureVolume() error = %v, want missing extent size error", err)
+	}
+}
+
 func TestEnsureVolume(t *testing.T) {
 	t.Parallel()
-	testVg := &lvmMgr.VolumeGroup{Name: "vg"}
+	testVg := &lvmMgr.VolumeGroup{Name: "vg", ExtentSize: 4 << 20}
 	// Use bytes for size: 1024MiB == 1073741824 bytes
 	testLv1GiB := &lvmMgr.LogicalVolume{Name: "lv", Size: lvmMgr.Int64String(convert.MiBToBytes(1024))}
 	testLv2GiB := &lvmMgr.LogicalVolume{Name: "lv", Size: lvmMgr.Int64String(convert.MiBToBytes(2048))}
@@ -565,6 +582,46 @@ func TestEnsureVolume(t *testing.T) {
 		expectProbe func(*probe.Mock)
 		expectedErr error
 	}{
+		{
+			name:     "striped allocation fits exact upper limit",
+			volumeId: "vg#lv",
+			request:  8 << 20,
+			limit:    8 << 20,
+			expectLvm: func(m *lvmMgr.MockManager) {
+				m.EXPECT().GetLogicalVolume(gomock.Any(), "vg", "lv").Return(nil, lvmMgr.ErrNotFound)
+				m.EXPECT().GetVolumeGroup(gomock.Any(), "vg").
+					Return(&lvmMgr.VolumeGroup{Name: "vg", ExtentSize: 4 << 20, PVCount: 2}, nil)
+				m.EXPECT().CreateLogicalVolume(gomock.Any(), lvmMgr.CreateLVOptions{
+					Name: "lv", VGName: "vg", Size: "8388608B", Type: "raid0", Stripes: new(2),
+				}).Return(int64(8<<20), nil)
+			},
+		},
+		{
+			name:     "striped allocation cannot fit upper limit",
+			volumeId: "vg#lv",
+			request:  5 << 20,
+			limit:    6 << 20,
+			expectLvm: func(m *lvmMgr.MockManager) {
+				m.EXPECT().GetLogicalVolume(gomock.Any(), "vg", "lv").Return(nil, lvmMgr.ErrNotFound)
+				m.EXPECT().GetVolumeGroup(gomock.Any(), "vg").
+					Return(&lvmMgr.VolumeGroup{Name: "vg", ExtentSize: 4 << 20, PVCount: 2}, nil)
+			},
+			expectedErr: core.ErrOutOfRange,
+		},
+		{
+			name:     "unexpected oversized allocation is preserved",
+			volumeId: "vg#lv",
+			request:  4 << 20,
+			limit:    4 << 20,
+			expectLvm: func(m *lvmMgr.MockManager) {
+				gomock.InOrder(
+					m.EXPECT().GetLogicalVolume(gomock.Any(), "vg", "lv").Return(nil, lvmMgr.ErrNotFound),
+					m.EXPECT().GetVolumeGroup(gomock.Any(), "vg").Return(testVg, nil),
+					m.EXPECT().CreateLogicalVolume(gomock.Any(), gomock.Any()).Return(int64(8<<20), nil),
+				)
+			},
+			expectedErr: core.ErrOutOfRange,
+		},
 		{
 			name:        "empty vg name",
 			volumeId:    "lv",
