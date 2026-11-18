@@ -219,6 +219,7 @@ func (r *PVCleanupReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	}
 
 	return ctrl.NewControllerManagedBy(mgr).
+		//lazyinformer:ignore PV cleanup reconciles on release and finalizer changes.
 		For(&corev1.PersistentVolume{}).
 		WithEventFilter(pvPredicate).
 		Complete(r)

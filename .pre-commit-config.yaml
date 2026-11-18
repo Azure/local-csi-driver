@@ -52,6 +52,12 @@ repos:
       args: [--verbose, --config, .markdown-links-config.json]
 - repo: local
   hooks:
+  - id: driverlint
+    name: Check driver-specific Go rules
+    entry: go run ./cmd/driverlint ./cmd/... ./internal/...
+    language: system
+    files: '(\.go$|^go\.(mod|sum)$|^\.pre-commit-config\.yaml$)'
+    pass_filenames: false
   - id: bicep-lint
     name: bicep file linter
     entry: make bicep-lint

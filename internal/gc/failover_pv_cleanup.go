@@ -212,6 +212,7 @@ func (r *PVFailoverReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	}
 
 	return ctrl.NewControllerManagedBy(mgr).
+		//lazyinformer:ignore Failover cleanup reconciles on PV node assignment changes.
 		For(&corev1.PersistentVolume{}).
 		WithEventFilter(driverPredicate).
 		Complete(r)

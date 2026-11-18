@@ -85,6 +85,7 @@ func (l *LVM) NodeExpandVolume(ctx context.Context, req *csi.NodeExpandVolumeReq
 	// TODO: use default volume group name for now
 	extendOps := lvm.ExtendLVOptions{
 		Name: fmt.Sprintf("%s/%s", id.VolumeGroup, id.LogicalVolume),
+		//lvmsize:ignore Existing unitless expansion path is fixed in PR #711.
 		Size: capacityRequest.String(),
 	}
 

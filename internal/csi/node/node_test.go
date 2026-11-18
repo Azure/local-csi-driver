@@ -192,6 +192,64 @@ func TestMain(m *testing.M) {
 	_ = m.Run()
 }
 
+type missingDevice struct {
+	core.NodeInterface
+}
+
+func (missingDevice) GetNodeDevicePath(string) (string, error) {
+	return "", core.ErrVolumeNotFound
+}
+
+func TestNodeDevicePathErrorStatus(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "volume")
+	ns := initTestNodeServer(t, gomock.NewController(t))
+	ns.volume = missingDevice{ns.volume}
+	m := ns.mounter.(*mounter.MockMounter)
+	m.EXPECT().IsLikelyNotMountPoint(dir).Return(true, nil)
+	m.EXPECT().FileExists(path).Return(true, nil)
+	m.EXPECT().IsLikelyNotMountPoint(path).Return(true, nil)
+
+	access := &csi.VolumeCapability_AccessMode{Mode: csi.VolumeCapability_AccessMode_SINGLE_NODE_SINGLE_WRITER}
+	_, err := ns.NodePublishVolume(ctx, &csi.NodePublishVolumeRequest{
+		VolumeId: testVolumeID, StagingTargetPath: dir, TargetPath: path,
+		VolumeCapability: &csi.VolumeCapability{
+			AccessMode: access,
+			AccessType: &csi.VolumeCapability_Block{Block: &csi.VolumeCapability_BlockVolume{}},
+		},
+	})
+	if status.Code(err) != codes.NotFound {
+		t.Errorf("NodePublishVolume() error = %v, want NotFound", err)
+	}
+
+	_, err = ns.NodeStageVolume(ctx, &csi.NodeStageVolumeRequest{
+		VolumeId: testVolumeID, StagingTargetPath: path,
+		VolumeCapability: &csi.VolumeCapability{
+			AccessMode: access,
+			AccessType: &csi.VolumeCapability_Mount{Mount: &csi.VolumeCapability_MountVolume{}},
+		},
+	})
+	if status.Code(err) != codes.NotFound {
+		t.Errorf("NodeStageVolume() error = %v, want NotFound", err)
+	}
+}
+
+func TestNodeGetVolumeStatsStatFSErrorStatus(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "missing")
+	ns := initTestNodeServer(t, gomock.NewController(t))
+	m := ns.mounter.(*mounter.MockMounter)
+	m.EXPECT().PathExists(path).Return(true, nil)
+	m.EXPECT().PathIsDevice(path).Return(false, nil)
+
+	_, err := ns.NodeGetVolumeStats(context.Background(), &csi.NodeGetVolumeStatsRequest{
+		VolumeId: testVolumeID, VolumePath: path,
+	})
+	if status.Code(err) != codes.Internal {
+		t.Errorf("NodeGetVolumeStats() error = %v, want Internal", err)
+	}
+}
+
 func TestNodePublishVolume(t *testing.T) {
 	if runtime.GOOS == "darwin" || runtime.GOOS == "windows" {
 		t.Skipf("not supported on GOOS=%s", runtime.GOOS)

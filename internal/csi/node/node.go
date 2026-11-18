@@ -136,7 +136,7 @@ func (ns *Server) NodePublishVolume(ctx context.Context, req *csi.NodePublishVol
 		if err != nil {
 			span.SetStatus(otcodes.Error, "failed to get node device path")
 			span.RecordError(err)
-			return nil, err
+			return nil, fromVolumeError(err)
 		}
 	case *csi.VolumeCapability_Mount:
 		mnt, err := ns.EnsureMount(targetPath)
@@ -272,7 +272,7 @@ func (ns *Server) NodeGetVolumeStats(ctx context.Context, req *csi.NodeGetVolume
 	if err != nil {
 		span.SetStatus(otcodes.Error, "failed to get volume metrics")
 		span.RecordError(err)
-		return nil, err
+		return nil, status.Error(codes.Internal, err.Error())
 	}
 
 	available, ok := volumeMetrics.Available.AsInt64()
@@ -465,7 +465,7 @@ func (ns *Server) NodeStageVolume(ctx context.Context, req *csi.NodeStageVolumeR
 	source, err := ns.volume.GetNodeDevicePath(volumeID)
 	if err != nil {
 		span.SetStatus(otcodes.Error, "failed to get node device path")
-		return nil, err
+		return nil, fromVolumeError(err)
 	}
 
 	formatOptions := []string{}
