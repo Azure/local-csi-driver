@@ -82,6 +82,34 @@ func TestLVMOrphanScanner_shouldCleanupVolume(t *testing.T) {
 			expectedReason:        "",
 		},
 		{
+			name:     "empty selected-node annotation falls back to initial owner",
+			volumeID: "containerstorage#empty-selected-node",
+			existingPVs: []*corev1.PersistentVolume{
+				{
+					ObjectMeta: metav1.ObjectMeta{
+						Name: "empty-selected-node-pv",
+						Annotations: map[string]string{
+							"localdisk.csi.acstor.io/selected-node": "",
+						},
+					},
+					Spec: corev1.PersistentVolumeSpec{
+						PersistentVolumeSource: corev1.PersistentVolumeSource{
+							CSI: &corev1.CSIPersistentVolumeSource{
+								Driver:       lvm.DriverName,
+								VolumeHandle: "containerstorage#empty-selected-node",
+								VolumeAttributes: map[string]string{
+									"localdisk.csi.acstor.io/selected-initial-node": "node1",
+								},
+							},
+						},
+					},
+				},
+			},
+			nodeID:                "node1",
+			expectedShouldCleanup: false,
+			expectedReason:        "",
+		},
+		{
 			name:     "volume with PV but wrong selected node annotation",
 			volumeID: "containerstorage#mismatched-volume",
 			existingPVs: []*corev1.PersistentVolume{

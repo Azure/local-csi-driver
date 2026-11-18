@@ -86,6 +86,50 @@ func TestHasNodeAnnotationMismatch(t *testing.T) {
 			expected: true,
 		},
 		{
+			name: "empty selected node falls back to matching initial node",
+			pv: &corev1.PersistentVolume{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "test-pv",
+					Annotations: map[string]string{
+						"localdisk.csi.acstor.io/selected-node": "",
+					},
+				},
+				Spec: corev1.PersistentVolumeSpec{
+					PersistentVolumeSource: corev1.PersistentVolumeSource{
+						CSI: &corev1.CSIPersistentVolumeSource{
+							Driver: lvm.DriverName,
+							VolumeAttributes: map[string]string{
+								"localdisk.csi.acstor.io/selected-initial-node": "node1",
+							},
+						},
+					},
+				},
+			},
+			expected: false,
+		},
+		{
+			name: "empty selected node detects mismatched initial node",
+			pv: &corev1.PersistentVolume{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "test-pv",
+					Annotations: map[string]string{
+						"localdisk.csi.acstor.io/selected-node": "",
+					},
+				},
+				Spec: corev1.PersistentVolumeSpec{
+					PersistentVolumeSource: corev1.PersistentVolumeSource{
+						CSI: &corev1.CSIPersistentVolumeSource{
+							Driver: lvm.DriverName,
+							VolumeAttributes: map[string]string{
+								"localdisk.csi.acstor.io/selected-initial-node": "node2",
+							},
+						},
+					},
+				},
+			},
+			expected: true,
+		},
+		{
 			name: "mismatch - different initial node param",
 			pv: &corev1.PersistentVolume{
 				ObjectMeta: metav1.ObjectMeta{

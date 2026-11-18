@@ -169,7 +169,9 @@ the `failover-mode` parameter controls how pods are scheduled:
 - **durability**: Uses required node affinity.
   Pods must be scheduled on the node with the current local volume and remain
   Pending while that node is unavailable. This preserves access to the existing
-  local data at the cost of workload availability.
+  local data at the cost of workload availability. The PV retains hard node
+  topology, and staging fails rather than changing ownership or creating an
+  empty replacement when the existing durability volume is unavailable.
 
 Example StorageClass with failover mode:
 

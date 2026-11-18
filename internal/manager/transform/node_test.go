@@ -22,6 +22,7 @@ var (
 			Name:            "test-node",
 			UID:             "12345678-1234-1234-1234-123456789012",
 			ResourceVersion: "1",
+			Labels:          map[string]string{"topology.localdisk.csi.acstor.io/node": "test-node", "kubernetes.io/hostname": "test-host"},
 		},
 		Status: corev1.NodeStatus{
 			Conditions: []corev1.NodeCondition{
@@ -55,6 +56,7 @@ func TestTrimNode(t *testing.T) {
 					Name:            node.Name,
 					UID:             node.UID,
 					ResourceVersion: node.ResourceVersion,
+					Labels:          node.Labels,
 				},
 				Status: corev1.NodeStatus{
 					Conditions: []corev1.NodeCondition{

@@ -17,10 +17,10 @@ import (
 )
 
 // TrimNode is a controller-runtime cache transform that strips Node
-// objects down to only the fields the manager actually reads (the Ready
-// condition). This keeps memory usage proportional to the number of
+// objects down to the Ready condition and labels used for topology matching.
+// This keeps memory usage proportional to the number of
 // nodes rather than the size of each Node object, which can be tens of
-// KB once labels, annotations, addresses, images, and managed fields
+// KB once annotations, addresses, images, and managed fields
 // are included.
 //
 // The informer machinery requires Name, UID, and ResourceVersion to
@@ -45,6 +45,7 @@ func TrimNode(obj any) (any, error) {
 			Namespace:       node.Namespace,
 			UID:             node.UID,
 			ResourceVersion: node.ResourceVersion,
+			Labels:          node.Labels,
 		},
 		Status: corev1.NodeStatus{
 			Conditions: ready,
