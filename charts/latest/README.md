@@ -83,6 +83,7 @@ including critical findings; scan and upload errors still fail the jobs.
 | Parameter | Description | Default |
 | --- | --- | --- |
 | `name` | Base name used for generated Kubernetes resources. | `csi-local` |
+| `commonLabels` | Additional resource metadata labels. Does not affect Pod labels or selectors; chart-owned label keys are ignored. | `{}` |
 | `image.baseRepo` | Registry prefix for MCR sidecar image mappings and legacy repositories beginning with `/`, unless a per-image registry is set. | `mcr.microsoft.com` |
 | `image.driver.repository` | local-csi-driver container image repository. | `localcsidriver.azurecr.io/acstor/local-csi-driver` |
 | `image.driver.tag` | local-csi-driver image tag. Uses the chart application version when unset. | Unset |
@@ -177,6 +178,33 @@ including critical findings; scan and upload errors still fail the jobs.
 The driver binary has its own command-line defaults. Values supplied by the
 chart override those defaults. For example, the binary orphan scan interval is
 `30m`, while the chart deploys `5m`.
+
+## Resource metadata labels
+
+Use `commonLabels` to add labels to chart resource metadata, including the
+driver DaemonSet and manager Deployment:
+
+```yaml
+commonLabels:
+  example.com/owner: platform
+  example.com/environment: production
+```
+
+These labels do not change Pod template labels or resource selectors. Continue
+to use `manager.deployment.podLabels` for additional manager Pod labels.
+`daemonset.podSelector` retains its existing behavior: it sets both the
+DaemonSet selector and its Pod labels.
+
+Chart-owned keys are reserved and ignored in `commonLabels`: `app`,
+`app.kubernetes.io/component`, `app.kubernetes.io/name`,
+`app.kubernetes.io/instance`, `app.kubernetes.io/version`,
+`app.kubernetes.io/managed-by`, and `helm.sh/chart`.
+Use string label values, quoting values such as `"true"` or `"123"`.
+An omitted, empty, or null `commonLabels` adds no labels.
+Changing these labels can restart manager Pods because webhook resource
+metadata contributes to the existing configuration checksums.
+
+Run the rendered-manifest regression tests with `make test-helm`.
 
 ## RAID configuration
 

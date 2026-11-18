@@ -421,6 +421,10 @@ add-copyright:
 kubeconform-lint: kubeconform-helm ## Lint all Kubernetes manifests using kubeconform.
 	$(HELM) kubeconform --verbose --summary --strict charts/latest
 
+.PHONY: test-helm
+test-helm: helm ## Test rendered Helm chart metadata and selectors.
+	HELM="$(HELM)" go test ./test/helm -count=1 -v
+
 define create-kind-cluster
 	if $(KIND) get clusters | grep -q kind; then \
 		echo "Cluster 'kind' already exists"; \
