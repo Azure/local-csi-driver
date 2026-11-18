@@ -30,7 +30,7 @@ func TestNodeExpandVolume(t *testing.T) {
 		expandedSize  = int64(1700 * 1024 * 1024 * 1024) // 1700 GiB
 		smallerSize   = int64(10 * 1024 * 1024 * 1024)   // 10 GiB
 		expandLVName  = testVG + "/" + testLV
-		expandLVSizeS = "1700Gi"
+		expandLVSizeS = "1825361100800B"
 	)
 
 	tests := []struct {
@@ -146,6 +146,28 @@ func TestNodeExpandVolume(t *testing.T) {
 			},
 			expectResp:     true,
 			expectCapacity: expandedSize,
+		},
+		{
+			// BinarySI quantities without a suffix are interpreted by LVM as MiB.
+			// A sector-aligned request must stay in bytes, even below KiB alignment.
+			name: "sector-aligned expansion uses explicit bytes instead of implicit MiB",
+			req: &csi.NodeExpandVolumeRequest{
+				VolumeId:      testVolumeID,
+				CapacityRange: &csi.CapacityRange{RequiredBytes: (64 << 20) + 512},
+			},
+			expectLvm: func(m *lvmMgr.MockManager) {
+				gomock.InOrder(
+					m.EXPECT().GetLogicalVolume(gomock.Any(), testVG, testLV).
+						Return(&lvmMgr.LogicalVolume{Name: testLV, Size: 64 << 20}, nil),
+					m.EXPECT().ExtendLogicalVolume(gomock.Any(), lvmMgr.ExtendLVOptions{
+						Name: expandLVName, Size: "67109376B",
+					}).Return(nil),
+					m.EXPECT().GetLogicalVolume(gomock.Any(), testVG, testLV).
+						Return(&lvmMgr.LogicalVolume{Name: testLV, Size: 68 << 20}, nil),
+				)
+			},
+			expectResp:     true,
+			expectCapacity: 68 << 20,
 		},
 		{
 			name: "re-query failure after extend returns error",

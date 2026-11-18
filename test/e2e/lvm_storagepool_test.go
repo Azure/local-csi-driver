@@ -50,9 +50,11 @@ var testLvmStoragePool = func() {
 
 		lvmWebhookRejectTest("should reject statefulset with non-ephemeral local storagepool", common.LvmPvcNoAnnotationFixture)
 		lvmHyperconvergedTest("should create hyperconverged pod with local storagepool", common.LvmPvcAnnotationFixure, common.LvmPodAnnotationFixture)
-		lvmExpansionTest("should expand an ext4 PVC and grow the backing LV", common.LvmPvcAnnotationFixure, common.LvmPodAnnotationFixture, "Filesystem", "/mnt/lcd")
-		lvmExpansionTest("should expand an xfs PVC and grow the backing LV", common.LvmPvcAnnotationXfsFixture, common.LvmPodAnnotationXfsFixture, "Filesystem", "/mnt/lcd")
-		lvmExpansionTest("should expand a block PVC and grow the backing LV", common.LvmPvcAnnotationBlockFixture, common.LvmPodAnnotationBlockFixture, "Block", "/dev/lcd")
+		lvmExpansionTest("should expand an ext4 PVC and grow the backing LV", common.LvmPvcAnnotationFixure, common.LvmPodAnnotationFixture, "Filesystem", "/mnt/lcd", expansionPVCTargetSize)
+		lvmExpansionTest("should expand an xfs PVC and grow the backing LV", common.LvmPvcAnnotationXfsFixture, common.LvmPodAnnotationXfsFixture, "Filesystem", "/mnt/lcd", expansionPVCTargetSize)
+		lvmExpansionTest("should expand a block PVC and grow the backing LV", common.LvmPvcAnnotationBlockFixture, common.LvmPodAnnotationBlockFixture, "Block", "/dev/lcd", expansionPVCTargetSize)
+		// 20 GiB plus one 512-byte sector serializes without a suffix in BinarySI.
+		lvmExpansionTest("should expand a block PVC requested in unaligned bytes", common.LvmPvcAnnotationBlockFixture, common.LvmPodAnnotationBlockFixture, "Block", "/dev/lcd", "21474836992")
 		lvmFailoverExpansionTest("should recreate the volume at the expanded size after failover to a different node", common.LvmPvcAnnotationFixure, common.LvmPodAnnotationFixture)
 	})
 
