@@ -1,6 +1,11 @@
 # Name used for creating resources.
 name: csi-local
 
+# Additional resource metadata labels; does not change Pod labels or selectors.
+# Chart-owned app, app.kubernetes.io/{component,name,instance,version,managed-by},
+# and helm.sh/chart labels cannot be overridden.
+commonLabels: {}
+
 # Container image configuration.
 image:
   # Registry prefix for default MCR sidecars and legacy '/' repositories.

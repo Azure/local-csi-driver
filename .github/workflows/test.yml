@@ -37,6 +37,9 @@ jobs:
           go-version-file: go.mod
           cache-dependency-path: go.sum
 
+      - name: Test rendered Helm chart
+        run: make test-helm
+
       - name: Run unit tests & Generate coverage
         run: |
           make test

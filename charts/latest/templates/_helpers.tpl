@@ -69,6 +69,12 @@ helm.sh/chart: {{ include "chart.chart" . }}
 app.kubernetes.io/version: {{ .Chart.AppVersion | quote }}
 {{- end }}
 app.kubernetes.io/managed-by: {{ .Release.Service }}
+{{- range $key, $value := omit (.Values.commonLabels | default dict)
+    "app" "app.kubernetes.io/component" "helm.sh/chart"
+    "app.kubernetes.io/name" "app.kubernetes.io/instance"
+    "app.kubernetes.io/version" "app.kubernetes.io/managed-by" }}
+{{ $key | quote }}: {{ $value | quote }}
+{{- end }}
 {{- end }}
 
 {{/*
