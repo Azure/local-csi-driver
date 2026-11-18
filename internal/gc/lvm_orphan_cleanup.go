@@ -310,6 +310,7 @@ func (r *LVMOrphanScanner) SetupWithManager(mgr ctrl.Manager) error {
 
 // setupFieldIndexing creates a field index for PVs by CSI volume handle.
 func (r *LVMOrphanScanner) setupFieldIndexing(mgr ctrl.Manager) error {
+	//lazyinformer:ignore Orphan checks reuse a PV index instead of listing all PVs for each local LV.
 	return mgr.GetFieldIndexer().IndexField(
 		context.Background(),
 		&corev1.PersistentVolume{},

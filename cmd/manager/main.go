@@ -240,6 +240,7 @@ func main() {
 	certSetupFinished := make(chan struct{})
 	if len(webhooks) > 0 {
 		log.Info("setting up cert rotation")
+		//lazyinformer:ignore watches the serving-cert Secret and webhook configurations for certificate rotation
 		if err := rotator.AddRotator(mgr, &rotator.CertRotator{
 			SecretKey: types.NamespacedName{
 				Namespace: namespace,
