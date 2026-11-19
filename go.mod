@@ -3,7 +3,7 @@ module local-csi-driver
 go 1.26.0
 
 require (
-	github.com/container-storage-interface/spec v1.12.0
+	github.com/container-storage-interface/spec v1.14.0
 	github.com/dpeckett/args v0.3.0
 	github.com/evanphx/json-patch/v5 v5.9.11
 	github.com/go-logr/logr v1.4.4
