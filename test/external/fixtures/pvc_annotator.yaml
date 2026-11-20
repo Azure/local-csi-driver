@@ -1,16 +1,27 @@
-apiVersion: kyverno.io/v1
-kind: ClusterPolicy
+apiVersion: policies.kyverno.io/v1
+kind: MutatingPolicy
 metadata:
   name: add-annotations-to-pvcs
 spec:
-  rules:
-  - name: add-csi-annotations
-    match:
-      resources:
-        kinds:
-        - PersistentVolumeClaim
-    mutate:
-      patchStrategicMerge:
-        metadata:
-          annotations:
-            +(localdisk.csi.acstor.io/accept-ephemeral-storage): "true"
+  matchConstraints:
+    resourceRules:
+    - apiGroups: [""]
+      apiVersions: ["v1"]
+      operations: ["CREATE", "UPDATE"]
+      resources: ["persistentvolumeclaims"]
+  matchConditions:
+  - name: annotation-is-missing
+    expression: >-
+      !has(object.metadata.annotations) ||
+      !("localdisk.csi.acstor.io/accept-ephemeral-storage" in object.metadata.annotations)
+  mutations:
+  - patchType: ApplyConfiguration
+    applyConfiguration:
+      expression: >-
+        Object{
+          metadata: Object.metadata{
+            annotations: {
+              "localdisk.csi.acstor.io/accept-ephemeral-storage": "true"
+            }
+          }
+        }
