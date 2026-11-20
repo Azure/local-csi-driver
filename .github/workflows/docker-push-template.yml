@@ -37,7 +37,7 @@ jobs:
         arch:
           - tag-suffix: amd64
           - tag-suffix: arm64
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     environment: pull-request
     permissions:
@@ -113,7 +113,7 @@ jobs:
   push-manifest:
     name: push-manifest
     needs: push-arch
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     environment: pull-request
     permissions:
