@@ -1,4 +1,4 @@
-FROM mcr.microsoft.com/oss/go/microsoft/golang:1.26-azurelinux3.0@sha256:8d9d1bbfb154a92ea4068aa676ae24b215cbfcd0d086876dfb1afe1db2a32219 AS builder
+FROM mcr.microsoft.com/oss/go/microsoft/golang:1.26-azurelinux3.0@sha256:4b01bf2cc3d952f3f34d46a8b11fbfbe48cd4f06e2f1629b26a749ee4500e68b AS builder
 ARG TARGETOS
 ARG TARGETARCH
 
@@ -48,7 +48,7 @@ RUN --mount=type=cache,target=/go/pkg/mod \
 
 
 # Generate NOTICE.txt from dependency licenses. Built in parallel with `builder`.
-FROM mcr.microsoft.com/oss/go/microsoft/golang:1.26-azurelinux3.0@sha256:8d9d1bbfb154a92ea4068aa676ae24b215cbfcd0d086876dfb1afe1db2a32219 AS notice
+FROM mcr.microsoft.com/oss/go/microsoft/golang:1.26-azurelinux3.0@sha256:4b01bf2cc3d952f3f34d46a8b11fbfbe48cd4f06e2f1629b26a749ee4500e68b AS notice
 ARG GO_LICENSES_VERSION=v2.0.1
 WORKDIR /workspace
 RUN --mount=type=cache,target=/go/pkg/mod \
@@ -65,7 +65,7 @@ RUN --mount=type=cache,target=/go/pkg/mod \
     ./hack/generate-notice.sh NOTICE.txt
 
 
-FROM mcr.microsoft.com/azurelinux/base/core:3.0@sha256:3d16d8799f71a78f5bddb3b7cda4a57df1f40ecfa58bac89933010596aa86880 AS dependency-install
+FROM mcr.microsoft.com/azurelinux/base/core:3.0@sha256:a333b3233076d8b47d63237760e7b36576c0fe47fbf670d5d3517d2fd6fe5030 AS dependency-install
 RUN tdnf install -y --releasever 3.0 --installroot /staging \
     e2fsprogs \
     lvm2 \
