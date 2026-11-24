@@ -1,0 +1,102 @@
+# Build one image for one architecture and push `<tag>-<arch>` for TAG and (if
+# set) LATEST_TAG to ACR. The multi-arch manifest is assembled in a later job.
+# Expects job variables TAG and LATEST_TAG.
+#
+# Authenticates through an ADO ARM service connection (workload identity
+# federation), not GitHub->Azure OIDC.
+parameters:
+  - name: registry
+    type: string
+  - name: repoBase
+    type: string
+  - name: imageName
+    type: string
+  - name: dockerfile
+    type: string
+  - name: platform
+    type: string
+  - name: archSuffix
+    type: string
+  - name: serviceConnection
+    type: string
+  # When true, build only (no push). Still logs in to ACR to validate access.
+  - name: dryRun
+    type: boolean
+    default: false
+
+steps:
+  - task: Bash@3
+    displayName: 'Ensure Azure CLI'
+    inputs:
+      targetType: inline
+      script: |
+        set -euo pipefail
+        # The 1ES arm64 image ships without Azure CLI, which AzureCLI@2 needs.
+        if command -v az >/dev/null 2>&1; then
+          az version
+          exit 0
+        fi
+        echo "Azure CLI not found; installing..."
+        if command -v tdnf >/dev/null 2>&1; then
+          sudo tdnf install -y azure-cli
+        elif command -v dnf >/dev/null 2>&1; then
+          sudo dnf install -y azure-cli
+        elif command -v apt-get >/dev/null 2>&1; then
+          curl -sL https://aka.ms/InstallAzureCLIDeb | sudo bash
+        else
+          echo "No supported package manager (tdnf/dnf/apt-get) found" >&2
+          exit 1
+        fi
+        az version
+
+  - task: AzureCLI@2
+    displayName: 'Build & push ${{ parameters.imageName }} (${{ parameters.archSuffix }})'
+    retryCountOnTaskFailure: 2
+    inputs:
+      azureSubscription: ${{ parameters.serviceConnection }}
+      scriptType: bash
+      scriptLocation: inlineScript
+      inlineScript: |
+        set -euo pipefail
+        az acr login -n "${REGISTRY%%.*}"
+
+        docker buildx inspect lcd-builder >/dev/null 2>&1 \
+          || docker buildx create --name lcd-builder --driver docker-container \
+               --driver-opt image=mcr.microsoft.com/oss/v2/moby/buildkit:v0.31.1 \
+               --use --bootstrap
+        docker buildx use lcd-builder
+
+        IMG="${REGISTRY}/${REPO_BASE}/${IMAGE_NAME}"
+        TAG_ARGS=()
+        for t in ${TAG} ${LATEST_TAG}; do
+          TAG_ARGS+=(-t "${IMG}:${t}-${ARCH_SUFFIX}")
+        done
+        if [ "${DRY_RUN}" = "True" ]; then
+          OUTPUT=(--output type=cacheonly)
+          echo "Dry run: building ${TAG_ARGS[*]} without pushing"
+        else
+          OUTPUT=(--push)
+        fi
+
+        docker buildx build \
+          --platform "${PLATFORM}" \
+          --provenance false \
+          --sbom false \
+          "${OUTPUT[@]}" \
+          "${TAG_ARGS[@]}" \
+          --build-arg BUILD_ID="$(Build.BuildId)" \
+          --build-arg VERSION="${TAG}" \
+          --build-arg GIT_COMMIT="$(Build.SourceVersion)" \
+          --build-arg BUILD_DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+          -f "${DOCKERFILE}" \
+          .
+    env:
+      REGISTRY: ${{ parameters.registry }}
+      REPO_BASE: ${{ parameters.repoBase }}
+      IMAGE_NAME: ${{ parameters.imageName }}
+      DOCKERFILE: ${{ parameters.dockerfile }}
+      PLATFORM: ${{ parameters.platform }}
+      ARCH_SUFFIX: ${{ parameters.archSuffix }}
+      DRY_RUN: ${{ parameters.dryRun }}
+      # TAG / LATEST_TAG come from the job's variables (set by the `vars` job)
+      # and are exported to the environment automatically.
