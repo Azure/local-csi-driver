@@ -38,19 +38,19 @@ parameters:
     default: 'Local CSI ADO Service Connection'
   - name: amd64Pool
     type: string
-    default: 'sancsi-1es-pool'
+    default: 'lcd-1es-pool'
   - name: amd64Image
     type: string
     default: '1es-pt-linux-amd64'
   - name: arm64Pool
     type: string
-    default: 'sancsi-1es-arm-pool'
+    default: 'lcd-1es-arm-pool'
   - name: arm64Image
     type: string
     default: '1es-pt-linux-arm64'
   - name: winPool
     type: string
-    default: 'sancsi-1es-win-pool'
+    default: 'lcd-1es-win-pool'
   - name: winImage
     type: string
     default: '1es-windows-2022'
@@ -240,6 +240,11 @@ extends:
               image: ${{ parameters.amd64Image }}
               os: linux
             steps:
+              # The Makefile resolves HOST_OS/HOST_ARCH via `go env`.
+              - task: GoTool@0
+                displayName: 'Install Go'
+                inputs:
+                  version: '1.26.0'
               - task: AzureCLI@2
                 displayName: 'Build & push Helm chart'
                 inputs:
