@@ -1,0 +1,265 @@
+# Builds the multi-arch local-csi-driver / local-csi-manager images and the
+# Helm chart, and publishes them to the project's test ACR
+# (localcsidriver.azurecr.io):
+#   - main:      v0.0.1-g<sha> plus the floating v0.0.1-latest
+#   - v* tags:   the tag verbatim (vX.Y.Z, vX.Y.Z-preview.N, vX.Y.Z-hotfix.N)
+#
+# Runs in Azure Pipelines (1ES PT) because GitHub Actions can no longer
+# federate into the corp tenant. MCR publication is done separately by the
+# protected release pipeline, so this repo never holds production credentials.
+trigger:
+  batch: true
+  branches:
+    include:
+      - main
+  tags:
+    include:
+      - v*
+pr: none
+
+parameters:
+  # Build everything and validate ACR access without pushing. Allowed from any
+  # branch, so changes to this pipeline can be tested before merge.
+  - name: dryRun
+    displayName: 'Dry run (build only, no push)'
+    type: boolean
+    default: false
+  - name: registry
+    displayName: 'Container registry (ACR)'
+    type: string
+    default: 'localcsidriver.azurecr.io'
+  - name: repoBase
+    displayName: 'Repository base path'
+    type: string
+    default: 'acstor'
+  - name: serviceConnection
+    displayName: 'ARM/ACR service connection'
+    type: string
+    default: 'Local CSI ADO Service Connection'
+  - name: amd64Pool
+    type: string
+    default: 'sancsi-1es-pool'
+  - name: amd64Image
+    type: string
+    default: '1es-pt-linux-amd64'
+  - name: arm64Pool
+    type: string
+    default: 'sancsi-1es-arm-pool'
+  - name: arm64Image
+    type: string
+    default: '1es-pt-linux-arm64'
+  - name: winPool
+    type: string
+    default: 'sancsi-1es-win-pool'
+  - name: winImage
+    type: string
+    default: '1es-windows-2022'
+  - name: images
+    type: object
+    default:
+      - key: driver
+        name: local-csi-driver
+        dockerfile: Dockerfile
+      - key: manager
+        name: local-csi-manager
+        dockerfile: Dockerfile.manager
+  - name: arches
+    type: object
+    default:
+      - suffix: amd64
+        platform: linux/amd64
+      - suffix: arm64
+        platform: linux/arm64
+
+variables:
+  # Base version for per-commit and floating tags on main.
+  - name: baseVersion
+    value: 'v0.0.1'
+
+resources:
+  repositories:
+    - repository: 1ESPipelineTemplates
+      type: git
+      name: 1ESPipelineTemplates/1ESPipelineTemplates
+      ref: refs/tags/release
+
+extends:
+  template: v1/1ES.Official.PipelineTemplate.yml@1ESPipelineTemplates
+  parameters:
+    pool:
+      name: ${{ parameters.amd64Pool }}
+      image: ${{ parameters.amd64Image }}
+      os: linux
+    settings:
+      skipBuildTagsForGitHubPullRequests: true
+    sdl:
+      sourceAnalysisPool:
+        name: ${{ parameters.winPool }}
+        image: ${{ parameters.winImage }}
+        os: windows
+      componentgovernance:
+        failOnAlert: false
+    # 1ES blocks direct public Go module downloads on the agent; route them
+    # through the internal module proxy. https://aka.ms/goproxy
+    featureFlags:
+      golang:
+        internalModuleProxy:
+          enabled: true
+
+    stages:
+      - stage: publish
+        displayName: 'Build & push images and chart'
+        jobs:
+          - job: vars
+            displayName: 'Compute tags'
+            workspace:
+              clean: all
+            pool:
+              name: ${{ parameters.amd64Pool }}
+              image: ${{ parameters.amd64Image }}
+              os: linux
+            steps:
+              - bash: |
+                  set -euo pipefail
+                  SHORT_SHA="${BUILD_SOURCEVERSION:0:7}"
+                  LATEST_TAG=""
+                  case "${BUILD_SOURCEBRANCH}" in
+                    refs/tags/*)
+                      TAG="${BUILD_SOURCEBRANCH#refs/tags/}"
+                      if ! echo "${TAG}" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+(-(preview|hotfix)\.[0-9]+)?$'; then
+                        echo "##vso[task.logissue type=error]Tag '${TAG}' is not vX.Y.Z[-preview.N|-hotfix.N]"
+                        exit 1
+                      fi
+                      ;;
+                    refs/heads/main)
+                      # The 'g' prefix keeps the pre-release identifier valid
+                      # SemVer (numeric identifiers can't have leading zeros).
+                      TAG="${BASE_VERSION}-g${SHORT_SHA}"
+                      LATEST_TAG="${BASE_VERSION}-latest"
+                      ;;
+                    *)
+                      if [ "${DRY_RUN}" != "True" ]; then
+                        echo "##vso[task.logissue type=error]Only main or v* tags may push, got '${BUILD_SOURCEBRANCH}'. Use dryRun to test other branches."
+                        exit 1
+                      fi
+                      TAG="${BASE_VERSION}-g${SHORT_SHA}"
+                      ;;
+                  esac
+                  echo "Using tag: ${TAG}${LATEST_TAG:+ (+ ${LATEST_TAG})}"
+                  echo "##vso[task.setvariable variable=TAG;isOutput=true]${TAG}"
+                  echo "##vso[task.setvariable variable=LATEST_TAG;isOutput=true]${LATEST_TAG}"
+                name: settag
+                displayName: 'Set tags from ref'
+                env:
+                  BASE_VERSION: $(baseVersion)
+                  DRY_RUN: ${{ parameters.dryRun }}
+
+          - ${{ each image in parameters.images }}:
+            - ${{ each arch in parameters.arches }}:
+              - job: docker_${{ image.key }}_${{ arch.suffix }}
+                displayName: 'Docker ${{ image.name }} (${{ arch.suffix }})'
+                dependsOn: vars
+                timeoutInMinutes: 45
+                variables:
+                  TAG: $[ dependencies.vars.outputs['settag.TAG'] ]
+                  LATEST_TAG: $[ dependencies.vars.outputs['settag.LATEST_TAG'] ]
+                workspace:
+                  clean: all
+                pool:
+                  ${{ if eq(arch.suffix, 'arm64') }}:
+                    name: ${{ parameters.arm64Pool }}
+                    image: ${{ parameters.arm64Image }}
+                    os: linux
+                    hostArchitecture: arm64
+                  ${{ else }}:
+                    name: ${{ parameters.amd64Pool }}
+                    image: ${{ parameters.amd64Image }}
+                    os: linux
+                steps:
+                  - template: /.pipelines/steps/docker-build-push.yml@self
+                    parameters:
+                      registry: ${{ parameters.registry }}
+                      repoBase: ${{ parameters.repoBase }}
+                      imageName: ${{ image.name }}
+                      dockerfile: ${{ image.dockerfile }}
+                      platform: ${{ arch.platform }}
+                      archSuffix: ${{ arch.suffix }}
+                      serviceConnection: ${{ parameters.serviceConnection }}
+                      dryRun: ${{ parameters.dryRun }}
+
+            - ${{ if not(parameters.dryRun) }}:
+              - job: manifest_${{ image.key }}
+                displayName: 'Manifest ${{ image.name }}'
+                dependsOn:
+                  - vars
+                  - ${{ each arch in parameters.arches }}:
+                    - docker_${{ image.key }}_${{ arch.suffix }}
+                variables:
+                  TAG: $[ dependencies.vars.outputs['settag.TAG'] ]
+                  LATEST_TAG: $[ dependencies.vars.outputs['settag.LATEST_TAG'] ]
+                workspace:
+                  clean: all
+                pool:
+                  name: ${{ parameters.amd64Pool }}
+                  image: ${{ parameters.amd64Image }}
+                  os: linux
+                steps:
+                  - task: AzureCLI@2
+                    displayName: 'Create & push manifest'
+                    retryCountOnTaskFailure: 3
+                    inputs:
+                      azureSubscription: ${{ parameters.serviceConnection }}
+                      scriptType: bash
+                      scriptLocation: inlineScript
+                      inlineScript: |
+                        set -euo pipefail
+                        az acr login -n "${REGISTRY%%.*}"
+                        IMG="${REGISTRY}/${REPO_BASE}/${IMAGE_NAME}"
+                        for t in ${TAG} ${LATEST_TAG}; do
+                          echo "Creating manifest ${IMG}:${t}"
+                          docker buildx imagetools create \
+                            -t "${IMG}:${t}" \
+                            "${IMG}:${t}-amd64" \
+                            "${IMG}:${t}-arm64"
+                        done
+                    env:
+                      REGISTRY: ${{ parameters.registry }}
+                      REPO_BASE: ${{ parameters.repoBase }}
+                      IMAGE_NAME: ${{ image.name }}
+
+          - job: helm
+            displayName: 'Helm build & push'
+            dependsOn: vars
+            variables:
+              TAG: $[ dependencies.vars.outputs['settag.TAG'] ]
+              LATEST_TAG: $[ dependencies.vars.outputs['settag.LATEST_TAG'] ]
+            workspace:
+              clean: all
+            pool:
+              name: ${{ parameters.amd64Pool }}
+              image: ${{ parameters.amd64Image }}
+              os: linux
+            steps:
+              - task: AzureCLI@2
+                displayName: 'Build & push Helm chart'
+                inputs:
+                  azureSubscription: ${{ parameters.serviceConnection }}
+                  scriptType: bash
+                  scriptLocation: inlineScript
+                  inlineScript: |
+                    set -euo pipefail
+                    make helm-login REGISTRY="${REGISTRY}"
+                    for t in ${TAG} ${LATEST_TAG}; do
+                      make helm-build REGISTRY="${REGISTRY}" REPO_BASE="${REPO_BASE}" TAG="${t}"
+                      chart="dist/local-csi-driver-${t#v}.tgz"
+                      test -f "${chart}"
+                      if [ "${DRY_RUN}" = "True" ]; then
+                        echo "Dry run: skipping push of ${chart}"
+                      else
+                        bin/helm push "${chart}" "oci://${REGISTRY}/${REPO_BASE}/charts"
+                      fi
+                    done
+                env:
+                  REGISTRY: ${{ parameters.registry }}
+                  REPO_BASE: ${{ parameters.repoBase }}
+                  DRY_RUN: ${{ parameters.dryRun }}
