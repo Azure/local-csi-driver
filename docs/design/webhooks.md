@@ -90,6 +90,12 @@ metadata, the driver then:
 The webhook uses this metadata to add Pod affinity instead of relying on
 immutable PV affinity.
 
+Missing PVCs do not block Pod creation or discard constraints from other resolved
+claims. Claims created later do not trigger Pod admission again, so their
+placement constraints cannot be added by this webhook to the existing Pod.
+Missing generated generic-ephemeral claims are evaluated from their volume claim
+template.
+
 ## Failover modes
 
 The StorageClass parameter
