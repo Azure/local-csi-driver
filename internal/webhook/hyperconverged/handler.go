@@ -107,6 +107,11 @@ func (h *handler) Handle(ctx context.Context, req admission.Request) admission.R
 			continue
 		}
 
+		if isEphemeral && pod.UID == "" {
+			h.validateEphemeralTemplatePolicy(ctx, storageClassName, pvcName, pod)
+			continue
+		}
+
 		pvc := &corev1.PersistentVolumeClaim{}
 		getPVC := func() error {
 			key := client.ObjectKey{Name: pvcName, Namespace: req.Namespace}
